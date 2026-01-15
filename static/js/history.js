@@ -2,7 +2,7 @@
 var allClosedTrades = [];
 
 $(document).ready(function() {
-    // 1. Set Date to Today but DO NOT FILTER STRICTLY yet
+    // 1. Initialize Date Input but don't force strict filtering initially
     var d = new Date();
     var day = ("0" + d.getDate()).slice(-2);
     var month = ("0" + (d.getMonth() + 1)).slice(-2);
@@ -17,7 +17,7 @@ $(document).ready(function() {
     loadClosedTrades();
 });
 
-// --- SAFE HELPERS ---
+// --- SAFE HELPERS (Prevents JS Crash) ---
 function safeFixed(val, d=2) {
     if (val === undefined || val === null || isNaN(val)) return (0).toFixed(d);
     return parseFloat(val).toFixed(d);
@@ -47,7 +47,7 @@ function loadClosedTrades() {
 
         // Filter Logic
         let filtered = allClosedTrades.filter(function(t) {
-            // If date is selected, check match. If empty, show all.
+            // Loose Date Filter: If date is set, match start. If empty, match all.
             if (filterDate && t.exit_time && !t.exit_time.startsWith(filterDate)) return false;
             
             let mode = t.mode || 'PAPER';
@@ -83,6 +83,7 @@ function loadClosedTrades() {
                 if(mh < exit) mh = exit;
                 let pot = (mh - entry) * qty;
 
+                // Only show potential if SL was NOT hit blindly (meaning we had a chance)
                 if (t.status !== 'SL_HIT' || (t.targets_hit_indices && t.targets_hit_indices.length > 0)) {
                     if(pot > 0) {
                         totalPotential += pot;
@@ -164,9 +165,11 @@ function editSim(id) {
     let t = allClosedTrades.find(x => x.id == id); if(!t) return;
     $('.dashboard-tab').hide(); $('#history').show(); $('.nav-btn').removeClass('active'); $('.nav-btn').last().addClass('active');
     if(t.raw_params) {
-        // Basic load attempt
-        $('#h_sym').val(t.raw_params.symbol); $('#h_qty').val(t.quantity);
-        alert("Parameters loaded into Simulator tab.");
+        // Basic load attempt into Trade Tab fields if available
+        if($('#h_sym').length) {
+            $('#h_sym').val(t.raw_params.symbol); $('#h_qty').val(t.quantity);
+            alert("Parameters loaded into Simulator tab.");
+        }
     }
 }
 
@@ -186,6 +189,12 @@ async function runBatchSimulation() {
     let r1 = parseFloat($('#sim_r1').val()) || 0.5;
     let r2 = parseFloat($('#sim_r2').val()) || 1.0;
     let r3 = parseFloat($('#sim_r3').val()) || 1.5;
+    let l1 = parseInt($('#sim_l1').val()) || 0;
+    let l2 = parseInt($('#sim_l2').val()) || 0;
+    let l3 = parseInt($('#sim_l3').val()) || 0;
+    let c1 = $('#sim_c1').is(':checked');
+    let c2 = $('#sim_c2').is(':checked');
+    let c3 = $('#sim_c3').is(':checked');
 
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
@@ -200,7 +209,7 @@ async function runBatchSimulation() {
             sl_points: sl_pts,
             exit_multiplier: mult,
             targets: [entry + (sl_pts * r1), entry + (sl_pts * r2), entry + (sl_pts * r3)],
-            target_controls: [{enabled:true,lots:0},{enabled:true,lots:0},{enabled:true,lots:1000}],
+            target_controls: [{enabled:true,lots:l1,trail_to_entry:c1},{enabled:true,lots:l2,trail_to_entry:c2},{enabled:true,lots:l3>0?l3:1000,trail_to_entry:c3}],
             trailing_sl: 0, sl_to_entry: 0
         };
 
