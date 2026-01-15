@@ -276,11 +276,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
 def simulate_trade_scenario(kite, trade_id, scenario_config):
     """
     Re-runs a closed trade with different parameters to check hypothetical P/L.
-    scenario_config: {
-        'trail_to_entry_t1': bool,
-        'exit_multiplier': int,
-        'target_controls': list of dicts [{'lots': x, 'enabled': y, ...}]
-    }
+    Returns detailed logs of how the P/L was calculated.
     """
     try:
         # 1. Load the original trade
@@ -295,35 +291,27 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
         entry_time_str = original_trade['entry_time']
         entry_price = original_trade['entry_price']
         qty = original_trade['quantity']
-        # Use stored SL or fallback
         sl_price = original_trade.get('original_sl', original_trade['sl']) 
         
-        # Recalculate SL Points to reconstruct original setup
-        # Logic: If SL is 0 or missing, default to 20 pts diff
         if sl_price == 0: sl_price = entry_price - 20
         sl_points = abs(entry_price - sl_price)
 
         # 3. Apply New Scenario Settings
         new_mult = int(scenario_config.get('exit_multiplier', 1))
         
-        # Recalculate Targets based on New Multiplier
-        targets = [float(x) for x in original_trade['targets']] # Start with original targets
+        targets = [float(x) for x in original_trade['targets']] 
         target_controls = scenario_config.get('target_controls')
         
-        # If controls are missing, build default
         if not target_controls:
              target_controls = [{'enabled': True, 'lots': 0, 'trail_to_entry': False} for _ in range(3)]
 
-        # Force T1 Trail to Cost if requested
         if scenario_config.get('trail_to_entry_t1'):
             target_controls[0]['trail_to_entry'] = True
 
-        # Handle Exit Multiplier Logic (Recalculate Targets & Lots)
+        # Handle Exit Multiplier Logic 
         if new_mult > 1:
             valid_targets = [x for x in targets if x > 0]
-            if not valid_targets:
-                 # Fallback based on SL if no targets set
-                 valid_targets = [entry_price + (sl_points * 2)]
+            if not valid_targets: valid_targets = [entry_price + (sl_points * 2)]
             
             final_goal = max(valid_targets)
             dist = final_goal - entry_price
@@ -337,19 +325,14 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
             base_lots = total_lots // new_mult
             remainder = total_lots % new_mult
             
-            for i in range(1, 4): # 1 to 3
+            for i in range(1, 4): 
                 if i <= new_mult:
                     fraction = i / new_mult
                     t_price = entry_price + (dist * fraction)
                     new_targets.append(round(t_price, 2))
-                    
                     lots_here = base_lots + (remainder if i == new_mult else 0)
-                    
-                    # Inherit trail preference from T1 control
                     trail_pref = False
-                    if i == 1 and target_controls: 
-                         trail_pref = target_controls[0].get('trail_to_entry', False)
-
+                    if i == 1 and target_controls: trail_pref = target_controls[0].get('trail_to_entry', False)
                     new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': trail_pref})
                 else:
                     new_targets.append(0)
@@ -358,62 +341,57 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
             targets = new_targets
             target_controls = new_controls
 
-        # 4. Fetch Historical Data (Entry Time -> Now/Exit Time)
-        # We fetch up to NOW to see if it would have performed better
-        try:
-            entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            # Fallback for ISO format if present
-            try:
-                entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%dT%H:%M:%S")
-            except:
-                return {"status": "error", "message": "Invalid Date Format"}
+        # 4. Fetch Historical Data
+        try: entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")
+        except: 
+            try: entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%dT%H:%M:%S")
+            except: return {"status": "error", "message": "Invalid Date Format"}
 
-        try:
-            entry_dt = IST.localize(entry_dt.replace(tzinfo=None))
+        try: entry_dt = IST.localize(entry_dt.replace(tzinfo=None))
         except: pass
         
         now = datetime.now(IST)
-        
         token = smart_trader.get_instrument_token(symbol, exchange)
         if not token: return {"status": "error", "message": "Token not found"}
 
         hist_data = smart_trader.fetch_historical_data(kite, token, entry_dt, now, "minute")
         if not hist_data: return {"status": "error", "message": "No Data"}
 
-        # 5. Run Simulation Loop
+        # 5. Run Simulation Loop with Logging
         current_qty = qty
         current_sl = sl_price
-        sim_pnl = 0
+        sim_pnl = 0.0
         targets_hit = []
         
-        # --- FIX: RESTORE ACTIVATION LOGIC (PENDING -> OPEN) ---
-        # If trigger_dir is present, we assume the trade was initially PENDING
+        sim_logs = [] # <--- NEW: Capture Logs
+        sim_logs.append(f"🏁 <b>Simulation Start</b> | Entry: {entry_price} | Qty: {qty} | SL: {current_sl}")
+        
         trigger_dir = original_trade.get('trigger_dir')
         status = "PENDING" if trigger_dir else "OPEN"
         
         for candle in hist_data:
             O, H, L, C = candle['open'], candle['high'], candle['low'], candle['close']
             ticks = [O, L, H, C] if C >= O else [O, H, L, C]
+            c_time = candle['date'].split(' ')[1][:5]
 
             for ltp in ticks:
                 if status == "CLOSED": break
 
-                # --- PHASE 1: ACTIVATION ---
                 if status == "PENDING":
                     activated = False
                     if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
                     elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
-                    
                     if activated:
                         status = "OPEN"
+                        sim_logs.append(f"[{c_time}] 🚀 <b>Activated</b> at {entry_price}")
                         continue
 
-                # --- PHASE 2: ACTIVE TRADE ---
                 if status == "OPEN":
                     # Check SL
                     if ltp <= current_sl:
-                        sim_pnl += (current_sl - entry_price) * current_qty
+                        pnl_loss = (current_sl - entry_price) * current_qty
+                        sim_pnl += pnl_loss
+                        sim_logs.append(f"[{c_time}] 🛑 <b>SL Hit</b> @ {current_sl} | Exited {current_qty} Qty | P/L: <span class='text-danger'>{pnl_loss:.2f}</span>")
                         status = "CLOSED"
                         break
 
@@ -425,37 +403,46 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
                             targets_hit.append(i)
                             conf = target_controls[i]
                             
-                            # 1. Trail to Cost Logic
+                            # Trail Logic
                             if conf.get('trail_to_entry') and current_sl < entry_price:
                                 current_sl = entry_price
+                                sim_logs.append(f"[{c_time}] 🛡️ <b>Trail to Cost</b> Triggered. New SL: {current_sl}")
                             
                             if conf['enabled']:
                                 lot_size = smart_trader.get_lot_size(symbol)
                                 if lot_size == 0: lot_size = 1
                                 exit_qty = conf['lots'] * lot_size
                                 
-                                # Full Exit Check
-                                if exit_qty >= current_qty or exit_qty >= 1000: # 1000 marker for full
-                                    sim_pnl += (tgt - entry_price) * current_qty
+                                # Full Exit
+                                if exit_qty >= current_qty or exit_qty >= 1000:
+                                    pnl_gain = (tgt - entry_price) * current_qty
+                                    sim_pnl += pnl_gain
+                                    sim_logs.append(f"[{c_time}] 🎯 <b>Target {i+1} Full Exit</b> @ {tgt} | Qty: {current_qty} | P/L: <span class='text-success'>+{pnl_gain:.2f}</span>")
                                     current_qty = 0
                                     status = "CLOSED"
                                     break
                                 else:
-                                    sim_pnl += (tgt - entry_price) * exit_qty
+                                    pnl_gain = (tgt - entry_price) * exit_qty
+                                    sim_pnl += pnl_gain
                                     current_qty -= exit_qty
+                                    sim_logs.append(f"[{c_time}] 🎯 <b>Target {i+1} Partial</b> @ {tgt} | Qty: {exit_qty} | P/L: <span class='text-success'>+{pnl_gain:.2f}</span>")
 
             if status == "CLOSED": break
             
-        # If still open at end of data, close at last LTP
         if current_qty > 0 and status == "OPEN":
             last_price = hist_data[-1]['close']
-            sim_pnl += (last_price - entry_price) * current_qty
+            pnl_run = (last_price - entry_price) * current_qty
+            sim_pnl += pnl_run
+            sim_logs.append(f"[End] ⏱️ <b>Market Close/End</b> @ {last_price} | Rem Qty: {current_qty} | P/L: {pnl_run:.2f}")
+
+        sim_logs.append(f"💰 <b>Total Hypothetical P/L: {sim_pnl:.2f}</b>")
 
         return {
             "status": "success", 
             "original_pnl": original_trade.get('pnl', 0),
             "simulated_pnl": round(sim_pnl, 2),
-            "difference": round(sim_pnl - original_trade.get('pnl', 0), 2)
+            "difference": round(sim_pnl - original_trade.get('pnl', 0), 2),
+            "logs": sim_logs  # <--- Return logs
         }
 
     except Exception as e:
