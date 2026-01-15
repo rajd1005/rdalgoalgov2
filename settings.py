@@ -1,0 +1,82 @@
+import json
+from database import db, AppSetting
+
+def get_defaults():
+    # Define default settings for a mode
+    default_mode_settings = {
+        "qty_mult": 1, 
+        "ratios": [0.5, 1.0, 1.5], 
+        "symbol_sl": {}, 
+        "trailing_sl": 0,
+        "sl_to_entry": 0,
+        "order_type": "MARKET",
+        "exit_multiplier": 1,
+        "universal_exit_time": "15:25", 
+        "max_loss": 0,       
+        "profit_lock": 0,    
+        "profit_min": 0,     
+        "profit_trail": 0    
+    }
+    
+    return {
+        "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
+        "watchlist": [],
+        "modes": {
+            "LIVE": default_mode_settings.copy(),
+            "PAPER": default_mode_settings.copy()
+        },
+        # --- NEW IMPORT CONFIG ---
+        "import_config": {
+            "enable_history_check": True,
+            "default_interval": "minute"
+        }
+    }
+
+def load_settings():
+    defaults = get_defaults()
+    try:
+        setting = AppSetting.query.first()
+        if setting:
+            saved = json.loads(setting.data)
+            
+            # Integrity Check
+            if "modes" not in saved:
+                old_mult = saved.get("qty_mult", 1)
+                old_ratios = saved.get("ratios", [0.5, 1.0, 1.5])
+                old_sl = saved.get("symbol_sl", {})
+                saved["modes"] = {
+                    "LIVE": {"qty_mult": old_mult, "ratios": old_ratios, "symbol_sl": old_sl.copy()},
+                    "PAPER": {"qty_mult": old_mult, "ratios": old_ratios, "symbol_sl": old_sl.copy()}
+                }
+
+            # Merge Defaults
+            for m in ["LIVE", "PAPER"]:
+                if m in saved["modes"]:
+                    for key, val in defaults["modes"][m].items():
+                        if key not in saved["modes"][m]: saved["modes"][m][key] = val
+                    if "symbol_sl" not in saved["modes"][m]: saved["modes"][m]["symbol_sl"] = {}
+                else: saved["modes"][m] = defaults["modes"][m].copy()
+
+            if "exchanges" not in saved: saved["exchanges"] = defaults["exchanges"]
+            if "watchlist" not in saved: saved["watchlist"] = []
+            
+            # Merge Import Config
+            if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
+
+            return saved
+    except Exception as e: print(f"Error loading settings: {e}")
+    return defaults
+
+def save_settings_file(data):
+    try:
+        setting = AppSetting.query.first()
+        if not setting:
+            setting = AppSetting(data=json.dumps(data))
+            db.session.add(setting)
+        else: setting.data = json.dumps(data)
+        db.session.commit()
+        return True
+    except Exception as e:
+        print(f"Settings Save Error: {e}")
+        db.session.rollback()
+        return False

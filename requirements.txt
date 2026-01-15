@@ -1,0 +1,10 @@
+kiteconnect
+pandas
+flask
+gunicorn
+flask_sqlalchemy
+psycopg2-binary
+pytz
+pyotp
+selenium
+webdriver-manager
