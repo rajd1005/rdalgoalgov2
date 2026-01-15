@@ -1,4 +1,8 @@
+// Global variable to store trades
+var allClosedTrades = [];
+// Cache to store simulation results (Logs, P/L, Diff) so they persist across refreshes
 var simResultsCache = {}; 
+
 function loadClosedTrades() {
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
@@ -29,6 +33,28 @@ function loadClosedTrades() {
                 let cat = getTradeCategory(t); 
                 let badge = getMarkBadge(cat);
                 
+                // --- Check for Cached Simulation Results (Persistence Fix) ---
+                let simData = simResultsCache[t.id];
+                
+                // 1. Button Visibility
+                let btnStyle = simData ? '' : 'display:none;'; // Show if data exists
+                
+                // 2. Purple P/L Content & Visibility
+                let simPnlHtml = '';
+                let simPnlStyle = 'display:none;';
+                
+                if(simData) {
+                    let diff = simData.difference;
+                    let diffClass = diff >= 0 ? 'text-success' : 'text-danger';
+                    let diffSign = diff >= 0 ? '+' : '';
+                    
+                    simPnlHtml = `
+                        <span style="color: #6f42c1;">🔮 Sim: ₹${simData.simulated_pnl.toFixed(2)}</span> 
+                        <span class="${diffClass} small fw-bold">(${diffSign}${diff.toFixed(2)})</span>
+                    `;
+                    simPnlStyle = ''; // Show immediately
+                }
+
                 // --- Potential Profit Logic ---
                 let potHtml = '';
                 let potTag = ''; 
@@ -85,7 +111,7 @@ function loadClosedTrades() {
                     statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
                 }
 
-                // --- Time & Activation Duration Logic ---
+                // --- Time & Activation Logic ---
                 let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
                 let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
                 
@@ -123,10 +149,9 @@ function loadClosedTrades() {
                 let editBtn = (t.order_type === 'SIMULATION') ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>` : '';
                 let delBtn = `<button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>`;
                 
-                // NEW: Sim Logs Button (Hidden by default)
-                let simLogBtn = `<button id="btn-sim-log-${t.id}" class="btn btn-sm btn-light border text-primary py-0 px-2" style="display:none; font-size:0.75rem;" onclick="showSimLogs('${t.id}')">🧪 Logs</button>`;
+                // Sim Logs Button (Now uses btnStyle to persist visibility)
+                let simLogBtn = `<button id="btn-sim-log-${t.id}" class="btn btn-sm btn-light border text-primary py-0 px-2" style="${btnStyle} font-size:0.75rem;" onclick="showSimLogs('${t.id}')">🧪 Logs</button>`;
 
-                // --- Mobile-First Card Design ---
                 html += `
                 <div class="card mb-2 shadow-sm border-0" id="card-${t.id}">
                     <div class="card-body p-2">
@@ -140,7 +165,9 @@ function loadClosedTrades() {
                             </div>
                             <div class="text-end">
                                 <div class="fw-bold h6 m-0 ${color}">${t.pnl.toFixed(2)}</div>
-                                <div class="small fw-bold" id="sim-pnl-${t.id}" style="display:none; color: #6f42c1;"></div> 
+                                <div class="small fw-bold" id="sim-pnl-${t.id}" style="${simPnlStyle} color: #6f42c1;">
+                                    ${simPnlHtml}
+                                </div> 
                             </div>
                         </div>
 
@@ -218,15 +245,15 @@ function editSim(id) {
     } else alert("Old trade format.");
 }
 
-// NEW: Function to show Simulation Logs
 function showSimLogs(id) {
-    let logs = simResultsCache[id];
-    if(!logs || logs.length === 0) return alert("No simulation logs found.");
-    $('#logModalBody').html(logs.join('<br>'));
+    // Read from Cache
+    let data = simResultsCache[id];
+    if(!data || !data.logs || data.logs.length === 0) return alert("No simulation logs found.");
+    $('#logModalBody').html(data.logs.join('<br>'));
     $('#logModal').modal('show');
 }
 
-// --- NEW SCENARIO ANALYSIS LOGIC (Hybrid Plan) ---
+// --- SCENARIO ANALYSIS LOGIC ---
 async function runBatchSimulation() {
     let config = {
         trail_to_entry_t1: $('#sim_trail_t1').is(':checked'),
@@ -238,7 +265,6 @@ async function runBatchSimulation() {
         ]
     };
 
-    // Filter to only visible trades in the current filtered view
     let filterDate = $('#hist_date').val();
     let filterType = $('#hist_filter').val();
     let visibleTrades = allClosedTrades.filter(t => t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType));
@@ -248,7 +274,7 @@ async function runBatchSimulation() {
          return;
     }
 
-    // Reset Cache and UI
+    // Reset Cache
     simResultsCache = {};
     $('.sim-result-badge').remove(); 
     
@@ -256,15 +282,12 @@ async function runBatchSimulation() {
     let totalOriginalPnl = 0;
     let improvedCount = 0;
     let worsenedCount = 0;
-
     let processed = 0;
     let count = visibleTrades.length;
     
     $('#sim_results_box').show(); 
 
-    // Iterate sequentially
     for (let t of visibleTrades) {
-        // UI Feedback
         $(`#sim-badge-${t.id}`).show().text("Simulating...");
 
         try {
@@ -279,22 +302,19 @@ async function runBatchSimulation() {
                 totalSimPnl += res.simulated_pnl;
                 totalOriginalPnl += (res.original_pnl || t.pnl);
                 
-                // Track Stats
-                if (res.simulated_pnl > (res.original_pnl || t.pnl)) improvedCount++;
-                if (res.simulated_pnl < (res.original_pnl || t.pnl)) worsenedCount++;
-                
-                // SAVE LOGS & SHOW BUTTON
-                simResultsCache[t.id] = res.logs;
+                // SAVE FULL RESULT TO CACHE (Fixes persistence)
+                simResultsCache[t.id] = res;
                 $(`#btn-sim-log-${t.id}`).show();
 
-                // Update Card UI (Option 1: Purple Line)
+                if (res.simulated_pnl > (res.original_pnl || t.pnl)) improvedCount++;
+                if (res.simulated_pnl < (res.original_pnl || t.pnl)) worsenedCount++;
+
                 $(`#sim-badge-${t.id}`).removeClass('bg-info').addClass('bg-warning').text('Simulated');
                 
                 let diff = res.difference;
                 let diffClass = diff >= 0 ? 'text-success' : 'text-danger';
                 let diffSign = diff >= 0 ? '+' : '';
                 
-                // Set text color to Purple (#6f42c1) explicitly for the "Sim:" label
                 $(`#sim-pnl-${t.id}`).show().html(`
                     <span style="color: #6f42c1;">🔮 Sim: ₹${res.simulated_pnl.toFixed(2)}</span> 
                     <span class="${diffClass} small fw-bold">(${diffSign}${diff.toFixed(2)})</span>
@@ -311,13 +331,12 @@ async function runBatchSimulation() {
         $('#sim_progress').text(`${processed}/${count}`);
         $('#sim_net_pnl').text("₹ " + totalSimPnl.toFixed(2));
         
-        await new Promise(r => setTimeout(r, 100)); // Delay to respect rate limits
+        await new Promise(r => setTimeout(r, 100)); 
     }
     
-    // --- OPTION 2: Batch Summary Modal ---
+    // Batch Summary Modal
     let totalDiff = totalSimPnl - totalOriginalPnl;
     
-    // Update Modal Content using IDs
     $('#sim_res_total').text("₹ " + totalSimPnl.toFixed(2));
     
     let diffSign = totalDiff >= 0 ? '+' : '';
@@ -329,6 +348,5 @@ async function runBatchSimulation() {
     $('#sim_res_improved').text(improvedCount);
     $('#sim_res_worsened').text(worsenedCount);
 
-    // Show Modal
     $('#simResultModal').modal('show');
 }
