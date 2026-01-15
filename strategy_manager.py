@@ -397,7 +397,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
         return {"status": "success", "trade": record}
 
 # --- IMPORT PAST TRADE LOGIC (TICK-BY-TICK SIMULATION) ---
-def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls):
+def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls, dry_run=False):
     try:
         # 1. Parse Input & Initialize Data
         entry_time = datetime.strptime(entry_dt_str, "%Y-%m-%dT%H:%M") 
@@ -561,6 +561,28 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                 logs.append(f"[{remaining_candles[-1]['date']}] ℹ️ Post-Exit High Detected: {highest_ltp}")
                         except: pass
                 break 
+        
+        # --- PHASE 3: DRY RUN LOGIC (RETURN WITHOUT SAVING) ---
+        if dry_run:
+            sim_pnl = 0
+            if final_status == "SL_HIT":
+                sim_pnl = (final_exit_price - entry_price) * qty
+            elif final_status == "TARGET_HIT" or final_status == "TIME_EXIT":
+                sim_pnl = (final_exit_price - entry_price) * qty
+            elif final_status == "OPEN":
+                # If still open, calculate based on Last Candle Close
+                last_close = hist_data[-1]['close'] if hist_data else entry_price
+                sim_pnl = (last_close - entry_price) * qty
+                final_exit_price = last_close # For display
+
+            return {
+                "status": "success",
+                "simulation": True,
+                "final_status": final_status,
+                "exit_price": final_exit_price,
+                "pnl": sim_pnl,
+                "logs": logs
+            }
 
         # 4. Finalize & Save
         with TRADE_LOCK:
