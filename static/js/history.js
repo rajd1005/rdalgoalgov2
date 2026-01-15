@@ -1,5 +1,3 @@
-// Global variable to store trades
-
 // Cache to store simulation results (Logs, P/L, Diff) so they persist across refreshes
 var simResultsCache = {}; 
 
@@ -15,6 +13,10 @@ function loadClosedTrades() {
         let totalLosses = 0;
         let totalPotential = 0;
         let totalCapital = 0; 
+        
+        // New Variables for Sim Total
+        let totalSimPnl = 0;
+        let hasSimData = false;
 
         let filtered = trades.filter(t => t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType));
         
@@ -33,17 +35,20 @@ function loadClosedTrades() {
                 let cat = getTradeCategory(t); 
                 let badge = getMarkBadge(cat);
                 
-                // --- Check for Cached Simulation Results (Persistence Fix) ---
+                // --- Check for Cached Simulation Results ---
                 let simData = simResultsCache[t.id];
                 
                 // 1. Button Visibility
-                let btnStyle = simData ? '' : 'display:none;'; // Show if data exists
+                let btnStyle = simData ? '' : 'display:none;'; 
                 
                 // 2. Purple P/L Content & Visibility
                 let simPnlHtml = '';
                 let simPnlStyle = 'display:none;';
                 
                 if(simData) {
+                    hasSimData = true; // Mark that we have data
+                    totalSimPnl += simData.simulated_pnl; // Add to Grand Total
+                    
                     let diff = simData.difference;
                     let diffClass = diff >= 0 ? 'text-success' : 'text-danger';
                     let diffSign = diff >= 0 ? '+' : '';
@@ -52,10 +57,10 @@ function loadClosedTrades() {
                         <span style="color: #6f42c1;">🔮 Sim: ₹${simData.simulated_pnl.toFixed(2)}</span> 
                         <span class="${diffClass} small fw-bold">(${diffSign}${diff.toFixed(2)})</span>
                     `;
-                    simPnlStyle = ''; // Show immediately
+                    simPnlStyle = ''; 
                 }
 
-                // --- Potential Profit Logic ---
+                // --- Potential Profit Logic (Standard) ---
                 let potHtml = '';
                 let potTag = ''; 
                 let isPureSL = (t.status === 'SL_HIT' && (!t.targets_hit_indices || t.targets_hit_indices.length === 0));
@@ -83,48 +88,37 @@ function loadClosedTrades() {
                     }
                 }
 
-                // --- Status Tags ---
+                // --- Status Tags & Logs Parsing ---
                 let statusTag = '';
                 let rawStatus = t.status || '';
                 
-                if (rawStatus === 'SL_HIT') {
-                    statusTag = '<span class="badge bg-danger" style="font-size:0.65rem;">Stop-Loss</span>';
-                } 
+                if (rawStatus === 'SL_HIT') statusTag = '<span class="badge bg-danger" style="font-size:0.65rem;">Stop-Loss</span>';
                 else if (rawStatus.includes('TARGET')) {
                      let maxHit = -1;
-                     if (t.targets_hit_indices && t.targets_hit_indices.length > 0) {
-                         maxHit = Math.max(...t.targets_hit_indices);
-                     } else {
+                     if (t.targets_hit_indices && t.targets_hit_indices.length > 0) maxHit = Math.max(...t.targets_hit_indices);
+                     else {
                          if(rawStatus.includes('1')) maxHit = 0;
                          if(rawStatus.includes('2')) maxHit = 1;
                          if(rawStatus.includes('3')) maxHit = 2;
                      }
-
                      if (maxHit === 0) statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T1 Hit</span>';
                      else if (maxHit === 1) statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T2 Hit</span>';
                      else statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T3 Hit</span>'; 
                 } 
-                else if (rawStatus === 'COST_EXIT') {
-                    statusTag = '<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Cost Exit</span>';
-                } 
-                else {
-                    statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
-                }
+                else if (rawStatus === 'COST_EXIT') statusTag = '<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Cost Exit</span>';
+                else statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
 
-                // --- Time & Activation Logic ---
                 let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
-                let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
-                
                 let activeTimeStr = '--:--';
                 let waitDuration = '';
                 
                 if (t.logs && t.logs.length > 0) {
                     let activationLog = t.logs.find(l => l.includes('Order ACTIVATED'));
-                    
                     if (activationLog) {
                         let match = activationLog.match(/\[(.*?)\]/);
                         if (match && match[1]) {
                             activeTimeStr = match[1].slice(11, 16); 
+                            let addedDateObj = new Date(t.entry_time);
                             let activeDateObj = new Date(match[1]);
                             if(addedDateObj && activeDateObj) {
                                 let diff = activeDateObj - addedDateObj; 
@@ -145,11 +139,9 @@ function loadClosedTrades() {
                     }
                 }
 
-                // --- Actions ---
+                // --- Buttons ---
                 let editBtn = (t.order_type === 'SIMULATION') ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>` : '';
                 let delBtn = `<button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>`;
-                
-                // Sim Logs Button (Now uses btnStyle to persist visibility)
                 let simLogBtn = `<button id="btn-sim-log-${t.id}" class="btn btn-sm btn-light border text-primary py-0 px-2" style="${btnStyle} font-size:0.75rem;" onclick="showSimLogs('${t.id}')">🧪 Logs</button>`;
 
                 html += `
@@ -227,6 +219,15 @@ function loadClosedTrades() {
         $('#total_losses').text("Loss: ₹ " + totalLosses.toFixed(2));
         $('#total_potential').text("Max Potential: ₹ " + totalPotential.toFixed(2));
         $('#total_cap_hist').text("Funds Used: ₹ " + (totalCapital/100000).toFixed(2) + " L");
+        
+        // --- UPDATE SIM TOTAL BADGE ---
+        if(hasSimData) {
+            let totalDiff = totalSimPnl - dayTotal;
+            let diffSign = totalDiff >= 0 ? '+' : '';
+            $('#total_sim_pnl').show().html(`🔮 Sim Total: <b>₹ ${totalSimPnl.toFixed(2)}</b> <span class="small text-muted">(${diffSign}${totalDiff.toFixed(2)})</span>`);
+        } else {
+            $('#total_sim_pnl').hide();
+        }
     });
 }
 
@@ -246,7 +247,6 @@ function editSim(id) {
 }
 
 function showSimLogs(id) {
-    // Read from Cache
     let data = simResultsCache[id];
     if(!data || !data.logs || data.logs.length === 0) return alert("No simulation logs found.");
     $('#logModalBody').html(data.logs.join('<br>'));
@@ -277,6 +277,7 @@ async function runBatchSimulation() {
     // Reset Cache
     simResultsCache = {};
     $('.sim-result-badge').remove(); 
+    $('#total_sim_pnl').hide(); // Hide main badge until done or updated
     
     let totalSimPnl = 0;
     let totalOriginalPnl = 0;
@@ -302,7 +303,7 @@ async function runBatchSimulation() {
                 totalSimPnl += res.simulated_pnl;
                 totalOriginalPnl += (res.original_pnl || t.pnl);
                 
-                // SAVE FULL RESULT TO CACHE (Fixes persistence)
+                // Save to Cache
                 simResultsCache[t.id] = res;
                 $(`#btn-sim-log-${t.id}`).show();
 
@@ -334,15 +335,18 @@ async function runBatchSimulation() {
         await new Promise(r => setTimeout(r, 100)); 
     }
     
-    // Batch Summary Modal
-    let totalDiff = totalSimPnl - totalOriginalPnl;
+    // Show Final Badge Immediately
+    let grandDiff = totalSimPnl - totalOriginalPnl;
+    let grandDiffSign = grandDiff >= 0 ? '+' : '';
+    $('#total_sim_pnl').show().html(`🔮 Sim Total: <b>₹ ${totalSimPnl.toFixed(2)}</b> <span class="small text-muted">(${grandDiffSign}${grandDiff.toFixed(2)})</span>`);
     
+    // Batch Summary Modal
     $('#sim_res_total').text("₹ " + totalSimPnl.toFixed(2));
     
-    let diffSign = totalDiff >= 0 ? '+' : '';
-    $('#sim_res_diff').text(`${diffSign} ₹ ${totalDiff.toFixed(2)} vs Original`);
+    let diffSign = grandDiff >= 0 ? '+' : '';
+    $('#sim_res_diff').text(`${diffSign} ₹ ${grandDiff.toFixed(2)} vs Original`);
     
-    if(totalDiff >= 0) $('#sim_res_diff').addClass('text-success').removeClass('text-danger');
+    if(grandDiff >= 0) $('#sim_res_diff').addClass('text-success').removeClass('text-danger');
     else $('#sim_res_diff').addClass('text-danger').removeClass('text-success');
 
     $('#sim_res_improved').text(improvedCount);
