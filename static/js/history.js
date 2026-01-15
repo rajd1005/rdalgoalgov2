@@ -1,113 +1,132 @@
-// Global variable
-var allClosedTrades = [];
-
-$(document).ready(function() {
-    // 1. Initialize Date Input but don't force strict filtering initially
-    var d = new Date();
-    var day = ("0" + d.getDate()).slice(-2);
-    var month = ("0" + (d.getMonth() + 1)).slice(-2);
-    var today = d.getFullYear() + "-" + month + "-" + day;
-    
-    var dateInput = document.getElementById('hist_date');
-    if (dateInput) {
-        dateInput.value = today;
-    }
-
-    // 2. Load History
-    loadClosedTrades();
-});
-
-// --- SAFE HELPERS (Prevents JS Crash) ---
-function safeFixed(val, d=2) {
-    if (val === undefined || val === null || isNaN(val)) return (0).toFixed(d);
-    return parseFloat(val).toFixed(d);
-}
-
-function getSafeBadge(mode) {
-    if(mode === 'LIVE') return '<span class="badge bg-danger">LIVE</span>';
-    return '<span class="badge bg-secondary">PAPER</span>';
-}
-
 function loadClosedTrades() {
-    // Get filter values
-    let filterDate = $('#hist_date').val(); 
-    let filterType = $('#hist_filter').val();
-    
-    $('#hist-container').html(`
-        <div class="text-center mt-5 text-muted">
-            <div class="spinner-border text-primary" role="status"></div>
-            <p class="mt-2 small">Loading history...</p>
-        </div>
-    `);
+    let filterDate = $('#hist_date').val(); let filterType = $('#hist_filter').val();
+    $.get('/api/closed_trades', trades => {
+        allClosedTrades = trades; let html = ''; 
+        let dayTotal = 0;
+        let totalWins = 0;
+        let totalLosses = 0;
+        let totalPotential = 0;
+        let totalCapital = 0; 
 
-    $.get('/api/closed_trades', function(trades) {
-        allClosedTrades = trades || []; 
-        let html = ''; 
-        let dayTotal = 0, totalWins = 0, totalLosses = 0, totalPotential = 0, totalCapital = 0;
-
-        // Filter Logic
-        let filtered = allClosedTrades.filter(function(t) {
-            // Loose Date Filter: If date is set, match start. If empty, match all.
-            if (filterDate && t.exit_time && !t.exit_time.startsWith(filterDate)) return false;
-            
-            let mode = t.mode || 'PAPER';
-            if (filterType !== 'ALL' && mode !== filterType) return false;
-            return true;
-        });
-
-        if(filtered.length === 0) {
-            html = '<div class="text-center p-4 text-muted bg-light border rounded mt-2">No History for this Date/Filter</div>';
-        } else {
-            filtered.forEach(function(t) {
-                // Safe Data Access
-                let pnl = t.pnl || 0;
-                let qty = t.quantity || 0;
-                let entry = t.entry_price || 0;
-                let exit = t.exit_price || 0;
-                let ltp = t.current_ltp || exit;
-                let sl = t.sl || 0;
-                let targets = t.targets || [0,0,0];
-                let mode = t.mode || 'PAPER';
-
-                dayTotal += pnl; 
-                if(pnl > 0) totalWins += pnl; else totalLosses += pnl;
-                totalCapital += (entry * qty);
-
-                let color = pnl >= 0 ? 'text-success' : 'text-danger';
-                let badge = getSafeBadge(mode);
+        let filtered = trades.filter(t => t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType));
+        if(filtered.length === 0) html = '<div class="text-center p-4 text-muted">No History for this Date/Filter</div>';
+        else {
+            filtered.forEach(t => {
+                dayTotal += t.pnl; 
+                if(t.pnl > 0) totalWins += t.pnl;
+                else totalLosses += t.pnl;
                 
-                // Potential
+                let invested = t.entry_price * t.quantity; 
+                totalCapital += invested;
+
+                let color = t.pnl >= 0 ? 'text-success' : 'text-danger';
+                let cat = getTradeCategory(t); 
+                let badge = getMarkBadge(cat);
+                
+                // --- Potential Profit Logic ---
                 let potHtml = '';
                 let potTag = ''; 
-                let mh = t.made_high || entry;
-                if(mh < exit) mh = exit;
-                let pot = (mh - entry) * qty;
+                let isPureSL = (t.status === 'SL_HIT' && (!t.targets_hit_indices || t.targets_hit_indices.length === 0));
 
-                // Only show potential if SL was NOT hit blindly (meaning we had a chance)
-                if (t.status !== 'SL_HIT' || (t.targets_hit_indices && t.targets_hit_indices.length > 0)) {
+                if (!isPureSL) {
+                    let mh = t.made_high || t.entry_price;
+                    if(mh < t.exit_price) mh = t.exit_price; 
+                    let pot = (mh - t.entry_price) * t.quantity;
+                    
                     if(pot > 0) {
-                        totalPotential += pot;
-                        if (targets.length >= 3) {
-                            let bStyle = 'badge bg-white text-success border border-success';
-                            if (mh >= targets[2]) potTag = `<span class="${bStyle}" style="font-size:0.65rem;">Pot. T3</span>`;
-                            else if (mh >= targets[1]) potTag = `<span class="${bStyle}" style="font-size:0.65rem;">Pot. T2</span>`;
-                            else if (mh >= targets[0]) potTag = `<span class="${bStyle}" style="font-size:0.65rem;">Pot. T1</span>`;
+                        totalPotential += pot; 
+                        
+                        if (t.targets && t.targets.length >= 3) {
+                            let badgeStyle = 'badge bg-white text-success border border-success';
+                            if (mh >= t.targets[2]) potTag = `<span class="${badgeStyle}" style="font-size:0.65rem;">Pot. T3</span>`;
+                            else if (mh >= t.targets[1]) potTag = `<span class="${badgeStyle}" style="font-size:0.65rem;">Pot. T2</span>`;
+                            else if (mh >= t.targets[0]) potTag = `<span class="${badgeStyle}" style="font-size:0.65rem;">Pot. T1</span>`;
                         }
-                        potHtml = `<div class="mt-2 p-1 rounded bg-light border border-warning border-opacity-25 d-flex justify-content-between align-items-center" style="font-size:0.75rem;">
-                            <span class="text-muted">High: <b>${safeFixed(mh)}</b></span>
-                            <span class="text-success fw-bold">Max Pot: ₹${safeFixed(pot,0)}</span>
+                        
+                        potHtml = `
+                        <div class="mt-2 p-1 rounded bg-light border border-warning border-opacity-25 d-flex justify-content-between align-items-center" style="font-size:0.75rem;">
+                            <span class="text-muted">High: <b>${mh.toFixed(2)}</b></span>
+                            <span class="text-success fw-bold">Max Potential: ₹${pot.toFixed(0)}</span>
                         </div>`;
                     }
                 }
 
-                let statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${t.status||'CLOSED'}</span>`;
-                if(t.status === 'SL_HIT') statusTag = '<span class="badge bg-danger" style="font-size:0.65rem;">SL Hit</span>';
-                else if((t.status||'').includes('TARGET')) statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">Target Hit</span>';
-
-                let timeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
+                // --- Status Tags ---
+                let statusTag = '';
+                let rawStatus = t.status || '';
                 
+                if (rawStatus === 'SL_HIT') {
+                    statusTag = '<span class="badge bg-danger" style="font-size:0.65rem;">Stop-Loss</span>';
+                } 
+                else if (rawStatus.includes('TARGET')) {
+                     let maxHit = -1;
+                     if (t.targets_hit_indices && t.targets_hit_indices.length > 0) {
+                         maxHit = Math.max(...t.targets_hit_indices);
+                     } else {
+                         if(rawStatus.includes('1')) maxHit = 0;
+                         if(rawStatus.includes('2')) maxHit = 1;
+                         if(rawStatus.includes('3')) maxHit = 2;
+                     }
+
+                     if (maxHit === 0) statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T1 Hit</span>';
+                     else if (maxHit === 1) statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T2 Hit</span>';
+                     else statusTag = '<span class="badge bg-success" style="font-size:0.65rem;">T3 Hit</span>'; 
+                } 
+                else if (rawStatus === 'COST_EXIT') {
+                    statusTag = '<span class="badge bg-warning text-dark" style="font-size:0.65rem;">Cost Exit</span>';
+                } 
+                else {
+                    statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
+                }
+
+                // --- NEW TIME & ACTIVATION DURATION LOGIC ---
+                
+                // 1. Added Time (From DB)
+                let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
+                let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
+                
+                // 2. Active Time (Parse Logs)
+                let activeTimeStr = '--:--';
+                let waitDuration = '';
+                
+                if (t.logs && t.logs.length > 0) {
+                    let activationLog = t.logs.find(l => l.includes('Order ACTIVATED'));
+                    
+                    if (activationLog) {
+                        // Extract [YYYY-MM-DD HH:MM:SS]
+                        let match = activationLog.match(/\[(.*?)\]/);
+                        if (match && match[1]) {
+                            activeTimeStr = match[1].slice(11, 16); // Extract HH:MM
+                            
+                            // Calculate Duration
+                            let activeDateObj = new Date(match[1]);
+                            if(addedDateObj && activeDateObj) {
+                                let diff = activeDateObj - addedDateObj; // in ms
+                                if(diff > 0) {
+                                    let totalSecs = Math.floor(diff / 1000);
+                                    let m = Math.floor(totalSecs / 60);
+                                    let s = totalSecs % 60;
+                                    waitDuration = `<span class="text-muted ms-1" style="font-size:0.65rem;">(${m}m ${s}s)</span>`;
+                                }
+                            }
+                        }
+                    } else {
+                        // Check if it was OPEN immediately (Market Order)
+                        let firstLog = t.logs[0] || "";
+                        if (firstLog.includes("Status: OPEN")) {
+                            activeTimeStr = addedTimeStr;
+                            waitDuration = `<span class="text-muted ms-1" style="font-size:0.65rem;">(Instant)</span>`;
+                        }
+                    }
+                }
+
+                // --- Actions ---
+                let editBtn = (t.order_type === 'SIMULATION') ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>` : '';
+                let delBtn = `<button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>`;
+                
+                // --- Mobile-First Card Design ---
                 html += `
-                <div class="card mb-2 shadow-sm border-0" id="hist-card-${t.id}">
+                <div class="card mb-2 shadow-sm border-0">
                     <div class="card-body p-2">
                         <div class="d-flex justify-content-between align-items-start mb-1">
                             <div>
@@ -117,117 +136,79 @@ function loadClosedTrades() {
                                 </div>
                             </div>
                             <div class="text-end">
-                                <div class="fw-bold h6 m-0 ${color}">${safeFixed(pnl)}</div>
+                                <div class="fw-bold h6 m-0 ${color}">${t.pnl.toFixed(2)}</div>
                             </div>
                         </div>
-                        <hr class="my-1 opacity-25">
+
+                        <hr class="my-1 text-muted opacity-25">
+
                         <div class="row g-0 text-center mt-2" style="font-size:0.75rem;">
-                            <div class="col-3 border-end"> <div class="text-muted small">Qty</div> <div class="fw-bold">${qty}</div> </div>
-                            <div class="col-3 border-end"> <div class="text-muted small">Entry</div> <div class="fw-bold">${safeFixed(entry)}</div> </div>
-                            <div class="col-3 border-end"> <div class="text-muted small">Exit</div> <div class="fw-bold">${safeFixed(exit)}</div> </div>
-                            <div class="col-3"> <div class="text-muted small">Fund</div> <div class="fw-bold">₹${safeFixed(entry*qty/1000, 1)}k</div> </div>
+                            <div class="col-3 border-end">
+                                <div class="text-muted small">Qty</div>
+                                <div class="fw-bold text-dark">${t.quantity}</div>
+                            </div>
+                            <div class="col-3 border-end">
+                                <div class="text-muted small">Entry</div>
+                                <div class="fw-bold text-dark">${t.entry_price.toFixed(2)}</div>
+                            </div>
+                            <div class="col-3 border-end">
+                                <div class="text-muted small">LTP</div>
+                                <div class="fw-bold text-dark">${t.current_ltp ? t.current_ltp.toFixed(2) : t.exit_price.toFixed(2)}</div>
+                            </div>
+                            <div class="col-3">
+                                <div class="text-muted small">Fund</div>
+                                <div class="fw-bold text-dark">₹${(invested/1000).toFixed(1)}k</div>
+                            </div>
                         </div>
+
                         <div class="d-flex justify-content-between align-items-center mt-2 px-1 bg-light rounded py-1" style="font-size:0.75rem;">
-                            <span class="text-muted">Time: <b>${timeStr}</b></span>
+                            <span class="text-muted">Added: <b>${addedTimeStr}</b></span>
+                            <div class="d-flex align-items-center">
+                                <span class="text-primary">Active: <b>${activeTimeStr}</b></span>
+                                ${waitDuration}
+                            </div>
                         </div>
+
+                        <div class="d-flex justify-content-between align-items-center mt-2 px-1" style="font-size:0.75rem;">
+                             <span class="text-danger fw-bold">SL: ${t.sl.toFixed(1)}</span>
+                             <span class="text-muted">T: ${t.targets[0].toFixed(0)} | ${t.targets[1].toFixed(0)} | ${t.targets[2].toFixed(0)}</span>
+                        </div>
+
                         ${potHtml}
-                        <div class="sim-result-container"></div>
+
                         <div class="d-flex justify-content-end gap-2 mt-2 pt-1 border-top border-light">
-                            <button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>
-                            <button class="btn btn-sm btn-light border text-muted py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>
+                            ${editBtn}
+                            ${delBtn}
+                            <button class="btn btn-sm btn-light border text-muted py-0 px-2" style="font-size:0.75rem;" onclick="showLogs('${t.id}', 'closed')">📜 Logs</button>
                         </div>
                     </div>
                 </div>`;
             });
         }
-        $('#hist-container').html(html);
+        $('#hist-container').html(html); 
         
-        // Update Stats
-        $('#day_pnl').text("₹ " + safeFixed(dayTotal));
-        $('#day_pnl').removeClass('bg-success bg-danger').addClass(dayTotal >= 0 ? 'bg-success' : 'bg-danger');
-        $('#total_wins').text("Wins: ₹ " + safeFixed(totalWins));
-        $('#total_losses').text("Loss: ₹ " + safeFixed(totalLosses));
-        $('#total_potential').text("Max Pot: ₹ " + safeFixed(totalPotential));
-        $('#total_cap_hist').text("Funds: ₹ " + safeFixed(totalCapital/100000, 2) + " L");
+        // Update Summary Badges
+        $('#day_pnl').text("₹ " + dayTotal.toFixed(2));
+        if(dayTotal >= 0) $('#day_pnl').removeClass('bg-danger').addClass('bg-success'); else $('#day_pnl').removeClass('bg-success').addClass('bg-danger');
 
-        addSimButton();
-
-    }).fail(function() {
-        $('#hist-container').html('<div class="text-danger text-center mt-4">Failed to load history (API Error).</div>');
+        $('#total_wins').text("Wins: ₹ " + totalWins.toFixed(2));
+        $('#total_losses').text("Loss: ₹ " + totalLosses.toFixed(2));
+        $('#total_potential').text("Max Potential: ₹ " + totalPotential.toFixed(2));
+        $('#total_cap_hist').text("Funds Used: ₹ " + (totalCapital/100000).toFixed(2) + " L");
     });
 }
 
 function deleteTrade(id) { 
-    if(confirm("Delete trade?")) $.post('/api/delete_trade/' + id, function(r) { if(r.status === 'success') loadClosedTrades(); }); 
+    if(confirm("Delete trade?")) $.post('/api/delete_trade/' + id, r => { if(r.status === 'success') loadClosedTrades(); else alert('Failed to delete'); }); 
 }
 
 function editSim(id) {
     let t = allClosedTrades.find(x => x.id == id); if(!t) return;
     $('.dashboard-tab').hide(); $('#history').show(); $('.nav-btn').removeClass('active'); $('.nav-btn').last().addClass('active');
     if(t.raw_params) {
-        // Basic load attempt into Trade Tab fields if available
-        if($('#h_sym').length) {
-            $('#h_sym').val(t.raw_params.symbol); $('#h_qty').val(t.quantity);
-            alert("Parameters loaded into Simulator tab.");
-        }
-    }
-}
-
-function addSimButton() {
-    if($('#sim-btn').length === 0) {
-        $('#closed .custom-card .d-flex.gap-1').append(
-            `<button id="sim-btn" class="btn btn-sm btn-outline-info fw-bold py-0" style="font-size: 0.8rem; border-width: 2px;" data-bs-toggle="modal" data-bs-target="#simModal">🧪 What-If</button>`
-        );
-    }
-}
-
-async function runBatchSimulation() {
-    $('#simModal').modal('hide');
-    let trades = allClosedTrades;
-    let sl_pts = parseFloat($('#sim_sl').val()) || 0;
-    let mult = parseInt($('#sim_mult').val()) || 1;
-    let r1 = parseFloat($('#sim_r1').val()) || 0.5;
-    let r2 = parseFloat($('#sim_r2').val()) || 1.0;
-    let r3 = parseFloat($('#sim_r3').val()) || 1.5;
-    let l1 = parseInt($('#sim_l1').val()) || 0;
-    let l2 = parseInt($('#sim_l2').val()) || 0;
-    let l3 = parseInt($('#sim_l3').val()) || 0;
-    let c1 = $('#sim_c1').is(':checked');
-    let c2 = $('#sim_c2').is(':checked');
-    let c3 = $('#sim_c3').is(':checked');
-
-    let filterDate = $('#hist_date').val(); 
-    let filterType = $('#hist_filter').val();
-
-    for (let t of trades) {
-        if (filterDate && t.exit_time && !t.exit_time.startsWith(filterDate)) continue;
-        if (filterType !== 'ALL' && (t.mode||'PAPER') !== filterType) continue;
-
-        let entry = t.entry_price || 0;
-        let payload = {
-            trade_id: t.id,
-            sl_points: sl_pts,
-            exit_multiplier: mult,
-            targets: [entry + (sl_pts * r1), entry + (sl_pts * r2), entry + (sl_pts * r3)],
-            target_controls: [{enabled:true,lots:l1,trail_to_entry:c1},{enabled:true,lots:l2,trail_to_entry:c2},{enabled:true,lots:l3>0?l3:1000,trail_to_entry:c3}],
-            trailing_sl: 0, sl_to_entry: 0
-        };
-
-        try {
-            let resContainer = $(`#hist-card-${t.id} .sim-result-container`);
-            resContainer.html('<div class="small text-info">⏳ ...</div>');
-            let res = await $.ajax({type: "POST", url: '/api/simulate_trade', data: JSON.stringify(payload), contentType: "application/json"});
-            
-            if(res.status === 'success') {
-                let diff = res.pnl - (t.pnl||0);
-                resContainer.html(`<div class="mt-1 p-1 bg-white border border-info rounded small">
-                    <span class="text-info fw-bold">What-If: ₹${safeFixed(res.pnl)}</span>
-                    <span class="${diff>=0?'text-success':'text-danger'}">(${diff>=0?'+':''}${safeFixed(diff)})</span>
-                    <br><span class="text-muted">${res.final_status} @ ${safeFixed(res.exit_price)}</span>
-                </div>`);
-            } else {
-                resContainer.html(`<div class="text-danger small">Err: ${res.message}</div>`);
-            }
-        } catch(e) { console.error(e); }
-    }
+        $('#h_sym').val(t.raw_params.symbol); $('#h_entry').val(t.entry_price); $('#h_qty').val(t.quantity); $('#h_time').val(t.raw_params.time);
+        $(`input[name="h_type"][value="${t.raw_params.type}"]`).prop('checked', true);
+        loadDetails('#h_sym', '#h_exp', 'input[name="h_type"]:checked', '#h_qty', '#h_sl_pts');
+        setTimeout(() => { $('#h_exp').val(t.raw_params.expiry).change(); setTimeout(() => { $('#h_str').val(t.raw_params.strike).change(); }, 500); }, 800);
+    } else alert("Old trade format.");
 }
