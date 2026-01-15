@@ -41,22 +41,30 @@ function loadSettings() {
                 $(`#${k}_a1`).prop('checked', tgts[0].active);
                 $(`#${k}_l1`).val(tgts[0].lots > 0 && !tgts[0].full ? tgts[0].lots : '');
                 $(`#${k}_f1`).prop('checked', tgts[0].full);
-                $(`#${k}_c1`).prop('checked', tgts[0].trail_to_entry || false); // Added
+                $(`#${k}_c1`).prop('checked', tgts[0].trail_to_entry || false);
                 
                 // T2
                 $(`#${k}_a2`).prop('checked', tgts[1].active);
                 $(`#${k}_l2`).val(tgts[1].lots > 0 && !tgts[1].full ? tgts[1].lots : '');
                 $(`#${k}_f2`).prop('checked', tgts[1].full);
-                $(`#${k}_c2`).prop('checked', tgts[1].trail_to_entry || false); // Added
+                $(`#${k}_c2`).prop('checked', tgts[1].trail_to_entry || false);
 
                 // T3
                 $(`#${k}_a3`).prop('checked', tgts[2].active);
                 $(`#${k}_l3`).val(tgts[2].lots > 0 && !tgts[2].full ? tgts[2].lots : '');
                 $(`#${k}_f3`).prop('checked', tgts[2].full);
-                $(`#${k}_c3`).prop('checked', tgts[2].trail_to_entry || false); // Added
+                $(`#${k}_c3`).prop('checked', tgts[2].trail_to_entry || false);
 
                 renderSLTable(m);
             });
+
+            // --- LOAD TELEGRAM SETTINGS ---
+            if(settings.telegram) {
+                $('#tg_token').val(settings.telegram.bot_token || '');
+                $('#tg_chat').val(settings.telegram.channel_id || '');
+                $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
+            }
+
             if (typeof updateDisplayValues === "function") updateDisplayValues(); 
         }
     });
@@ -93,22 +101,29 @@ function saveSettings() {
                 active: $(`#${k}_a1`).is(':checked'),
                 full: $(`#${k}_f1`).is(':checked'),
                 lots: $(`#${k}_f1`).is(':checked') ? 1000 : (parseInt($(`#${k}_l1`).val()) || 0),
-                trail_to_entry: $(`#${k}_c1`).is(':checked') // Added
+                trail_to_entry: $(`#${k}_c1`).is(':checked')
             },
             {
                 active: $(`#${k}_a2`).is(':checked'),
                 full: $(`#${k}_f2`).is(':checked'),
                 lots: $(`#${k}_f2`).is(':checked') ? 1000 : (parseInt($(`#${k}_l2`).val()) || 0),
-                trail_to_entry: $(`#${k}_c2`).is(':checked') // Added
+                trail_to_entry: $(`#${k}_c2`).is(':checked')
             },
             {
                 active: $(`#${k}_a3`).is(':checked'),
                 full: $(`#${k}_f3`).is(':checked'),
                 lots: $(`#${k}_f3`).is(':checked') ? 1000 : (parseInt($(`#${k}_l3`).val()) || 0),
-                trail_to_entry: $(`#${k}_c3`).is(':checked') // Added
+                trail_to_entry: $(`#${k}_c3`).is(':checked')
             }
         ];
     });
+
+    // --- SAVE TELEGRAM SETTINGS ---
+    settings.telegram = {
+        bot_token: $('#tg_token').val().trim(),
+        channel_id: $('#tg_chat').val().trim(),
+        enable_notifications: $('#tg_enable').is(':checked')
+    };
 
     $.ajax({ 
         type: "POST", 
@@ -119,11 +134,24 @@ function saveSettings() {
     });
 }
 
+function testTelegram() {
+    let token = $('#tg_token').val().trim();
+    let chat = $('#tg_chat').val().trim();
+    if(!token || !chat) { alert("Enter Token & ID first"); return; }
+    
+    $.post('/api/test_telegram', { token: token, chat_id: chat }, function(res) {
+        if(res.status === 'success') alert("✅ Message Sent Successfully!");
+        else alert("❌ Error: " + res.message);
+    });
+}
+
 function renderWatchlist() {
     let wl = settings.watchlist || [];
     let opts = '<option value="">📺 Select</option>';
     wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
     $('#trade_watch').html(opts);
+    // Also update import modal watchlist if it exists
+    if($('#imp_watch').length) $('#imp_watch').html(opts);
 }
 
 function addToWatchlist(inputId) {
