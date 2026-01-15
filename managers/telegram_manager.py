@@ -54,7 +54,7 @@ class TelegramManager:
         symbol = trade.get('symbol', 'Unknown')
         mode = trade.get('mode', 'PAPER')
         qty = trade.get('quantity', 0)
-        price = trade.get('entry_price', 0)
+        entry_price = trade.get('entry_price', 0)
         
         # Determine Thread ID (Reply to the original "Trade Added" message)
         thread_id = trade.get('telegram_msg_id')
@@ -82,7 +82,7 @@ class TelegramManager:
                 f"Mode: {mode}\n"
                 f"Type: {order_type}\n"
                 f"Qty: {qty}\n"
-                f"Entry: {price}\n"
+                f"Entry: {entry_price}\n"
                 f"SL: {sl}\n"
                 f"Targets: {targets}\n"
                 f"Time: {action_time}"
@@ -123,10 +123,32 @@ class TelegramManager:
             t_data = extra_data if isinstance(extra_data, dict) else {}
             t_num = t_data.get('t_num', '?')
             t_price = t_data.get('price', 0)
-            msg = f"🎯 <b>Target {t_num} HIT</b>\nPrice: {t_price}\nTime: {action_time}"
+            
+            # Calculate Max Potential
+            pot_pnl = (t_price - entry_price) * qty
+            
+            msg = (
+                f"🎯 <b>Target {t_num} HIT</b>\n"
+                f"Price: {t_price}\n"
+                f"Max Potential: {pot_pnl:.2f}\n"
+                f"Time: {action_time}"
+            )
             
         elif event_type == "HIGH_MADE":
-            msg = f"📈 <b>New High Made: {extra_data}</b>\nTime: {action_time}"
+            # Handle float (Live) or Dict (Import)
+            if isinstance(extra_data, dict):
+                h_price = extra_data.get('price')
+            else:
+                h_price = extra_data
+                
+            # Calculate Max Potential
+            pot_pnl = (h_price - entry_price) * qty
+            
+            msg = (
+                f"📈 <b>New High Made: {h_price}</b>\n"
+                f"Max Potential: {pot_pnl:.2f}\n"
+                f"Time: {action_time}"
+            )
 
         if msg:
             return self.send_message(msg, reply_to_id=thread_id)
