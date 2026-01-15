@@ -59,6 +59,16 @@ class TelegramManager:
         # Determine Thread ID (Reply to the original "Trade Added" message)
         thread_id = trade.get('telegram_msg_id')
         
+        # --- DETERMINE ACTION TIME ---
+        # Default to current time, but override if 'time' is passed in extra_data
+        action_time = get_time_str() 
+        
+        if isinstance(extra_data, dict) and 'time' in extra_data:
+            action_time = extra_data['time']
+        elif event_type == "NEW_TRADE" and trade.get('entry_time'):
+            # For NEW_TRADE, prefer the trade's specific entry timestamp
+            action_time = trade.get('entry_time')
+
         msg = ""
         
         if event_type == "NEW_TRADE":
@@ -75,7 +85,7 @@ class TelegramManager:
                 f"Entry: {price}\n"
                 f"SL: {sl}\n"
                 f"Targets: {targets}\n"
-                f"Time: {get_time_str()}"
+                f"Time: {action_time}"
             )
             # New trades start a new thread, so no reply_id needed
             return self.send_message(msg)
@@ -85,33 +95,38 @@ class TelegramManager:
             return None
 
         if event_type == "ACTIVE":
-            msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {extra_data}"
+            # Handle float (Live) or Dict (Import)
+            fill_price = extra_data['price'] if isinstance(extra_data, dict) else extra_data
+            msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {fill_price}\nTime: {action_time}"
             
         elif event_type == "UPDATE":
             update_text = extra_data if extra_data else ""
             if update_text:
-                msg = f"✏️ <b>Trade Update</b>\n{update_text}"
+                msg = f"✏️ <b>Trade Update</b>\n{update_text}\nTime: {action_time}"
             else:
                 msg = (
                     f"✏️ <b>Protection Updated</b>\n"
                     f"New SL: {trade.get('sl')}\n"
                     f"Trailing: {trade.get('trailing_sl')}\n"
-                    f"Targets: {trade.get('targets')}"
+                    f"Targets: {trade.get('targets')}\n"
+                    f"Time: {action_time}"
                 )
 
         elif event_type == "SL_HIT":
-            pnl = extra_data if extra_data else 0
+            # Handle float (Live) or Dict (Import)
+            pnl = extra_data.get('pnl') if isinstance(extra_data, dict) else (extra_data if extra_data else 0)
             exit_price = trade.get('exit_price', 0)
-            msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}"
+            msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}\nTime: {action_time}"
 
         elif event_type == "TARGET_HIT":
+            # extra_data is always a dict for Target Hit
             t_data = extra_data if isinstance(extra_data, dict) else {}
             t_num = t_data.get('t_num', '?')
             t_price = t_data.get('price', 0)
-            msg = f"🎯 <b>Target {t_num} HIT</b>\nPrice: {t_price}"
+            msg = f"🎯 <b>Target {t_num} HIT</b>\nPrice: {t_price}\nTime: {action_time}"
             
         elif event_type == "HIGH_MADE":
-            msg = f"📈 <b>New High Made: {extra_data}</b>"
+            msg = f"📈 <b>New High Made: {extra_data}</b>\nTime: {action_time}"
 
         if msg:
             return self.send_message(msg, reply_to_id=thread_id)
