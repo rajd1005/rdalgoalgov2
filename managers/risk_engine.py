@@ -6,6 +6,7 @@ from database import db, TradeHistory
 from managers.persistence import TRADE_LOCK, load_trades, save_trades, load_history, get_risk_state, save_risk_state
 from managers.common import IST, log_event
 from managers.broker_ops import manage_broker_sl, move_to_history
+from managers.telegram_manager import bot as telegram_bot
 
 def check_global_exit_conditions(kite, mode, mode_settings):
     """
@@ -161,6 +162,9 @@ def update_risk_engine(kite):
                     t['highest_ltp'] = t['entry_price']
                     log_event(t, f"Order ACTIVATED @ {ltp}")
                     
+                    # --- TELEGRAM NOTIFICATION: ACTIVE ---
+                    telegram_bot.notify_trade_event(t, "ACTIVE", ltp)
+                    
                     if t['mode'] == 'LIVE':
                         try: 
                             # Place Market Buy
@@ -182,8 +186,15 @@ def update_risk_engine(kite):
 
             # B. ACTIVE ORDERS
             if t['status'] in ['OPEN', 'PROMOTED_LIVE']:
-                t['highest_ltp'] = max(t.get('highest_ltp', 0), ltp)
-                t['made_high'] = t['highest_ltp']
+                current_high = t.get('highest_ltp', 0)
+                if ltp > current_high:
+                    t['highest_ltp'] = ltp
+                    t['made_high'] = ltp
+                    
+                    # --- TELEGRAM NOTIFICATION: HIGH MADE ---
+                    # Only if T3 (index 2) is already hit
+                    if 2 in t.get('targets_hit_indices', []):
+                         telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
                 
                 # --- Step Trailing Logic ---
                 if t.get('trailing_sl', 0) > 0:
@@ -231,6 +242,9 @@ def update_risk_engine(kite):
                             t.setdefault('targets_hit_indices', []).append(i)
                             conf = controls[i]
                             
+                            # --- TELEGRAM NOTIFICATION: TARGET HIT ---
+                            telegram_bot.notify_trade_event(t, "TARGET_HIT", {'t_num': i+1, 'price': tgt})
+
                             # Feature: Trail SL to Entry on Target Hit
                             if conf.get('trail_to_entry') and t['sl'] < t['entry_price']:
                                 t['sl'] = t['entry_price']
@@ -273,6 +287,14 @@ def update_risk_engine(kite):
                         except: pass
                     
                     final_price = t['sl'] if exit_reason=="SL_HIT" else (t['targets'][-1] if exit_reason=="TARGET_HIT" else ltp)
+                    
+                    # --- TELEGRAM NOTIFICATION: SL HIT (Exit) ---
+                    if exit_reason == "SL_HIT":
+                        trade_snap = t.copy()
+                        trade_snap['exit_price'] = final_price
+                        pnl_realized = (final_price - t['entry_price']) * t['quantity']
+                        telegram_bot.notify_trade_event(trade_snap, "SL_HIT", pnl_realized)
+                    
                     move_to_history(t, exit_reason, final_price)
                 else:
                     active_list.append(t)
