@@ -3,6 +3,7 @@ import smart_trader
 from managers.persistence import TRADE_LOCK, load_trades, save_trades
 from managers.common import get_time_str, log_event, get_exchange
 from managers.broker_ops import manage_broker_sl, move_to_history
+from managers.telegram_manager import bot as telegram_bot
 
 def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1):
     """
@@ -146,6 +147,11 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             "logs": logs
         }
         
+        # --- SEND TELEGRAM NOTIFICATION ---
+        msg_id = telegram_bot.notify_trade_event(record, "NEW_TRADE")
+        if msg_id:
+            record['telegram_msg_id'] = msg_id
+        
         trades.append(record)
         save_trades(trades)
         return {"status": "success", "trade": record}
@@ -230,6 +236,10 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                         t['target_controls'] = target_controls
                 
                 log_event(t, f"Manual Update: SL {t['sl']}{entry_msg}. Trailing: {t['trailing_sl']} pts. Multiplier: {exit_multiplier}x")
+                
+                # --- TELEGRAM UPDATE ---
+                telegram_bot.notify_trade_event(t, "UPDATE")
+                
                 updated = True
                 break
                 
@@ -360,6 +370,10 @@ def promote_to_live(kite, trade_id):
                         
                     t['mode'] = "LIVE"
                     t['status'] = "PROMOTED_LIVE"
+                    
+                    # Notify Promotion
+                    telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
+                    
                     save_trades(trades)
                     return True
                 except: 
