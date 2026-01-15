@@ -1,5 +1,5 @@
 // Global variable to store trades
-var allClosedTrades = [];
+
 // Cache to store simulation results (Logs, P/L, Diff) so they persist across refreshes
 var simResultsCache = {}; 
 
