@@ -15,7 +15,7 @@ class TelegramManager:
     def send_message(self, text, reply_to_id=None):
         """
         Sends a message to the configured Telegram Channel.
-        Returns the Message ID of the sent message (for threading).
+        Returns the Message ID of the sent message (for threading/replying).
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -25,7 +25,6 @@ class TelegramManager:
         chat_id = conf.get('channel_id')
 
         if not token or not chat_id:
-            print("⚠️ Telegram Config Missing")
             return None
 
         url = f"{self.base_url}{token}/sendMessage"
@@ -50,7 +49,7 @@ class TelegramManager:
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends a notification based on the event type.
-        Returns the Message ID if a new thread is started.
+        Returns the Message ID if a new thread is started (NEW_TRADE).
         """
         symbol = trade.get('symbol', 'Unknown')
         mode = trade.get('mode', 'PAPER')
@@ -64,20 +63,24 @@ class TelegramManager:
         
         if event_type == "NEW_TRADE":
             icon = "🔴" if mode == "LIVE" else "🟡"
+            order_type = trade.get('order_type', 'MARKET')
+            sl = trade.get('sl', 0)
+            targets = trade.get('targets', [])
+            
             msg = (
                 f"{icon} <b>NEW TRADE: {symbol}</b>\n"
                 f"Mode: {mode}\n"
-                f"Type: {trade.get('order_type', 'MARKET')}\n"
+                f"Type: {order_type}\n"
                 f"Qty: {qty}\n"
                 f"Entry: {price}\n"
-                f"SL: {trade.get('sl', 0)}\n"
-                f"Targets: {trade.get('targets', [])}\n"
+                f"SL: {sl}\n"
+                f"Targets: {targets}\n"
                 f"Time: {get_time_str()}"
             )
-            # New trades start a new thread, so no reply_id
+            # New trades start a new thread, so no reply_id needed
             return self.send_message(msg)
 
-        # For updates, we need a thread_id. If missing, we can't reply properly.
+        # For updates/exits, we need a thread_id. If missing, we can't reply properly.
         if not thread_id:
             return None
 
@@ -85,21 +88,27 @@ class TelegramManager:
             msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {extra_data}"
             
         elif event_type == "UPDATE":
-            msg = (
-                f"✏️ <b>Trade Update</b>\n"
-                f"New SL: {trade.get('sl')}\n"
-                f"Trailing: {trade.get('trailing_sl')}\n"
-                f"Targets: {trade.get('targets')}"
-            )
+            update_text = extra_data if extra_data else ""
+            if update_text:
+                msg = f"✏️ <b>Trade Update</b>\n{update_text}"
+            else:
+                msg = (
+                    f"✏️ <b>Protection Updated</b>\n"
+                    f"New SL: {trade.get('sl')}\n"
+                    f"Trailing: {trade.get('trailing_sl')}\n"
+                    f"Targets: {trade.get('targets')}"
+                )
 
         elif event_type == "SL_HIT":
             pnl = extra_data if extra_data else 0
-            msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {trade.get('exit_price')}\nP/L: {pnl}"
+            exit_price = trade.get('exit_price', 0)
+            msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}"
 
         elif event_type == "TARGET_HIT":
-            t_num = extra_data.get('t_num')
-            price = extra_data.get('price')
-            msg = f"🎯 <b>Target {t_num} HIT</b>\nPrice: {price}"
+            t_data = extra_data if isinstance(extra_data, dict) else {}
+            t_num = t_data.get('t_num', '?')
+            t_price = t_data.get('price', 0)
+            msg = f"🎯 <b>Target {t_num} HIT</b>\nPrice: {t_price}"
             
         elif event_type == "HIGH_MADE":
             msg = f"📈 <b>New High Made: {extra_data}</b>"
