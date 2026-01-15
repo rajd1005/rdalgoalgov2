@@ -289,3 +289,4 @@ async function runBatchSimulation() {
     }
     
     alert(`Analysis Complete! Hypothetical P/L: ₹ ${totalSimPnl.toFixed(2)}`);
+    }
