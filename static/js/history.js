@@ -126,7 +126,7 @@ function loadClosedTrades() {
                 
                 // --- Mobile-First Card Design ---
                 html += `
-                <div class="card mb-2 shadow-sm border-0">
+                <div class="card mb-2 shadow-sm border-0" id="hist-card-${t.id}">
                     <div class="card-body p-2">
                         <div class="d-flex justify-content-between align-items-start mb-1">
                             <div>
@@ -175,6 +175,8 @@ function loadClosedTrades() {
                         </div>
 
                         ${potHtml}
+                        
+                        <div class="sim-result-container"></div>
 
                         <div class="d-flex justify-content-end gap-2 mt-2 pt-1 border-top border-light">
                             ${editBtn}
@@ -195,6 +197,9 @@ function loadClosedTrades() {
         $('#total_losses').text("Loss: ₹ " + totalLosses.toFixed(2));
         $('#total_potential').text("Max Potential: ₹ " + totalPotential.toFixed(2));
         $('#total_cap_hist').text("Funds Used: ₹ " + (totalCapital/100000).toFixed(2) + " L");
+
+        // INJECT SIM BUTTON
+        addSimButton();
     });
 }
 
@@ -211,4 +216,113 @@ function editSim(id) {
         loadDetails('#h_sym', '#h_exp', 'input[name="h_type"]:checked', '#h_qty', '#h_sl_pts');
         setTimeout(() => { $('#h_exp').val(t.raw_params.expiry).change(); setTimeout(() => { $('#h_str').val(t.raw_params.strike).change(); }, 500); }, 800);
     } else alert("Old trade format.");
+}
+
+function addSimButton() {
+    // Check if button already exists to avoid duplicates
+    if($('#sim-btn').length === 0) {
+        // Target the flex container inside the closed tab header
+        $('#closed .custom-card .d-flex.gap-1').append(
+            `<button id="sim-btn" class="btn btn-sm btn-outline-info fw-bold py-0" style="font-size: 0.8rem; border-width: 2px;" data-bs-toggle="modal" data-bs-target="#simModal">🧪 What-If</button>`
+        );
+    }
+}
+
+async function runBatchSimulation() {
+    $('#simModal').modal('hide');
+    let trades = allClosedTrades; // Globally available
+    
+    // Get Configuration from Modal
+    let sl_pts = parseFloat($('#sim_sl').val());
+    let mult = parseInt($('#sim_mult').val());
+    
+    // Ratios for Targets
+    let r1 = parseFloat($('#sim_r1').val()) || 0.5;
+    let r2 = parseFloat($('#sim_r2').val()) || 1.0;
+    let r3 = parseFloat($('#sim_r3').val()) || 1.5;
+    
+    // Target Controls
+    let l1 = parseInt($('#sim_l1').val()) || 0;
+    let l2 = parseInt($('#sim_l2').val()) || 0;
+    let l3 = parseInt($('#sim_l3').val()) || 0;
+    
+    let c1 = $('#sim_c1').is(':checked');
+    let c2 = $('#sim_c2').is(':checked');
+    let c3 = $('#sim_c3').is(':checked');
+
+    // Loop through currently filtered/visible trades
+    // We filter again based on what is currently in DOM or use the global filtered logic
+    // Using simple approach: Iterate all closed trades that match current filter in UI
+    
+    let filterDate = $('#hist_date').val(); 
+    let filterType = $('#hist_filter').val();
+
+    for (let t of trades) {
+        // Apply same filters as UI
+        if (!(t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType))) continue;
+
+        // Skip LIVE trades if you strictly want PAPER only simulations, 
+        // but user asked for "apply for all trade in list" so we process all.
+        
+        // Calculate new targets based on Entry Price + (SL Points * Ratio)
+        // Assuming BUY order logic (Targets > Entry). For SELL, logic differs but system seems BUY centric for Options?
+        // Let's assume standard BUY logic as per `strategy_manager` default.
+        
+        let t1_p = t.entry_price + (sl_pts * r1);
+        let t2_p = t.entry_price + (sl_pts * r2);
+        let t3_p = t.entry_price + (sl_pts * r3);
+
+        let payload = {
+            trade_id: t.id,
+            sl_points: sl_pts,
+            exit_multiplier: mult,
+            targets: [t1_p, t2_p, t3_p],
+            target_controls: [
+                { enabled: true, lots: l1, trail_to_entry: c1 },
+                { enabled: true, lots: l2, trail_to_entry: c2 },
+                { enabled: true, lots: l3 > 0 ? l3 : 1000, trail_to_entry: c3 } // Default T3 to full if 0
+            ],
+            trailing_sl: 0, 
+            sl_to_entry: 0
+        };
+
+        try {
+            let cardId = `#hist-card-${t.id}`;
+            let resultContainer = $(cardId).find('.sim-result-container');
+            
+            // Show Loading
+            resultContainer.html('<div class="mt-2 p-1 bg-light border border-info rounded text-center small text-info">⏳ Running What-If...</div>');
+
+            let res = await $.ajax({
+                type: "POST",
+                url: '/api/simulate_trade',
+                data: JSON.stringify(payload),
+                contentType: "application/json"
+            });
+
+            if (res.status === 'success') {
+                let diff = res.pnl - t.pnl;
+                let color = diff >= 0 ? 'text-success' : 'text-danger';
+                let sign = diff >= 0 ? '+' : '';
+                
+                let html = `
+                <div class="mt-2 p-1 bg-white border border-info rounded" style="font-size:0.75rem;">
+                    <div class="d-flex justify-content-between fw-bold">
+                        <span class="text-info">What-If P&L:</span>
+                        <span class="${res.pnl >= 0 ? 'text-success' : 'text-danger'}">₹ ${res.pnl.toFixed(2)}</span>
+                    </div>
+                    <div class="d-flex justify-content-between text-muted mt-1">
+                        <span>Diff: <b class="${color}">${sign}${diff.toFixed(2)}</b></span>
+                        <span>${res.final_status} @ ${res.exit_price.toFixed(2)}</span>
+                    </div>
+                </div>`;
+                
+                resultContainer.html(html);
+            } else {
+                resultContainer.html(`<div class="mt-2 text-danger small">Error: ${res.message}</div>`);
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
 }
