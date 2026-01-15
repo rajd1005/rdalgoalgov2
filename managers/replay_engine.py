@@ -52,6 +52,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         targets_hit_indices = []
         t_list = [float(x) for x in targets]
         
+        realized_pnl = 0.0  # <--- NEW: Track Realized P/L progressively
+        
         logs = [f"[{entry_time.strftime('%Y-%m-%d %H:%M:%S')}] 📋 Replay Import Started. Entry: {entry_price}. Trigger: {trigger_dir}"]
         
         final_status = "PENDING"
@@ -70,6 +72,11 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         final_status = "TIME_EXIT"
                         exit_reason = "TIME_EXIT"
                         final_exit_price = candle['open']
+                        
+                        # Add remaining P/L
+                        pnl_here = (final_exit_price - entry_price) * current_qty
+                        realized_pnl += pnl_here
+                        
                         logs.append(f"[{c_date_str}] ⏰ Universal Time Exit @ {final_exit_price}")
                         current_qty = 0
                         break
@@ -130,6 +137,11 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         final_status = "SL_HIT"
                         exit_reason = "SL_HIT"
                         final_exit_price = current_sl
+                        
+                        # Add remaining P/L
+                        pnl_here = (current_sl - entry_price) * current_qty
+                        realized_pnl += pnl_here
+                        
                         logs.append(f"[{c_date_str}] 🛑 SL Hit @ {current_sl}. Exited {current_qty} Qty.")
                         current_qty = 0
                         break
@@ -155,10 +167,18 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                     final_status = "TARGET_HIT"
                                     exit_reason = f"TARGET_{i+1}_HIT"
                                     final_exit_price = tgt
+                                    
+                                    # Add remaining P/L
+                                    pnl_here = (tgt - entry_price) * current_qty
+                                    realized_pnl += pnl_here
+                                    
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Full Exit.")
                                     current_qty = 0
                                     break 
                                 else:
+                                    # Partial Exit P/L
+                                    pnl_here = (tgt - entry_price) * exit_qty
+                                    realized_pnl += pnl_here
                                     current_qty -= exit_qty
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Partial Exit {exit_qty} Qty. Rem: {current_qty}")
                     
@@ -224,9 +244,9 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
             else:
                 # SCENARIO B: Trade CLOSED (History)
                 last_time = logs[-1].split(']')[0].replace('[', '')
-                pnl_calc = (final_exit_price - entry_price) * qty
+                
                 if "Closed:" not in logs[-1]:
-                    logs.append(f"[{last_time}] Closed: {final_status} @ {final_exit_price} | P/L ₹ {pnl_calc:.2f}")
+                    logs.append(f"[{last_time}] Closed: {final_status} @ {final_exit_price} | P/L ₹ {realized_pnl:.2f}")
 
                 record = {
                     "id": int(time.time()), 
@@ -244,7 +264,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
                     "logs": logs,
-                    "is_replay": True
+                    "is_replay": True,
+                    "pnl": realized_pnl # <--- Explicitly save Calculated P/L
                 }
                 move_to_history(record, exit_reason, final_exit_price)
                 return {"status": "success", "message": f"Simulation Complete. Closed: {exit_reason} @ {final_exit_price}"}
