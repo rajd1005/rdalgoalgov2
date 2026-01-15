@@ -52,7 +52,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         targets_hit_indices = []
         t_list = [float(x) for x in targets]
         
-        realized_pnl = 0.0  # <--- NEW: Track Realized P/L progressively
+        realized_pnl = 0.0 
         
         logs = [f"[{entry_time.strftime('%Y-%m-%d %H:%M:%S')}] 📋 Replay Import Started. Entry: {entry_price}. Trigger: {trigger_dir}"]
         
@@ -265,7 +265,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
                     "logs": logs,
                     "is_replay": True,
-                    "pnl": realized_pnl # <--- Explicitly save Calculated P/L
+                    "pnl": realized_pnl
                 }
                 move_to_history(record, exit_reason, final_exit_price)
                 return {"status": "success", "message": f"Simulation Complete. Closed: {exit_reason} @ {final_exit_price}"}
@@ -363,7 +363,7 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
         sim_pnl = 0.0
         targets_hit = []
         
-        sim_logs = [] # <--- NEW: Capture Logs
+        sim_logs = [] 
         sim_logs.append(f"🏁 <b>Simulation Start</b> | Entry: {entry_price} | Qty: {qty} | SL: {current_sl}")
         
         trigger_dir = original_trade.get('trigger_dir')
@@ -442,7 +442,7 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
             "original_pnl": original_trade.get('pnl', 0),
             "simulated_pnl": round(sim_pnl, 2),
             "difference": round(sim_pnl - original_trade.get('pnl', 0), 2),
-            "logs": sim_logs  # <--- Return logs
+            "logs": sim_logs
         }
 
     except Exception as e:
