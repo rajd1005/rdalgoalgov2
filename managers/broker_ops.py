@@ -8,7 +8,14 @@ def move_to_history(trade, final_status, exit_price):
     real_pnl = 0
     was_active = trade['status'] != 'PENDING'
     
-    if was_active:
+    # --- FIX START: Respect Pre-Calculated P/L (for Replay/Partial Exits) ---
+    # If the trade already has a calculated 'pnl' (e.g. from Replay Engine), use it.
+    if 'pnl' in trade and trade['pnl'] is not None:
+         real_pnl = trade['pnl']
+    # --- FIX END ---
+    elif was_active:
+        # Standard calculation (Exit - Entry) * Qty
+        # Used for standard Live/Paper trades that don't track cumulative P/L yet
         real_pnl = round((exit_price - trade['entry_price']) * trade['quantity'], 2)
         
     trade['pnl'] = real_pnl if was_active else 0
