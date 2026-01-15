@@ -285,8 +285,8 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
         # 3. Apply New Scenario Settings
         new_mult = int(scenario_config.get('exit_multiplier', 1))
         
-        # Recalculate Targets based on New Multiplier (Logic borrowed from trade_manager)
-        targets = original_trade['targets'] # Start with original targets
+        # Recalculate Targets based on New Multiplier
+        targets = [float(x) for x in original_trade['targets']] # Start with original targets
         target_controls = scenario_config.get('target_controls')
         
         # If controls are missing, build default
@@ -299,26 +299,43 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
 
         # Handle Exit Multiplier Logic (Recalculate Targets & Lots)
         if new_mult > 1:
-            # Re-derive targets based on logic (assuming simple ratio expansion or keeping custom targets)
+            valid_targets = [x for x in targets if x > 0]
+            if not valid_targets:
+                 # Fallback based on SL if no targets set
+                 valid_targets = [entry_price + (sl_points * 2)]
+            
+            final_goal = max(valid_targets)
+            dist = final_goal - entry_price
+            
+            new_targets = []
+            new_controls = []
+            
             lot_size = smart_trader.get_lot_size(symbol)
             if lot_size == 0: lot_size = 1
             total_lots = qty // lot_size
             base_lots = total_lots // new_mult
             remainder = total_lots % new_mult
             
-            # Here we keep original price levels (assuming user wants to test those levels)
-            # but we redistribute the exit logic
-            new_controls = []
             for i in range(1, 4): # 1 to 3
                 if i <= new_mult:
+                    fraction = i / new_mult
+                    t_price = entry_price + (dist * fraction)
+                    new_targets.append(round(t_price, 2))
+                    
                     lots_here = base_lots + (remainder if i == new_mult else 0)
-                    # Check if original control had trailing, or inherit from modal config if passed
-                    # The modal passes full target_controls structure, so we might just need to verify
-                    new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': target_controls[i-1].get('trail_to_entry', False)})
+                    
+                    # Inherit trail preference from T1 control
+                    trail_pref = False
+                    if i == 1 and target_controls: 
+                         trail_pref = target_controls[0].get('trail_to_entry', False)
+
+                    new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': trail_pref})
                 else:
+                    new_targets.append(0)
                     new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False})
             
-            pass
+            targets = new_targets
+            target_controls = new_controls
 
         # 4. Fetch Historical Data (Entry Time -> Now/Exit Time)
         # We fetch up to NOW to see if it would have performed better
