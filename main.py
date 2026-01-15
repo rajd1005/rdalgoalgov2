@@ -98,9 +98,9 @@ def background_monitor():
             except Exception as e:
                 print(f"❌ Monitor Loop Critical Error: {e}")
             finally:
-                db.session.remove() # Clean up session
+                db.session.remove() 
         
-        time.sleep(3) # Loop Interval
+        time.sleep(3) 
 
 # --- ROUTES ---
 
@@ -296,30 +296,50 @@ def api_simulate_trade():
 def place_trade():
     if not bot_active: return redirect('/')
     try:
-        sym = request.form['index']; type_ = request.form['type']; mode = request.form['mode']
-        qty = int(request.form['qty']); order_type = request.form['order_type']
-        limit_price = float(request.form.get('limit_price') or 0); sl_points = float(request.form.get('sl_points', 0))
-        trailing_sl = float(request.form.get('trailing_sl') or 0); sl_to_entry = int(request.form.get('sl_to_entry', 0))
+        sym = request.form['index']
+        type_ = request.form['type']
+        mode = request.form['mode']
+        qty = int(request.form['qty'])
+        order_type = request.form['order_type']
+        
+        limit_price = float(request.form.get('limit_price') or 0)
+        sl_points = float(request.form.get('sl_points', 0))
+        trailing_sl = float(request.form.get('trailing_sl') or 0)
+        sl_to_entry = int(request.form.get('sl_to_entry', 0))
         exit_multiplier = int(request.form.get('exit_multiplier', 1))
-        t1 = float(request.form.get('t1_price', 0)); t2 = float(request.form.get('t2_price', 0)); t3 = float(request.form.get('t3_price', 0))
+        
+        t1 = float(request.form.get('t1_price', 0))
+        t2 = float(request.form.get('t2_price', 0))
+        t3 = float(request.form.get('t3_price', 0))
         
         can_trade, reason = strategy_manager.can_place_order(mode)
-        if not can_trade: flash(f"⛔ Trade Blocked: {reason}"); return redirect('/')
+        if not can_trade: 
+            flash(f"⛔ Trade Blocked: {reason}")
+            return redirect('/')
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
+        
         target_controls = []
         for i in range(1, 4):
-            enabled = request.form.get(f't{i}_active') == 'on'; lots = int(request.form.get(f't{i}_lots') or 0)
-            trail_cost = request.form.get(f't{i}_cost') == 'on'; if i == 3 and lots == 0: lots = 1000 
+            enabled = request.form.get(f't{i}_active') == 'on'
+            lots = int(request.form.get(f't{i}_lots') or 0)
+            trail_cost = request.form.get(f't{i}_cost') == 'on'
+            if i == 3 and lots == 0: 
+                lots = 1000 
             target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost})
         
         final_sym = smart_trader.get_exact_symbol(sym, request.form.get('expiry'), request.form.get('strike', 0), type_)
-        if not final_sym: flash("❌ Symbol Generation Failed"); return redirect('/')
+        if not final_sym: 
+            flash("❌ Symbol Generation Failed")
+            return redirect('/')
 
         res = strategy_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
-        if res['status'] == 'success': flash(f"✅ Order Placed: {final_sym}")
-        else: flash(f"❌ Error: {res['message']}")
-    except Exception as e: flash(f"Error: {e}")
+        if res['status'] == 'success': 
+            flash(f"✅ Order Placed: {final_sym}")
+        else: 
+            flash(f"❌ Error: {res['message']}")
+    except Exception as e: 
+        flash(f"Error: {e}")
     return redirect('/')
 
 @app.route('/promote/<trade_id>')
@@ -336,7 +356,6 @@ def close_trade(trade_id):
     else: flash("❌ Error")
     return redirect('/')
 
-# --- START BACKGROUND THREAD ---
 if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     t = threading.Thread(target=background_monitor, daemon=True)
     t.start()
