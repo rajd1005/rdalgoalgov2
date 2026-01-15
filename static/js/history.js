@@ -1,5 +1,4 @@
 // Global variable to store trades
-var allClosedTrades = [];
 
 function loadClosedTrades() {
     let filterDate = $('#hist_date').val(); 
