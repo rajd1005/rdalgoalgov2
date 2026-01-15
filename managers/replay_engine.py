@@ -2,8 +2,8 @@ from datetime import datetime
 import time
 import smart_trader
 import settings
-from managers.common import IST, get_exchange, log_event
-from managers.persistence import TRADE_LOCK, load_trades, save_trades
+from managers.common import IST, get_exchange, log_event, get_time_str
+from managers.persistence import TRADE_LOCK, load_trades, save_trades, load_history
 from managers.broker_ops import move_to_history
 
 def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls):
@@ -250,4 +250,165 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                 return {"status": "success", "message": f"Simulation Complete. Closed: {exit_reason} @ {final_exit_price}"}
 
     except Exception as e: 
+        return {"status": "error", "message": str(e)}
+
+def simulate_trade_scenario(kite, trade_id, scenario_config):
+    """
+    Re-runs a closed trade with different parameters to check hypothetical P/L.
+    scenario_config: {
+        'trail_to_entry_t1': bool,
+        'exit_multiplier': int,
+        'target_controls': list of dicts [{'lots': x, 'enabled': y, ...}]
+    }
+    """
+    try:
+        # 1. Load the original trade
+        trades = load_history()
+        original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
+        if not original_trade:
+            return {"status": "error", "message": "Trade not found"}
+
+        # 2. Setup Variables
+        symbol = original_trade['symbol']
+        exchange = original_trade['exchange']
+        entry_time_str = original_trade['entry_time']
+        entry_price = original_trade['entry_price']
+        qty = original_trade['quantity']
+        # Use stored SL or fallback
+        sl_price = original_trade.get('original_sl', original_trade['sl']) 
+        
+        # Recalculate SL Points to reconstruct original setup
+        # Logic: If SL is 0 or missing, default to 20 pts diff
+        if sl_price == 0: sl_price = entry_price - 20
+        sl_points = abs(entry_price - sl_price)
+
+        # 3. Apply New Scenario Settings
+        new_mult = int(scenario_config.get('exit_multiplier', 1))
+        
+        # Recalculate Targets based on New Multiplier (Logic borrowed from trade_manager)
+        targets = original_trade['targets'] # Start with original targets
+        target_controls = scenario_config.get('target_controls')
+        
+        # If controls are missing, build default
+        if not target_controls:
+             target_controls = [{'enabled': True, 'lots': 0, 'trail_to_entry': False} for _ in range(3)]
+
+        # Force T1 Trail to Cost if requested
+        if scenario_config.get('trail_to_entry_t1'):
+            target_controls[0]['trail_to_entry'] = True
+
+        # Handle Exit Multiplier Logic (Recalculate Targets & Lots)
+        if new_mult > 1:
+            # Re-derive targets based on logic (assuming simple ratio expansion or keeping custom targets)
+            lot_size = smart_trader.get_lot_size(symbol)
+            if lot_size == 0: lot_size = 1
+            total_lots = qty // lot_size
+            base_lots = total_lots // new_mult
+            remainder = total_lots % new_mult
+            
+            # Here we keep original price levels (assuming user wants to test those levels)
+            # but we redistribute the exit logic
+            new_controls = []
+            for i in range(1, 4): # 1 to 3
+                if i <= new_mult:
+                    lots_here = base_lots + (remainder if i == new_mult else 0)
+                    # Check if original control had trailing, or inherit from modal config if passed
+                    # The modal passes full target_controls structure, so we might just need to verify
+                    new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': target_controls[i-1].get('trail_to_entry', False)})
+                else:
+                    new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False})
+            
+            pass
+
+        # 4. Fetch Historical Data (Entry Time -> Now/Exit Time)
+        # We fetch up to NOW to see if it would have performed better
+        try:
+            entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            # Fallback for ISO format if present
+            try:
+                entry_dt = datetime.strptime(entry_time_str, "%Y-%m-%dT%H:%M:%S")
+            except:
+                return {"status": "error", "message": "Invalid Date Format"}
+
+        try:
+            entry_dt = IST.localize(entry_dt.replace(tzinfo=None))
+        except: pass
+        
+        now = datetime.now(IST)
+        
+        token = smart_trader.get_instrument_token(symbol, exchange)
+        if not token: return {"status": "error", "message": "Token not found"}
+
+        hist_data = smart_trader.fetch_historical_data(kite, token, entry_dt, now, "minute")
+        if not hist_data: return {"status": "error", "message": "No Data"}
+
+        # 5. Run Simulation Loop (Simplified)
+        current_qty = qty
+        current_sl = sl_price
+        
+        sim_pnl = 0
+        status = "OPEN"
+        targets_hit = []
+        
+        # Determine direction
+        is_long = True 
+        if original_trade.get('order_type') == 'SELL': is_long = False 
+        # (Assuming BUY for now as most logic is Long-biased in code, can be adapted)
+
+        for candle in hist_data:
+            O, H, L, C = candle['open'], candle['high'], candle['low'], candle['close']
+            ticks = [O, L, H, C] if C >= O else [O, H, L, C]
+
+            for ltp in ticks:
+                if status == "CLOSED": break
+
+                # Check SL
+                if ltp <= current_sl:
+                    sim_pnl += (current_sl - entry_price) * current_qty
+                    status = "CLOSED"
+                    break
+
+                # Check Targets
+                for i, tgt in enumerate(targets):
+                    if i in targets_hit: continue
+                    
+                    if ltp >= tgt:
+                        targets_hit.append(i)
+                        conf = target_controls[i]
+                        
+                        # 1. Trail to Cost Logic
+                        if conf.get('trail_to_entry') and current_sl < entry_price:
+                            current_sl = entry_price
+                        
+                        if conf['enabled']:
+                            lot_size = smart_trader.get_lot_size(symbol)
+                            if lot_size == 0: lot_size = 1
+                            exit_qty = conf['lots'] * lot_size
+                            
+                            # Full Exit Check
+                            if exit_qty >= current_qty or exit_qty >= 1000: # 1000 marker for full
+                                sim_pnl += (tgt - entry_price) * current_qty
+                                current_qty = 0
+                                status = "CLOSED"
+                                break
+                            else:
+                                sim_pnl += (tgt - entry_price) * exit_qty
+                                current_qty -= exit_qty
+
+            if status == "CLOSED": break
+            
+        # If still open at end of data, close at last LTP
+        if current_qty > 0:
+            last_price = hist_data[-1]['close']
+            sim_pnl += (last_price - entry_price) * current_qty
+
+        return {
+            "status": "success", 
+            "original_pnl": original_trade.get('pnl', 0),
+            "simulated_pnl": round(sim_pnl, 2),
+            "difference": round(sim_pnl - original_trade.get('pnl', 0), 2)
+        }
+
+    except Exception as e:
         return {"status": "error", "message": str(e)}
