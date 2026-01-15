@@ -360,19 +360,17 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
         hist_data = smart_trader.fetch_historical_data(kite, token, entry_dt, now, "minute")
         if not hist_data: return {"status": "error", "message": "No Data"}
 
-        # 5. Run Simulation Loop (Simplified)
+        # 5. Run Simulation Loop
         current_qty = qty
         current_sl = sl_price
-        
         sim_pnl = 0
-        status = "OPEN"
         targets_hit = []
         
-        # Determine direction
-        is_long = True 
-        if original_trade.get('order_type') == 'SELL': is_long = False 
-        # (Assuming BUY for now as most logic is Long-biased in code, can be adapted)
-
+        # --- FIX: RESTORE ACTIVATION LOGIC (PENDING -> OPEN) ---
+        # If trigger_dir is present, we assume the trade was initially PENDING
+        trigger_dir = original_trade.get('trigger_dir')
+        status = "PENDING" if trigger_dir else "OPEN"
+        
         for candle in hist_data:
             O, H, L, C = candle['open'], candle['high'], candle['low'], candle['close']
             ticks = [O, L, H, C] if C >= O else [O, H, L, C]
@@ -380,43 +378,55 @@ def simulate_trade_scenario(kite, trade_id, scenario_config):
             for ltp in ticks:
                 if status == "CLOSED": break
 
-                # Check SL
-                if ltp <= current_sl:
-                    sim_pnl += (current_sl - entry_price) * current_qty
-                    status = "CLOSED"
-                    break
-
-                # Check Targets
-                for i, tgt in enumerate(targets):
-                    if i in targets_hit: continue
+                # --- PHASE 1: ACTIVATION ---
+                if status == "PENDING":
+                    activated = False
+                    if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
+                    elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
                     
-                    if ltp >= tgt:
-                        targets_hit.append(i)
-                        conf = target_controls[i]
+                    if activated:
+                        status = "OPEN"
+                        continue
+
+                # --- PHASE 2: ACTIVE TRADE ---
+                if status == "OPEN":
+                    # Check SL
+                    if ltp <= current_sl:
+                        sim_pnl += (current_sl - entry_price) * current_qty
+                        status = "CLOSED"
+                        break
+
+                    # Check Targets
+                    for i, tgt in enumerate(targets):
+                        if i in targets_hit: continue
                         
-                        # 1. Trail to Cost Logic
-                        if conf.get('trail_to_entry') and current_sl < entry_price:
-                            current_sl = entry_price
-                        
-                        if conf['enabled']:
-                            lot_size = smart_trader.get_lot_size(symbol)
-                            if lot_size == 0: lot_size = 1
-                            exit_qty = conf['lots'] * lot_size
+                        if ltp >= tgt:
+                            targets_hit.append(i)
+                            conf = target_controls[i]
                             
-                            # Full Exit Check
-                            if exit_qty >= current_qty or exit_qty >= 1000: # 1000 marker for full
-                                sim_pnl += (tgt - entry_price) * current_qty
-                                current_qty = 0
-                                status = "CLOSED"
-                                break
-                            else:
-                                sim_pnl += (tgt - entry_price) * exit_qty
-                                current_qty -= exit_qty
+                            # 1. Trail to Cost Logic
+                            if conf.get('trail_to_entry') and current_sl < entry_price:
+                                current_sl = entry_price
+                            
+                            if conf['enabled']:
+                                lot_size = smart_trader.get_lot_size(symbol)
+                                if lot_size == 0: lot_size = 1
+                                exit_qty = conf['lots'] * lot_size
+                                
+                                # Full Exit Check
+                                if exit_qty >= current_qty or exit_qty >= 1000: # 1000 marker for full
+                                    sim_pnl += (tgt - entry_price) * current_qty
+                                    current_qty = 0
+                                    status = "CLOSED"
+                                    break
+                                else:
+                                    sim_pnl += (tgt - entry_price) * exit_qty
+                                    current_qty -= exit_qty
 
             if status == "CLOSED": break
             
         # If still open at end of data, close at last LTP
-        if current_qty > 0:
+        if current_qty > 0 and status == "OPEN":
             last_price = hist_data[-1]['close']
             sim_pnl += (last_price - entry_price) * current_qty
 
