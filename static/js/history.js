@@ -1,3 +1,9 @@
+// Global variable for Simulation Logs
+var simResultsCache = {}; 
+// Note: 'allClosedTrades' is assumed to be defined in utils.js to avoid "Identifier already declared" error.
+// If it is NOT in utils.js, uncomment the line below:
+// var allClosedTrades = [];
+
 function loadClosedTrades() {
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
@@ -84,7 +90,7 @@ function loadClosedTrades() {
                     statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
                 }
 
-                // --- NEW TIME & ACTIVATION DURATION LOGIC ---
+                // --- Time & Activation Duration Logic ---
                 let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
                 let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
                 
@@ -122,6 +128,9 @@ function loadClosedTrades() {
                 let editBtn = (t.order_type === 'SIMULATION') ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>` : '';
                 let delBtn = `<button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>`;
                 
+                // NEW: Sim Logs Button (Hidden by default)
+                let simLogBtn = `<button id="btn-sim-log-${t.id}" class="btn btn-sm btn-light border text-primary py-0 px-2" style="display:none; font-size:0.75rem;" onclick="showSimLogs('${t.id}')">🧪 Logs</button>`;
+
                 // --- Mobile-First Card Design ---
                 html += `
                 <div class="card mb-2 shadow-sm border-0" id="card-${t.id}">
@@ -178,6 +187,7 @@ function loadClosedTrades() {
 
                         <div class="d-flex justify-content-end gap-2 mt-2 pt-1 border-top border-light">
                             ${editBtn}
+                            ${simLogBtn}
                             ${delBtn}
                             <button class="btn btn-sm btn-light border text-muted py-0 px-2" style="font-size:0.75rem;" onclick="showLogs('${t.id}', 'closed')">📜 Logs</button>
                         </div>
@@ -213,6 +223,14 @@ function editSim(id) {
     } else alert("Old trade format.");
 }
 
+// NEW: Function to show Simulation Logs
+function showSimLogs(id) {
+    let logs = simResultsCache[id];
+    if(!logs || logs.length === 0) return alert("No simulation logs found.");
+    $('#logModalBody').html(logs.join('<br>'));
+    $('#logModal').modal('show');
+}
+
 // --- NEW SCENARIO ANALYSIS LOGIC (Hybrid Plan) ---
 async function runBatchSimulation() {
     let config = {
@@ -235,7 +253,8 @@ async function runBatchSimulation() {
          return;
     }
 
-    // Reset UI indicators
+    // Reset Cache and UI
+    simResultsCache = {};
     $('.sim-result-badge').remove(); 
     
     let totalSimPnl = 0;
@@ -268,6 +287,10 @@ async function runBatchSimulation() {
                 // Track Stats
                 if (res.simulated_pnl > (res.original_pnl || t.pnl)) improvedCount++;
                 if (res.simulated_pnl < (res.original_pnl || t.pnl)) worsenedCount++;
+                
+                // SAVE LOGS & SHOW BUTTON
+                simResultsCache[t.id] = res.logs;
+                $(`#btn-sim-log-${t.id}`).show();
 
                 // Update Card UI (Option 1: Purple Line)
                 $(`#sim-badge-${t.id}`).removeClass('bg-info').addClass('bg-warning').text('Simulated');
@@ -298,48 +321,19 @@ async function runBatchSimulation() {
     
     // --- OPTION 2: Batch Summary Modal ---
     let totalDiff = totalSimPnl - totalOriginalPnl;
-    let diffColor = totalDiff >= 0 ? 'text-success' : 'text-danger';
+    
+    // Update Modal Content using IDs
+    $('#sim_res_total').text("₹ " + totalSimPnl.toFixed(2));
+    
     let diffSign = totalDiff >= 0 ? '+' : '';
+    $('#sim_res_diff').text(`${diffSign} ₹ ${totalDiff.toFixed(2)} vs Original`);
+    
+    if(totalDiff >= 0) $('#sim_res_diff').addClass('text-success').removeClass('text-danger');
+    else $('#sim_res_diff').addClass('text-danger').removeClass('text-success');
 
-    let summaryHtml = `
-    <div class="modal fade" id="simResultModal" tabindex="-1" aria-hidden="true">
-      <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-          <div class="modal-header bg-light">
-            <h5 class="modal-title">🧪 Simulation Results</h5>
-            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-          </div>
-          <div class="modal-body text-center">
-            <h6 class="text-muted">Hypothetical Performance</h6>
-            <h2 class="display-6 fw-bold" style="color: #6f42c1;">₹ ${totalSimPnl.toFixed(2)}</h2>
-            <div class="h5 ${diffColor} mb-4">
-                (${diffSign} ₹ ${totalDiff.toFixed(2)} vs Original)
-            </div>
-            
-            <div class="row g-2">
-                <div class="col-6">
-                    <div class="p-2 border rounded bg-success bg-opacity-10">
-                        <div class="fw-bold text-success">${improvedCount}</div>
-                        <div class="small text-muted">Improved 🚀</div>
-                    </div>
-                </div>
-                <div class="col-6">
-                    <div class="p-2 border rounded bg-danger bg-opacity-10">
-                        <div class="fw-bold text-danger">${worsenedCount}</div>
-                        <div class="small text-muted">Worsened 📉</div>
-                    </div>
-                </div>
-            </div>
-          </div>
-          <div class="modal-footer">
-            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
+    $('#sim_res_improved').text(improvedCount);
+    $('#sim_res_worsened').text(worsenedCount);
 
-    // Inject and Show Modal
-    $('#simResultModal').remove(); // Remove old if exists
-    $('body').append(summaryHtml);
+    // Show Modal
     $('#simResultModal').modal('show');
 }
