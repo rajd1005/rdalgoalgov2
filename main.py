@@ -295,6 +295,17 @@ def api_import_trade():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
+@app.route('/api/simulate_scenario', methods=['POST'])
+def api_simulate_scenario():
+    if not bot_active: return jsonify({"status": "error", "message": "Bot offline"})
+    data = request.json
+    trade_id = data.get('trade_id')
+    config = data.get('config')
+    
+    # Call the new engine function
+    result = replay_engine.simulate_trade_scenario(kite, trade_id, config)
+    return jsonify(result)
+
 @app.route('/trade', methods=['POST'])
 def place_trade():
     if not bot_active: return redirect('/')
