@@ -4,6 +4,7 @@ import threading
 import time
 import gc 
 from flask import Flask, render_template, request, redirect, flash, jsonify
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from kiteconnect import KiteConnect
 import config
 import strategy_manager
@@ -15,6 +16,20 @@ import auto_login
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 app.config.from_object(config)
+
+# --- SECURITY SETUP ---
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+class User(UserMixin):
+    id = "admin"
+
+@login_manager.user_loader
+def load_user(user_id):
+    if user_id == "admin":
+        return User()
+    return None
 
 db.init_app(app)
 with app.app_context():
@@ -127,7 +142,34 @@ def background_monitor():
         
         time.sleep(3) # Pulse interval
 
+# --- AUTH ROUTES ---
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect('/')
+    
+    if request.method == 'POST':
+        password = request.form.get('password')
+        if password == config.ADMIN_PASSWORD:
+            login_user(User())
+            return redirect('/')
+        else:
+            flash("❌ Invalid Password")
+    
+    return render_template('login.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash("Logged out successfully.")
+    return redirect('/login')
+
+# --- APP ROUTES ---
+
 @app.route('/')
+@login_required
 def home():
     global bot_active, login_state
     if bot_active:
@@ -139,6 +181,7 @@ def home():
     return render_template('dashboard.html', is_active=False, state=login_state, error=login_error_msg, login_url=kite.login_url())
 
 @app.route('/secure', methods=['GET', 'POST'])
+@login_required
 def secure_login_page():
     if request.method == 'POST':
         if request.form.get('password') == config.ADMIN_PASSWORD:
@@ -148,10 +191,12 @@ def secure_login_page():
     return render_template('secure_login.html')
 
 @app.route('/api/status')
+@login_required
 def api_status():
     return jsonify({"active": bot_active, "state": login_state, "login_url": kite.login_url()})
 
 @app.route('/reset_connection')
+@login_required
 def reset_connection():
     global bot_active, login_state
     bot_active = False
@@ -176,16 +221,19 @@ def callback():
     return redirect('/')
 
 @app.route('/api/settings/load')
+@login_required
 def api_settings_load():
     return jsonify(settings.load_settings())
 
 @app.route('/api/settings/save', methods=['POST'])
+@login_required
 def api_settings_save():
     if settings.save_settings_file(request.json):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
 @app.route('/api/positions')
+@login_required
 def api_positions():
     trades = strategy_manager.load_trades()
     for t in trades:
@@ -194,6 +242,7 @@ def api_positions():
     return jsonify(trades)
 
 @app.route('/api/closed_trades')
+@login_required
 def api_closed_trades():
     trades = strategy_manager.load_history()
     for t in trades:
@@ -201,12 +250,14 @@ def api_closed_trades():
     return jsonify(trades)
 
 @app.route('/api/delete_trade/<trade_id>', methods=['POST'])
+@login_required
 def api_delete_trade(trade_id):
     if strategy_manager.delete_trade(trade_id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
 @app.route('/api/update_trade', methods=['POST'])
+@login_required
 def api_update_trade():
     data = request.json
     try:
@@ -218,6 +269,7 @@ def api_update_trade():
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/manage_trade', methods=['POST'])
+@login_required
 def api_manage_trade():
     data = request.json
     trade_id = data.get('id')
@@ -233,30 +285,36 @@ def api_manage_trade():
     return jsonify({"status": "error", "message": "Action Failed"})
 
 @app.route('/api/indices')
+@login_required
 def api_indices():
     if not bot_active:
         return jsonify({"NIFTY":0, "BANKNIFTY":0, "SENSEX":0})
     return jsonify(smart_trader.get_indices_ltp(kite))
 
 @app.route('/api/search')
+@login_required
 def api_search():
     current_settings = settings.load_settings()
     allowed = current_settings.get('exchanges', None)
     return jsonify(smart_trader.search_symbols(kite, request.args.get('q', ''), allowed))
 
 @app.route('/api/details')
+@login_required
 def api_details():
     return jsonify(smart_trader.get_symbol_details(kite, request.args.get('symbol', '')))
 
 @app.route('/api/chain')
+@login_required
 def api_chain():
     return jsonify(smart_trader.get_chain_data(request.args.get('symbol'), request.args.get('expiry'), request.args.get('type'), float(request.args.get('ltp', 0))))
 
 @app.route('/api/specific_ltp')
+@login_required
 def api_s_ltp():
     return jsonify({"ltp": smart_trader.get_specific_ltp(kite, request.args.get('symbol'), request.args.get('expiry'), request.args.get('strike'), request.args.get('type'))})
 
 @app.route('/api/panic_exit', methods=['POST'])
+@login_required
 def api_panic_exit():
     if not bot_active:
         return jsonify({"status": "error", "message": "Bot not connected"})
@@ -266,6 +324,7 @@ def api_panic_exit():
     return jsonify({"status": "error", "message": "Failed to execute panic mode"})
 
 @app.route('/api/import_trade', methods=['POST'])
+@login_required
 def api_import_trade():
     if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
     data = request.json
@@ -285,6 +344,7 @@ def api_import_trade():
         return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/trade', methods=['POST'])
+@login_required
 def place_trade():
     if not bot_active: return redirect('/')
     try:
@@ -336,6 +396,7 @@ def place_trade():
     return redirect('/')
 
 @app.route('/promote/<trade_id>')
+@login_required
 def promote(trade_id):
     if strategy_manager.promote_to_live(kite, trade_id):
         flash("✅ Promoted!")
@@ -344,6 +405,7 @@ def promote(trade_id):
     return redirect('/')
 
 @app.route('/close_trade/<trade_id>')
+@login_required
 def close_trade(trade_id):
     if strategy_manager.close_trade_manual(kite, trade_id):
         flash("✅ Closed")
