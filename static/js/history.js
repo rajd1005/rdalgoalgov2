@@ -1,9 +1,4 @@
-// Global variable for Simulation Logs
 var simResultsCache = {}; 
-// Note: 'allClosedTrades' is assumed to be defined in utils.js to avoid "Identifier already declared" error.
-// If it is NOT in utils.js, uncomment the line below:
-// var allClosedTrades = [];
-
 function loadClosedTrades() {
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
