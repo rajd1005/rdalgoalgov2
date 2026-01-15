@@ -1,5 +1,3 @@
-// Global variable to store trades
-
 function loadClosedTrades() {
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
@@ -87,11 +85,9 @@ function loadClosedTrades() {
                 }
 
                 // --- NEW TIME & ACTIVATION DURATION LOGIC ---
-                // 1. Added Time (From DB)
                 let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
                 let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
                 
-                // 2. Active Time (Parse Logs)
                 let activeTimeStr = '--:--';
                 let waitDuration = '';
                 
@@ -140,7 +136,7 @@ function loadClosedTrades() {
                             </div>
                             <div class="text-end">
                                 <div class="fw-bold h6 m-0 ${color}">${t.pnl.toFixed(2)}</div>
-                                <div class="small fw-bold text-primary" id="sim-pnl-${t.id}" style="display:none;"></div>
+                                <div class="small fw-bold" id="sim-pnl-${t.id}" style="display:none; color: #6f42c1;"></div> 
                             </div>
                         </div>
 
@@ -217,7 +213,7 @@ function editSim(id) {
     } else alert("Old trade format.");
 }
 
-// --- NEW SCENARIO ANALYSIS LOGIC ---
+// --- NEW SCENARIO ANALYSIS LOGIC (Hybrid Plan) ---
 async function runBatchSimulation() {
     let config = {
         trail_to_entry_t1: $('#sim_trail_t1').is(':checked'),
@@ -243,6 +239,10 @@ async function runBatchSimulation() {
     $('.sim-result-badge').remove(); 
     
     let totalSimPnl = 0;
+    let totalOriginalPnl = 0;
+    let improvedCount = 0;
+    let worsenedCount = 0;
+
     let processed = 0;
     let count = visibleTrades.length;
     
@@ -263,15 +263,24 @@ async function runBatchSimulation() {
 
             if(res.status === 'success') {
                 totalSimPnl += res.simulated_pnl;
+                totalOriginalPnl += (res.original_pnl || t.pnl);
                 
-                // Update Card UI
+                // Track Stats
+                if (res.simulated_pnl > (res.original_pnl || t.pnl)) improvedCount++;
+                if (res.simulated_pnl < (res.original_pnl || t.pnl)) worsenedCount++;
+
+                // Update Card UI (Option 1: Purple Line)
                 $(`#sim-badge-${t.id}`).removeClass('bg-info').addClass('bg-warning').text('Simulated');
                 
                 let diff = res.difference;
                 let diffClass = diff >= 0 ? 'text-success' : 'text-danger';
                 let diffSign = diff >= 0 ? '+' : '';
                 
-                $(`#sim-pnl-${t.id}`).show().html(`Sim: ₹${res.simulated_pnl.toFixed(2)} <span class="${diffClass} small">(${diffSign}${diff.toFixed(2)})</span>`);
+                // Set text color to Purple (#6f42c1) explicitly for the "Sim:" label
+                $(`#sim-pnl-${t.id}`).show().html(`
+                    <span style="color: #6f42c1;">🔮 Sim: ₹${res.simulated_pnl.toFixed(2)}</span> 
+                    <span class="${diffClass} small fw-bold">(${diffSign}${diff.toFixed(2)})</span>
+                `);
             } else {
                  $(`#sim-badge-${t.id}`).removeClass('bg-info').addClass('bg-danger').text('Error');
             }
@@ -287,5 +296,50 @@ async function runBatchSimulation() {
         await new Promise(r => setTimeout(r, 100)); // Delay to respect rate limits
     }
     
-    alert(`Analysis Complete! Hypothetical P/L: ₹ ${totalSimPnl.toFixed(2)}`);
-    }
+    // --- OPTION 2: Batch Summary Modal ---
+    let totalDiff = totalSimPnl - totalOriginalPnl;
+    let diffColor = totalDiff >= 0 ? 'text-success' : 'text-danger';
+    let diffSign = totalDiff >= 0 ? '+' : '';
+
+    let summaryHtml = `
+    <div class="modal fade" id="simResultModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+          <div class="modal-header bg-light">
+            <h5 class="modal-title">🧪 Simulation Results</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body text-center">
+            <h6 class="text-muted">Hypothetical Performance</h6>
+            <h2 class="display-6 fw-bold" style="color: #6f42c1;">₹ ${totalSimPnl.toFixed(2)}</h2>
+            <div class="h5 ${diffColor} mb-4">
+                (${diffSign} ₹ ${totalDiff.toFixed(2)} vs Original)
+            </div>
+            
+            <div class="row g-2">
+                <div class="col-6">
+                    <div class="p-2 border rounded bg-success bg-opacity-10">
+                        <div class="fw-bold text-success">${improvedCount}</div>
+                        <div class="small text-muted">Improved 🚀</div>
+                    </div>
+                </div>
+                <div class="col-6">
+                    <div class="p-2 border rounded bg-danger bg-opacity-10">
+                        <div class="fw-bold text-danger">${worsenedCount}</div>
+                        <div class="small text-muted">Worsened 📉</div>
+                    </div>
+                </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+    // Inject and Show Modal
+    $('#simResultModal').remove(); // Remove old if exists
+    $('body').append(summaryHtml);
+    $('#simResultModal').modal('show');
+}
