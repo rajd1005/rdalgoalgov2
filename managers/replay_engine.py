@@ -9,7 +9,7 @@ from managers.broker_ops import move_to_history
 def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls):
     """
     Simulates a trade based on historical data.
-    Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, HIGH_MADE, SL_HIT) with timestamps.
+    Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
     """
     try:
         # 1. Parse Input & Initialize Data
@@ -50,6 +50,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         
         # --- Notification Queue ---
         notification_queue = []
+        # Create a base object for the initial notification
         initial_trade_data = {
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
             "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list
@@ -89,10 +90,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if activated:
                         status = "OPEN"; fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
-                        notification_queue.append({
-                            'event': 'ACTIVE', 
-                            'data': {'price': fill_price, 'time': c_date_str}
-                        })
+                        # Notify Activation
+                        notification_queue.append({'event': 'ACTIVE', 'data': {'price': fill_price, 'time': c_date_str}})
                         continue 
 
                 # Risk Engine
@@ -100,8 +99,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if ltp > highest_ltp:
                         highest_ltp = ltp
                         
-                        # --- NEW: Check for High Made (After T3) ---
-                        if 2 in targets_hit_indices: # Index 2 is Target 3
+                        # Check for High Made (Only if T3 is hit)
+                        if 2 in targets_hit_indices: 
                              notification_queue.append({
                                 'event': 'HIGH_MADE', 
                                 'data': {'price': ltp, 'time': c_date_str}
@@ -132,13 +131,10 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         realized_pnl += pnl_here
                         logs.append(f"[{c_date_str}] 🛑 SL Hit @ {current_sl}. Exited {current_qty} Qty.")
                         
+                        # Notify SL
                         sl_snap = initial_trade_data.copy()
                         sl_snap['exit_price'] = current_sl
-                        notification_queue.append({
-                            'event': 'SL_HIT', 
-                            'data': {'pnl': pnl_here, 'time': c_date_str}, 
-                            'trade': sl_snap
-                        })
+                        notification_queue.append({'event': 'SL_HIT', 'data': {'pnl': pnl_here, 'time': c_date_str}, 'trade': sl_snap})
                         
                         current_qty = 0
                         break
@@ -148,11 +144,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         if i in targets_hit_indices: continue 
                         if ltp >= tgt:
                             targets_hit_indices.append(i)
-                            
-                            notification_queue.append({
-                                'event': 'TARGET_HIT', 
-                                'data': {'t_num': i+1, 'price': tgt, 'time': c_date_str}
-                            })
+                            # Notify Target
+                            notification_queue.append({'event': 'TARGET_HIT', 'data': {'t_num': i+1, 'price': tgt, 'time': c_date_str}})
                             
                             conf = target_controls[i]
                             if conf.get('trail_to_entry') and current_sl < entry_price:
@@ -181,17 +174,33 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                          final_exit_price = ltp
                          break 
             
+            # --- FIXED: POST-EXIT SCAN NOTIFICATION ---
             if current_qty == 0:
                 skip_scan = (final_status == "SL_HIT" and len(targets_hit_indices) > 0)
                 if not skip_scan:
                     remaining_candles = hist_data[idx+1:]
                     if remaining_candles:
                         try:
-                            max_rest = max([float(c['high']) for c in remaining_candles])
+                            # Calculate high
+                            max_rest = -1.0
+                            max_time = ""
+                            for c in remaining_candles:
+                                if float(c['high']) > max_rest:
+                                    max_rest = float(c['high'])
+                                    max_time = c['date'] # Capture exact time of high
+
                             if max_rest > highest_ltp:
                                 highest_ltp = max_rest
-                                logs.append(f"[{remaining_candles[-1]['date']}] ℹ️ Post-Exit High Detected: {highest_ltp}")
-                        except: pass
+                                logs.append(f"[{max_time}] ℹ️ Post-Exit High Detected: {highest_ltp}")
+                                
+                                # ADD NOTIFICATION IF T3 WAS HIT
+                                if 2 in targets_hit_indices:
+                                    notification_queue.append({
+                                        'event': 'HIGH_MADE', 
+                                        'data': {'price': highest_ltp, 'time': max_time}
+                                    })
+                        except Exception as e: 
+                            print(f"Scan Error: {e}")
                 break 
 
         # 4. Finalize & Save
@@ -263,7 +272,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         return {"status": "error", "message": str(e)}
 
 def simulate_trade_scenario(kite, trade_id, scenario_config):
-    # (Remains unchanged - keeping it complete)
+    # (Remains unchanged)
     try:
         trades = load_history()
         original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
