@@ -310,13 +310,13 @@ def api_import_trade():
         
         if queue and trade_ref:
             def send_seq_notifications():
-                # 1. Send Initial "NEW_TRADE" message to get a Thread ID
-                msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
-                
-                if msg_id:
-                    # Save the msg_id to the trade record (Database or History) so replies work
-                    # Check if trade is active or closed
-                    with app.app_context():
+                # --- FIX: Wrap ENTIRE thread logic in app_context to access DB (Settings) ---
+                with app.app_context():
+                    # 1. Send Initial "NEW_TRADE" message to get a Thread ID
+                    msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
+                    
+                    if msg_id:
+                        # Save the msg_id so replies work
                         from managers.persistence import load_trades, save_trades, save_to_history_db
                         
                         trade_id = trade_ref['id']
@@ -335,24 +335,24 @@ def api_import_trade():
                         if not updated_ref:
                             save_to_history_db({**trade_ref, "telegram_msg_id": msg_id})
                             
-                    # Update local ref for the loop
-                    trade_ref['telegram_msg_id'] = msg_id
-                
-                # 2. Process the rest of the queue
-                for item in queue:
-                    evt = item['event']
-                    if evt == 'NEW_TRADE': continue # Already sent
+                        # Update local ref for the loop
+                        trade_ref['telegram_msg_id'] = msg_id
                     
-                    # Small delay to ensure sequence order in Telegram
-                    time.sleep(1.0)
-                    
-                    dat = item.get('data')
-                    # Use specific trade snapshot if available (e.g. for SL Hit params), else default ref
-                    t_obj = item.get('trade', trade_ref)
-                    # Ensure the snapshot has the thread ID
-                    t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
-                    
-                    telegram_bot.notify_trade_event(t_obj, evt, dat)
+                    # 2. Process the rest of the queue
+                    for item in queue:
+                        evt = item['event']
+                        if evt == 'NEW_TRADE': continue # Already sent
+                        
+                        # Small delay to ensure sequence order in Telegram
+                        time.sleep(1.0)
+                        
+                        dat = item.get('data')
+                        # Use specific trade snapshot if available (e.g. for SL Hit params), else default ref
+                        t_obj = item.get('trade', trade_ref)
+                        # Ensure the snapshot has the thread ID
+                        t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
+                        
+                        telegram_bot.notify_trade_event(t_obj, evt, dat)
 
             # Start thread
             t = threading.Thread(target=send_seq_notifications)
