@@ -9,7 +9,7 @@ from managers.broker_ops import move_to_history
 def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls):
     """
     Simulates a trade based on historical data.
-    Collects notification events with HISTORICAL TIMESTAMPS.
+    Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, HIGH_MADE, SL_HIT) with timestamps.
     """
     try:
         # 1. Parse Input & Initialize Data
@@ -52,8 +52,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         notification_queue = []
         initial_trade_data = {
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
-            "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list,
-            # We don't need to pass time here, main.py uses trade_ref which has entry_time
+            "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list
         }
         notification_queue.append({'event': 'NEW_TRADE', 'data': initial_trade_data})
 
@@ -90,8 +89,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if activated:
                         status = "OPEN"; fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
-                        
-                        # UPDATED: Pass dictionary with time
                         notification_queue.append({
                             'event': 'ACTIVE', 
                             'data': {'price': fill_price, 'time': c_date_str}
@@ -102,6 +99,14 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                 if status == "OPEN":
                     if ltp > highest_ltp:
                         highest_ltp = ltp
+                        
+                        # --- NEW: Check for High Made (After T3) ---
+                        if 2 in targets_hit_indices: # Index 2 is Target 3
+                             notification_queue.append({
+                                'event': 'HIGH_MADE', 
+                                'data': {'price': ltp, 'time': c_date_str}
+                            })
+
                         t_sl = float(trailing_sl) if trailing_sl else 0
                         if t_sl > 0:
                             step = t_sl
@@ -127,7 +132,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         realized_pnl += pnl_here
                         logs.append(f"[{c_date_str}] 🛑 SL Hit @ {current_sl}. Exited {current_qty} Qty.")
                         
-                        # UPDATED: Pass dictionary with time
                         sl_snap = initial_trade_data.copy()
                         sl_snap['exit_price'] = current_sl
                         notification_queue.append({
@@ -145,7 +149,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         if ltp >= tgt:
                             targets_hit_indices.append(i)
                             
-                            # UPDATED: Pass dictionary with time
                             notification_queue.append({
                                 'event': 'TARGET_HIT', 
                                 'data': {'t_num': i+1, 'price': tgt, 'time': c_date_str}
@@ -260,7 +263,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         return {"status": "error", "message": str(e)}
 
 def simulate_trade_scenario(kite, trade_id, scenario_config):
-    # This function remains unchanged (same as previous)
+    # (Remains unchanged - keeping it complete)
     try:
         trades = load_history()
         original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
