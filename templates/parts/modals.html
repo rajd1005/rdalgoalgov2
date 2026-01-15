@@ -465,3 +465,41 @@
         </div>
     </div>
 </div>
+
+<div class="modal fade" id="simResultModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header bg-light">
+        <h5 class="modal-title">🧪 Simulation Results</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center">
+        <h6 class="text-muted">Hypothetical Performance</h6>
+        <h2 class="display-6 fw-bold" style="color: #6f42c1;">
+            <span id="sim_res_total">₹ 0.00</span>
+        </h2>
+        <div class="h5 mb-4">
+            (<span id="sim_res_diff">vs Original</span>)
+        </div>
+        
+        <div class="row g-2">
+            <div class="col-6">
+                <div class="p-2 border rounded bg-success bg-opacity-10">
+                    <div class="fw-bold text-success" id="sim_res_improved">0</div>
+                    <div class="small text-muted">Improved 🚀</div>
+                </div>
+            </div>
+            <div class="col-6">
+                <div class="p-2 border rounded bg-danger bg-opacity-10">
+                    <div class="fw-bold text-danger" id="sim_res_worsened">0</div>
+                    <div class="small text-muted">Worsened 📉</div>
+                </div>
+            </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
