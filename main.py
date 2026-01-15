@@ -6,7 +6,9 @@ import gc
 from flask import Flask, render_template, request, redirect, flash, jsonify
 from kiteconnect import KiteConnect
 import config
-import strategy_manager
+# --- REFACTORED IMPORTS ---
+from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
+# --------------------------
 import smart_trader
 import settings
 from database import db
@@ -95,8 +97,8 @@ def background_monitor():
                         if not kite.access_token: 
                             raise Exception("No Access Token Found")
                         
-                        # Run Strategy Logic
-                        strategy_manager.update_risk_engine(kite)
+                        # Run Strategy Logic (Risk Engine)
+                        risk_engine.update_risk_engine(kite)
                         
                     except Exception as e:
                         err = str(e)
@@ -131,8 +133,10 @@ def background_monitor():
 def home():
     global bot_active, login_state
     if bot_active:
-        trades = strategy_manager.load_trades()
-        for t in trades: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        # UPDATED: Use persistence module
+        trades = persistence.load_trades()
+        for t in trades: 
+            t['symbol'] = smart_trader.get_display_name(t['symbol'])
         active = [t for t in trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
         return render_template('dashboard.html', is_active=True, trades=active)
     
@@ -187,7 +191,8 @@ def api_settings_save():
 
 @app.route('/api/positions')
 def api_positions():
-    trades = strategy_manager.load_trades()
+    # UPDATED: Use persistence module
+    trades = persistence.load_trades()
     for t in trades:
         t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
         t['symbol'] = smart_trader.get_display_name(t['symbol'])
@@ -195,14 +200,16 @@ def api_positions():
 
 @app.route('/api/closed_trades')
 def api_closed_trades():
-    trades = strategy_manager.load_history()
+    # UPDATED: Use persistence module
+    trades = persistence.load_history()
     for t in trades:
         t['symbol'] = smart_trader.get_display_name(t['symbol'])
     return jsonify(trades)
 
 @app.route('/api/delete_trade/<trade_id>', methods=['POST'])
 def api_delete_trade(trade_id):
-    if strategy_manager.delete_trade(trade_id):
+    # UPDATED: Use persistence module
+    if persistence.delete_trade(trade_id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
@@ -210,7 +217,8 @@ def api_delete_trade(trade_id):
 def api_update_trade():
     data = request.json
     try:
-        if strategy_manager.update_trade_protection(kite, data['id'], data['sl'], data['targets'], data.get('trailing_sl', 0), data.get('entry_price'), data.get('target_controls'), data.get('sl_to_entry', 0), data.get('exit_multiplier', 1)):
+        # UPDATED: Use trade_manager module
+        if trade_manager.update_trade_protection(kite, data['id'], data['sl'], data['targets'], data.get('trailing_sl', 0), data.get('entry_price'), data.get('target_controls'), data.get('sl_to_entry', 0), data.get('exit_multiplier', 1)):
             return jsonify({"status": "success"})
         else:
             return jsonify({"status": "error", "message": "Trade not found"})
@@ -224,11 +232,12 @@ def api_manage_trade():
     action = data.get('action')
     lots = int(data.get('lots', 0))
     
-    trades = strategy_manager.load_trades()
+    # UPDATED: Use persistence and trade_manager
+    trades = persistence.load_trades()
     t = next((x for x in trades if str(x['id']) == str(trade_id)), None)
     if t and lots > 0:
         lot_size = smart_trader.get_lot_size(t['symbol'])
-        if strategy_manager.manage_trade_position(kite, trade_id, action, lot_size, lots):
+        if trade_manager.manage_trade_position(kite, trade_id, action, lot_size, lots):
             return jsonify({"status": "success"})
     return jsonify({"status": "error", "message": "Action Failed"})
 
@@ -260,7 +269,8 @@ def api_s_ltp():
 def api_panic_exit():
     if not bot_active:
         return jsonify({"status": "error", "message": "Bot not connected"})
-    if strategy_manager.panic_exit_all(kite):
+    # UPDATED: Use broker_ops module
+    if broker_ops.panic_exit_all(kite):
         flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
     return jsonify({"status": "error", "message": "Failed to execute panic mode"})
@@ -273,7 +283,8 @@ def api_import_trade():
         final_sym = smart_trader.get_exact_symbol(data['symbol'], data['expiry'], data['strike'], data['type'])
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
-        result = strategy_manager.import_past_trade(
+        # UPDATED: Use replay_engine module
+        result = replay_engine.import_past_trade(
             kite, final_sym, data['entry_time'], 
             int(data['qty']), float(data['price']), 
             float(data['sl']), [float(t) for t in data['targets']],
@@ -304,7 +315,8 @@ def place_trade():
         t2 = float(request.form.get('t2_price', 0))
         t3 = float(request.form.get('t3_price', 0))
         
-        can_trade, reason = strategy_manager.can_place_order(mode)
+        # UPDATED: Use common module
+        can_trade, reason = common.can_place_order(mode)
         if not can_trade:
             flash(f"⛔ Trade Blocked: {reason}")
             return redirect('/')
@@ -324,7 +336,8 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
 
-        res = strategy_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
+        # UPDATED: Use trade_manager module
+        res = trade_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
         
         if res['status'] == 'success':
             flash(f"✅ Order Placed: {final_sym}")
@@ -337,7 +350,8 @@ def place_trade():
 
 @app.route('/promote/<trade_id>')
 def promote(trade_id):
-    if strategy_manager.promote_to_live(kite, trade_id):
+    # UPDATED: Use trade_manager module
+    if trade_manager.promote_to_live(kite, trade_id):
         flash("✅ Promoted!")
     else:
         flash("❌ Error")
@@ -345,7 +359,8 @@ def promote(trade_id):
 
 @app.route('/close_trade/<trade_id>')
 def close_trade(trade_id):
-    if strategy_manager.close_trade_manual(kite, trade_id):
+    # UPDATED: Use trade_manager module
+    if trade_manager.close_trade_manual(kite, trade_id):
         flash("✅ Closed")
     else:
         flash("❌ Error")
