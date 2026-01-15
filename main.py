@@ -343,6 +343,65 @@ def api_import_trade():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
+# --- NEW SIMULATION ENDPOINT ---
+@app.route('/api/simulate_trade', methods=['POST'])
+@login_required
+def api_simulate_trade():
+    if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
+    
+    data = request.json
+    trade_id = data.get('trade_id')
+    
+    # 1. Find the original trade details from History
+    history = strategy_manager.load_history()
+    original_trade = next((t for t in history if str(t['id']) == str(trade_id)), None)
+    
+    if not original_trade:
+        return jsonify({"status": "error", "message": "Original trade not found"})
+
+    try:
+        # 2. Extract immutable details from Original Trade
+        # Note: 'symbol' in history might be Display Name, we need the raw symbol if possible.
+        # However, import_past_trade expects the ZERODHA TRADING SYMBOL (e.g., NIFTY24JAN21500CE).
+        # We need to ensure we pass the correct symbol string.
+        # If 'symbol' in DB is display name, we might have issues.
+        # Ideally, store 'tradingsymbol' (raw) in DB separately or ensure 'symbol' is raw.
+        # Assuming 'symbol' in original_trade JSON is the raw trading symbol OR handled by helper.
+        # But smart_trader.get_exchange uses raw symbol logic.
+        
+        # FIX: The system stores display name in frontend but raw symbol in backend JSON usually?
+        # Check strategy_manager.py -> 'symbol': specific_symbol (which comes from create_trade_direct)
+        # create_trade_direct uses specific_symbol (e.g., NIFTY24JANFUT).
+        # So original_trade['symbol'] should be the raw symbol.
+        
+        symbol = original_trade['symbol'] 
+        entry_time = original_trade['entry_time'].replace(' ', 'T') # Ensure ISO format for helper
+        entry_price = original_trade['entry_price']
+        qty = original_trade['quantity']
+
+        # 3. Use NEW parameters from the Request (The "What-If" logic)
+        sl_points = float(data.get('sl_points', 0))
+        sl_price = entry_price - sl_points # Recalculate SL Price based on new points
+        
+        targets = [float(t) for t in data.get('targets', [])]
+        target_controls = data.get('target_controls')
+        trailing_sl = float(data.get('trailing_sl', 0))
+        sl_to_entry = int(data.get('sl_to_entry', 0))
+        exit_multiplier = int(data.get('exit_multiplier', 1))
+
+        # 4. Run Simulation (Dry Run)
+        result = strategy_manager.import_past_trade(
+            kite, symbol, entry_time, qty, entry_price, sl_price, 
+            targets, trailing_sl, sl_to_entry, exit_multiplier, 
+            target_controls, dry_run=True
+        )
+        
+        return jsonify(result)
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+
+
 @app.route('/trade', methods=['POST'])
 @login_required
 def place_trade():
