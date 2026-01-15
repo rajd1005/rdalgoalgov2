@@ -25,10 +25,15 @@ def get_defaults():
             "LIVE": default_mode_settings.copy(),
             "PAPER": default_mode_settings.copy()
         },
-        # --- NEW IMPORT CONFIG ---
         "import_config": {
             "enable_history_check": True,
             "default_interval": "minute"
+        },
+        # --- NEW TELEGRAM CONFIG ---
+        "telegram": {
+            "bot_token": "",
+            "channel_id": "",
+            "enable_notifications": False
         }
     }
 
@@ -60,8 +65,10 @@ def load_settings():
             if "exchanges" not in saved: saved["exchanges"] = defaults["exchanges"]
             if "watchlist" not in saved: saved["watchlist"] = []
             
-            # Merge Import Config
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
+
+            # Merge Telegram
+            if "telegram" not in saved: saved["telegram"] = defaults["telegram"]
 
             return saved
     except Exception as e: print(f"Error loading settings: {e}")
