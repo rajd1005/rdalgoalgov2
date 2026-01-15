@@ -55,6 +55,7 @@ def run_auto_login_process():
             try:
                 data = kite.generate_session(token, api_secret=config.API_SECRET)
                 kite.set_access_token(data["access_token"])
+                # Fetch instruments to enable Search/LTP
                 smart_trader.fetch_instruments(kite)
                 bot_active = True; login_state = "IDLE"
                 gc.collect()
@@ -78,16 +79,19 @@ def background_monitor():
     while True:
         with app.app_context():
             try:
+                # 1. Update Risk/LTP if Active
                 if bot_active:
                     try:
                         if not kite.access_token: raise Exception("No Access Token")
                         strategy_manager.update_risk_engine(kite)
                     except Exception as e:
                         err = str(e)
+                        # Only disconnect on auth/network errors
                         if "Token is invalid" in err or "Network" in err or "access_token" in err:
                             print(f"⚠️ Connection Lost: {err}")
                             bot_active = False 
 
+                # 2. Try Re-Login if Offline
                 if not bot_active:
                     if login_state == "IDLE":
                         print("🔄 Monitor: System Offline. Initiating Auto-Login...")
@@ -123,7 +127,10 @@ def logout():
 def home():
     if bot_active:
         trades = strategy_manager.load_trades()
-        for t in trades: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        # Safe display name
+        for t in trades: 
+            try: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+            except: pass
         active = [t for t in trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
         return render_template('dashboard.html', is_active=True, trades=active)
     return render_template('dashboard.html', is_active=False, state=login_state, error=login_error_msg, login_url=kite.login_url())
@@ -176,16 +183,25 @@ def api_settings_save():
 def api_positions():
     trades = strategy_manager.load_trades()
     for t in trades:
-        t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
-        t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        try:
+            t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
+            t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        except: pass
     return jsonify(trades)
 
 @app.route('/api/closed_trades')
 @login_required
 def api_closed_trades():
-    trades = strategy_manager.load_history()
-    for t in trades: t['symbol'] = smart_trader.get_display_name(t['symbol'])
-    return jsonify(trades)
+    try:
+        trades = strategy_manager.load_history()
+        for t in trades: 
+            try: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+            except: pass # Don't crash if display name fails
+        return jsonify(trades)
+    except Exception as e:
+        # Return empty list instead of crashing UI
+        print(f"Closed Trades Error: {e}")
+        return jsonify([])
 
 @app.route('/api/delete_trade/<trade_id>', methods=['POST'])
 @login_required
@@ -225,9 +241,12 @@ def api_indices():
 @app.route('/api/search')
 @login_required
 def api_search():
-    current_settings = settings.load_settings()
-    allowed = current_settings.get('exchanges', None)
-    return jsonify(smart_trader.search_symbols(kite, request.args.get('q', ''), allowed))
+    try:
+        current_settings = settings.load_settings()
+        allowed = current_settings.get('exchanges', None)
+        return jsonify(smart_trader.search_symbols(kite, request.args.get('q', ''), allowed))
+    except Exception as e:
+        return jsonify([]) # Return empty on error to prevent UI hang
 
 @app.route('/api/details')
 @login_required
@@ -296,50 +315,31 @@ def api_simulate_trade():
 def place_trade():
     if not bot_active: return redirect('/')
     try:
-        sym = request.form['index']
-        type_ = request.form['type']
-        mode = request.form['mode']
-        qty = int(request.form['qty'])
-        order_type = request.form['order_type']
-        
-        limit_price = float(request.form.get('limit_price') or 0)
-        sl_points = float(request.form.get('sl_points', 0))
-        trailing_sl = float(request.form.get('trailing_sl') or 0)
-        sl_to_entry = int(request.form.get('sl_to_entry', 0))
+        sym = request.form['index']; type_ = request.form['type']; mode = request.form['mode']
+        qty = int(request.form['qty']); order_type = request.form['order_type']
+        limit_price = float(request.form.get('limit_price') or 0); sl_points = float(request.form.get('sl_points', 0))
+        trailing_sl = float(request.form.get('trailing_sl') or 0); sl_to_entry = int(request.form.get('sl_to_entry', 0))
         exit_multiplier = int(request.form.get('exit_multiplier', 1))
-        
-        t1 = float(request.form.get('t1_price', 0))
-        t2 = float(request.form.get('t2_price', 0))
-        t3 = float(request.form.get('t3_price', 0))
+        t1 = float(request.form.get('t1_price', 0)); t2 = float(request.form.get('t2_price', 0)); t3 = float(request.form.get('t3_price', 0))
         
         can_trade, reason = strategy_manager.can_place_order(mode)
-        if not can_trade: 
-            flash(f"⛔ Trade Blocked: {reason}")
-            return redirect('/')
+        if not can_trade: flash(f"⛔ Trade Blocked: {reason}"); return redirect('/')
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
-        
         target_controls = []
         for i in range(1, 4):
-            enabled = request.form.get(f't{i}_active') == 'on'
-            lots = int(request.form.get(f't{i}_lots') or 0)
+            enabled = request.form.get(f't{i}_active') == 'on'; lots = int(request.form.get(f't{i}_lots') or 0)
             trail_cost = request.form.get(f't{i}_cost') == 'on'
-            if i == 3 and lots == 0: 
-                lots = 1000 
+            if i == 3 and lots == 0: lots = 1000 
             target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost})
         
         final_sym = smart_trader.get_exact_symbol(sym, request.form.get('expiry'), request.form.get('strike', 0), type_)
-        if not final_sym: 
-            flash("❌ Symbol Generation Failed")
-            return redirect('/')
+        if not final_sym: flash("❌ Symbol Generation Failed"); return redirect('/')
 
         res = strategy_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
-        if res['status'] == 'success': 
-            flash(f"✅ Order Placed: {final_sym}")
-        else: 
-            flash(f"❌ Error: {res['message']}")
-    except Exception as e: 
-        flash(f"Error: {e}")
+        if res['status'] == 'success': flash(f"✅ Order Placed: {final_sym}")
+        else: flash(f"❌ Error: {res['message']}")
+    except Exception as e: flash(f"Error: {e}")
     return redirect('/')
 
 @app.route('/promote/<trade_id>')
@@ -356,6 +356,8 @@ def close_trade(trade_id):
     else: flash("❌ Error")
     return redirect('/')
 
+# --- START BACKGROUND THREAD ---
+# Run thread if Gunicorn (WERKZEUG_RUN_MAIN is typically NOT set in master, but standard run check)
 if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     t = threading.Thread(target=background_monitor, daemon=True)
     t.start()
