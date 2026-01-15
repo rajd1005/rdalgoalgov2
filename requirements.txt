@@ -8,3 +8,4 @@ pytz
 pyotp
 selenium
 webdriver-manager
+requests
