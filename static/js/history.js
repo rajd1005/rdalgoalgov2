@@ -1,27 +1,75 @@
+// Global variable to store trades for simulation
+var allClosedTrades = [];
+
+$(document).ready(function() {
+    // 1. Set Date Picker to Today's Date by default
+    const dateInput = document.getElementById('hist_date');
+    if (dateInput) {
+        dateInput.valueAsDate = new Date();
+    }
+
+    // 2. Initial Load of Closed Trades
+    loadClosedTrades();
+});
+
+// --- HELPER FUNCTIONS (Fallbacks to ensure no crashes) ---
+function safeGetCategory(t) {
+    if (typeof getTradeCategory === 'function') return getTradeCategory(t);
+    return t.mode === 'PAPER' ? 'PAPER' : 'LIVE';
+}
+
+function safeGetBadge(cat) {
+    if (typeof getMarkBadge === 'function') return getMarkBadge(cat);
+    return cat === 'LIVE' 
+        ? '<span class="badge bg-danger">LIVE</span>' 
+        : '<span class="badge bg-secondary">PAPER</span>';
+}
+
+// --- MAIN LOGIC ---
+
 function loadClosedTrades() {
-    let filterDate = $('#hist_date').val(); let filterType = $('#hist_filter').val();
-    $.get('/api/closed_trades', trades => {
-        allClosedTrades = trades; let html = ''; 
+    let filterDate = $('#hist_date').val(); 
+    let filterType = $('#hist_filter').val();
+    
+    // Show spinner while loading
+    $('#hist-container').html('<div class="text-center mt-5"><div class="spinner-border text-info"></div><p class="small text-muted">Loading History...</p></div>');
+
+    $.get('/api/closed_trades', function(trades) {
+        allClosedTrades = trades; 
+        let html = ''; 
         let dayTotal = 0;
         let totalWins = 0;
         let totalLosses = 0;
         let totalPotential = 0;
         let totalCapital = 0; 
 
-        let filtered = trades.filter(t => t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType));
-        if(filtered.length === 0) html = '<div class="text-center p-4 text-muted">No History for this Date/Filter</div>';
-        else {
+        // Filter Logic
+        let filtered = trades.filter(t => {
+            // Ensure exit_time exists before checking startswith
+            if (!t.exit_time) return false;
+            // Date Filter
+            if (filterDate && !t.exit_time.startsWith(filterDate)) return false;
+            // Type Filter
+            let cat = safeGetCategory(t);
+            if (filterType !== 'ALL' && cat !== filterType) return false;
+            return true;
+        });
+
+        if(filtered.length === 0) {
+            html = '<div class="text-center p-4 text-muted border rounded bg-light mt-2">No History for this Date/Filter</div>';
+        } else {
             filtered.forEach(t => {
-                dayTotal += t.pnl; 
+                // Calculation Logic
+                dayTotal += (t.pnl || 0); 
                 if(t.pnl > 0) totalWins += t.pnl;
                 else totalLosses += t.pnl;
                 
-                let invested = t.entry_price * t.quantity; 
+                let invested = (t.entry_price || 0) * (t.quantity || 0); 
                 totalCapital += invested;
 
                 let color = t.pnl >= 0 ? 'text-success' : 'text-danger';
-                let cat = getTradeCategory(t); 
-                let badge = getMarkBadge(cat);
+                let cat = safeGetCategory(t); 
+                let badge = safeGetBadge(cat);
                 
                 // --- Potential Profit Logic ---
                 let potHtml = '';
@@ -79,44 +127,24 @@ function loadClosedTrades() {
                     statusTag = `<span class="badge bg-secondary" style="font-size:0.65rem;">${rawStatus}</span>`;
                 }
 
-                // --- NEW TIME & ACTIVATION DURATION LOGIC ---
-                
-                // 1. Added Time (From DB)
+                // --- Time & Duration ---
                 let addedTimeStr = t.entry_time ? t.entry_time.slice(11, 16) : '--:--';
-                let addedDateObj = t.entry_time ? new Date(t.entry_time) : null;
-                
-                // 2. Active Time (Parse Logs)
                 let activeTimeStr = '--:--';
                 let waitDuration = '';
                 
                 if (t.logs && t.logs.length > 0) {
                     let activationLog = t.logs.find(l => l.includes('Order ACTIVATED'));
-                    
                     if (activationLog) {
-                        // Extract [YYYY-MM-DD HH:MM:SS]
                         let match = activationLog.match(/\[(.*?)\]/);
                         if (match && match[1]) {
-                            activeTimeStr = match[1].slice(11, 16); // Extract HH:MM
-                            
-                            // Calculate Duration
-                            let activeDateObj = new Date(match[1]);
-                            if(addedDateObj && activeDateObj) {
-                                let diff = activeDateObj - addedDateObj; // in ms
-                                if(diff > 0) {
-                                    let totalSecs = Math.floor(diff / 1000);
-                                    let m = Math.floor(totalSecs / 60);
-                                    let s = totalSecs % 60;
-                                    waitDuration = `<span class="text-muted ms-1" style="font-size:0.65rem;">(${m}m ${s}s)</span>`;
-                                }
-                            }
+                            activeTimeStr = match[1].slice(11, 16);
+                            let d1 = new Date(t.entry_time);
+                            let d2 = new Date(match[1]);
+                            let diff = Math.floor((d2 - d1) / 1000);
+                            if(diff > 0) waitDuration = `<span class="text-muted ms-1" style="font-size:0.65rem;">(${Math.floor(diff/60)}m ${diff%60}s)</span>`;
                         }
-                    } else {
-                        // Check if it was OPEN immediately (Market Order)
-                        let firstLog = t.logs[0] || "";
-                        if (firstLog.includes("Status: OPEN")) {
-                            activeTimeStr = addedTimeStr;
-                            waitDuration = `<span class="text-muted ms-1" style="font-size:0.65rem;">(Instant)</span>`;
-                        }
+                    } else if (t.logs[0] && t.logs[0].includes("Status: OPEN")) {
+                        activeTimeStr = addedTimeStr;
                     }
                 }
 
@@ -124,7 +152,7 @@ function loadClosedTrades() {
                 let editBtn = (t.order_type === 'SIMULATION') ? `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="editSim('${t.id}')">✏️</button>` : '';
                 let delBtn = `<button class="btn btn-sm btn-outline-danger py-0 px-2" style="font-size:0.75rem;" onclick="deleteTrade('${t.id}')">🗑️</button>`;
                 
-                // --- Mobile-First Card Design ---
+                // --- HTML Construction ---
                 html += `
                 <div class="card mb-2 shadow-sm border-0" id="hist-card-${t.id}">
                     <div class="card-body p-2">
@@ -191,15 +219,19 @@ function loadClosedTrades() {
         
         // Update Summary Badges
         $('#day_pnl').text("₹ " + dayTotal.toFixed(2));
-        if(dayTotal >= 0) $('#day_pnl').removeClass('bg-danger').addClass('bg-success'); else $('#day_pnl').removeClass('bg-success').addClass('bg-danger');
+        if(dayTotal >= 0) $('#day_pnl').removeClass('bg-danger').addClass('bg-success'); 
+        else $('#day_pnl').removeClass('bg-success').addClass('bg-danger');
 
         $('#total_wins').text("Wins: ₹ " + totalWins.toFixed(2));
         $('#total_losses').text("Loss: ₹ " + totalLosses.toFixed(2));
-        $('#total_potential').text("Max Potential: ₹ " + totalPotential.toFixed(2));
-        $('#total_cap_hist').text("Funds Used: ₹ " + (totalCapital/100000).toFixed(2) + " L");
+        $('#total_potential').text("Max Pot: ₹ " + totalPotential.toFixed(2));
+        $('#total_cap_hist').text("Funds: ₹ " + (totalCapital/100000).toFixed(2) + " L");
 
-        // INJECT SIM BUTTON
+        // Re-inject Sim Button if missing (Redundancy)
         addSimButton();
+
+    }).fail(function() {
+        $('#hist-container').html('<div class="text-danger text-center mt-4">Failed to load trade history.</div>');
     });
 }
 
@@ -219,9 +251,7 @@ function editSim(id) {
 }
 
 function addSimButton() {
-    // Check if button already exists to avoid duplicates
     if($('#sim-btn').length === 0) {
-        // Target the flex container inside the closed tab header
         $('#closed .custom-card .d-flex.gap-1').append(
             `<button id="sim-btn" class="btn btn-sm btn-outline-info fw-bold py-0" style="font-size: 0.8rem; border-width: 2px;" data-bs-toggle="modal" data-bs-target="#simModal">🧪 What-If</button>`
         );
@@ -230,44 +260,28 @@ function addSimButton() {
 
 async function runBatchSimulation() {
     $('#simModal').modal('hide');
-    let trades = allClosedTrades; // Globally available
+    let trades = allClosedTrades; 
     
-    // Get Configuration from Modal
+    // Config
     let sl_pts = parseFloat($('#sim_sl').val());
     let mult = parseInt($('#sim_mult').val());
-    
-    // Ratios for Targets
     let r1 = parseFloat($('#sim_r1').val()) || 0.5;
     let r2 = parseFloat($('#sim_r2').val()) || 1.0;
     let r3 = parseFloat($('#sim_r3').val()) || 1.5;
-    
-    // Target Controls
     let l1 = parseInt($('#sim_l1').val()) || 0;
     let l2 = parseInt($('#sim_l2').val()) || 0;
     let l3 = parseInt($('#sim_l3').val()) || 0;
-    
     let c1 = $('#sim_c1').is(':checked');
     let c2 = $('#sim_c2').is(':checked');
     let c3 = $('#sim_c3').is(':checked');
 
-    // Loop through currently filtered/visible trades
-    // We filter again based on what is currently in DOM or use the global filtered logic
-    // Using simple approach: Iterate all closed trades that match current filter in UI
-    
     let filterDate = $('#hist_date').val(); 
     let filterType = $('#hist_filter').val();
 
     for (let t of trades) {
-        // Apply same filters as UI
-        if (!(t.exit_time && t.exit_time.startsWith(filterDate) && (filterType === 'ALL' || getTradeCategory(t) === filterType))) continue;
+        if (!t.exit_time || (filterDate && !t.exit_time.startsWith(filterDate))) continue;
+        if (filterType !== 'ALL' && safeGetCategory(t) !== filterType) continue;
 
-        // Skip LIVE trades if you strictly want PAPER only simulations, 
-        // but user asked for "apply for all trade in list" so we process all.
-        
-        // Calculate new targets based on Entry Price + (SL Points * Ratio)
-        // Assuming BUY order logic (Targets > Entry). For SELL, logic differs but system seems BUY centric for Options?
-        // Let's assume standard BUY logic as per `strategy_manager` default.
-        
         let t1_p = t.entry_price + (sl_pts * r1);
         let t2_p = t.entry_price + (sl_pts * r2);
         let t3_p = t.entry_price + (sl_pts * r3);
@@ -280,7 +294,7 @@ async function runBatchSimulation() {
             target_controls: [
                 { enabled: true, lots: l1, trail_to_entry: c1 },
                 { enabled: true, lots: l2, trail_to_entry: c2 },
-                { enabled: true, lots: l3 > 0 ? l3 : 1000, trail_to_entry: c3 } // Default T3 to full if 0
+                { enabled: true, lots: l3 > 0 ? l3 : 1000, trail_to_entry: c3 }
             ],
             trailing_sl: 0, 
             sl_to_entry: 0
@@ -289,8 +303,6 @@ async function runBatchSimulation() {
         try {
             let cardId = `#hist-card-${t.id}`;
             let resultContainer = $(cardId).find('.sim-result-container');
-            
-            // Show Loading
             resultContainer.html('<div class="mt-2 p-1 bg-light border border-info rounded text-center small text-info">⏳ Running What-If...</div>');
 
             let res = await $.ajax({
@@ -316,7 +328,6 @@ async function runBatchSimulation() {
                         <span>${res.final_status} @ ${res.exit_price.toFixed(2)}</span>
                     </div>
                 </div>`;
-                
                 resultContainer.html(html);
             } else {
                 resultContainer.html(`<div class="mt-2 text-danger small">Error: ${res.message}</div>`);
