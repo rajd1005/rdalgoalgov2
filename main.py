@@ -94,6 +94,15 @@ def background_monitor():
                     try:
                         if not kite.access_token: 
                             raise Exception("No Access Token Found")
+
+                        # --- FIX START: HEARTBEAT CHECK ---
+                        # Force a simple API call to validate the token 
+                        # even if there are no trades to process.
+                        try:
+                            kite.profile() # or kite.quote(["NSE:NIFTY 50"])
+                        except Exception as e:
+                            raise e # Re-raise to trigger the disconnection logic below
+                        # --- FIX END ---
                         
                         # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
