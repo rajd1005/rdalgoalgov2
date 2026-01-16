@@ -26,6 +26,10 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
+# --- INITIALIZE TELEGRAM BOT WITH APP CONTEXT ---
+telegram_bot.init_app(app)
+# ------------------------------------------------
+
 kite = KiteConnect(api_key=config.API_KEY)
 
 # --- GLOBAL STATE MANAGEMENT ---
