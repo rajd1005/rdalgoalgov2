@@ -535,6 +535,7 @@ def update_risk_engine(kite):
                         msg_id = telegram_bot.notify_trade_event(t, "ACTIVE", ltp)
                         if msg_id:
                             t.setdefault('telegram_update_ids', []).append(msg_id)
+                            updated = True # <--- FIX: FORCE UPDATE DB
                         
                         if t['mode'] == 'LIVE':
                             try: 
@@ -549,6 +550,7 @@ def update_risk_engine(kite):
                                     log_event(t, "Broker SL Fail")
                             except Exception as e: 
                                 log_event(t, f"Broker Fail: {e}")
+                            updated = True # <--- FIX: Ensure Broker ID is saved
                         
                         active_list.append(t)
                     else: 
@@ -563,6 +565,7 @@ def update_risk_engine(kite):
                     if ltp > current_high:
                         t['highest_ltp'] = ltp
                         t['made_high'] = ltp
+                        updated = True # <--- FIX: Ensure High is saved
                         
                         # --- TELEGRAM NOTIFICATION: HIGH MADE (CAPTURE ID) ---
                         # Correct logic: Check if T3 hit OR Price > T3
@@ -576,6 +579,7 @@ def update_risk_engine(kite):
                              msg_id = telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
                              if msg_id:
                                 t.setdefault('telegram_update_ids', []).append(msg_id)
+                                updated = True # <--- FIX: FORCE UPDATE DB
                     
                     # --- Step Trailing Logic ---
                     if t.get('trailing_sl', 0) > 0:
@@ -605,6 +609,7 @@ def update_risk_engine(kite):
                                         kite.modify_order(variety=kite.VARIETY_REGULAR, order_id=t['sl_order_id'], trigger_price=new_sl)
                                     except: pass
                                 log_event(t, f"Step Trailing: SL Moved to {t['sl']:.2f} (LTP {ltp})")
+                                updated = True # <--- FIX: Ensure New SL is saved
 
                     exit_triggered = False
                     exit_reason = ""
@@ -621,17 +626,20 @@ def update_risk_engine(kite):
                         for i, tgt in enumerate(t['targets']):
                             if i not in t.get('targets_hit_indices', []) and ltp >= tgt:
                                 t.setdefault('targets_hit_indices', []).append(i)
+                                updated = True # <--- FIX: Ensure Target Status is saved
                                 conf = controls[i]
                                 
                                 # --- TELEGRAM NOTIFICATION: TARGET HIT (CAPTURE ID) ---
                                 msg_id = telegram_bot.notify_trade_event(t, "TARGET_HIT", {'t_num': i+1, 'price': tgt})
                                 if msg_id:
                                     t.setdefault('telegram_update_ids', []).append(msg_id)
+                                    updated = True # <--- FIX: FORCE UPDATE DB
 
                                 # Feature: Trail SL to Entry on Target Hit
                                 if conf.get('trail_to_entry') and t['sl'] < t['entry_price']:
                                     t['sl'] = t['entry_price']
                                     log_event(t, f"Target {i+1} Hit: SL Trailed to Entry ({t['sl']})")
+                                    updated = True # <--- FIX
                                     if t['mode'] == 'LIVE' and t.get('sl_order_id'):
                                         try: 
                                             kite.modify_order(variety=kite.VARIETY_REGULAR, order_id=t['sl_order_id'], trigger_price=t['sl'])
@@ -655,6 +663,7 @@ def update_risk_engine(kite):
                                      
                                      t['quantity'] -= qty_to_exit
                                      log_event(t, f"Target {i+1} Hit. Exited {qty_to_exit} Qty")
+                                     updated = True # <--- FIX
                                      
                                      if t['mode'] == 'LIVE':
                                         try: 
