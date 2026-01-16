@@ -237,8 +237,10 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                 
                 log_event(t, f"Manual Update: SL {t['sl']}{entry_msg}. Trailing: {t['trailing_sl']} pts. Multiplier: {exit_multiplier}x")
                 
-                # --- TELEGRAM UPDATE ---
-                telegram_bot.notify_trade_event(t, "UPDATE")
+                # --- TELEGRAM UPDATE (CAPTURE ID) ---
+                msg_id = telegram_bot.notify_trade_event(t, "UPDATE")
+                if msg_id:
+                    t.setdefault('telegram_update_ids', []).append(msg_id)
                 
                 updated = True
                 break
@@ -371,8 +373,10 @@ def promote_to_live(kite, trade_id):
                     t['mode'] = "LIVE"
                     t['status'] = "PROMOTED_LIVE"
                     
-                    # Notify Promotion
-                    telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
+                    # Notify Promotion (CAPTURE ID)
+                    msg_id = telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
+                    if msg_id:
+                        t.setdefault('telegram_update_ids', []).append(msg_id)
                     
                     save_trades(trades)
                     return True
