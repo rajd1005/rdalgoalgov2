@@ -1,6 +1,7 @@
 import json
 import threading
 from database import db, ActiveTrade, TradeHistory, RiskState
+from managers.telegram_manager import bot as telegram_bot
 
 # Global Lock for thread safety to prevent race conditions during DB saves
 # This lock should be acquired by other managers before performing read-modify-write operations on trades.
@@ -75,13 +76,55 @@ def load_history():
 
 def delete_trade(trade_id):
     """
-    Deletes a specific trade from history by ID. Thread-safe.
+    Deletes a specific trade from History OR Active positions and removes its Telegram message.
+    Thread-safe.
     """
     with TRADE_LOCK:
         try:
-            TradeHistory.query.filter_by(id=int(trade_id)).delete()
-            db.session.commit()
-            return True
+            trade_id_int = int(trade_id)
+            found_and_deleted = False
+
+            # 1. Attempt to find and delete in Trade History (PK is usually Trade ID)
+            history_record = TradeHistory.query.filter_by(id=trade_id_int).first()
+            
+            if history_record:
+                # Handle Telegram Deletion
+                try:
+                    data = json.loads(history_record.data)
+                    msg_id = data.get('telegram_msg_id')
+                    if msg_id:
+                        telegram_bot.delete_message(msg_id)
+                except Exception as e:
+                    print(f"⚠️ Telegram deletion error (History): {e}")
+
+                db.session.delete(history_record)
+                found_and_deleted = True
+
+            # 2. Attempt to find and delete in Active Trades if not found in History
+            # ActiveTrade usually uses auto-increment PK, so we scan the JSON content
+            if not found_and_deleted:
+                active_records = ActiveTrade.query.all()
+                for record in active_records:
+                    data = json.loads(record.data)
+                    if data.get('id') == trade_id_int:
+                        # Handle Telegram Deletion
+                        try:
+                            msg_id = data.get('telegram_msg_id')
+                            if msg_id:
+                                telegram_bot.delete_message(msg_id)
+                        except Exception as e:
+                            print(f"⚠️ Telegram deletion error (Active): {e}")
+
+                        db.session.delete(record)
+                        found_and_deleted = True
+                        break # Stop after finding the specific trade
+
+            if found_and_deleted:
+                db.session.commit()
+                return True
+            
+            return False
+
         except Exception as e:
             print(f"Delete Trade Error: {e}")
             db.session.rollback()
