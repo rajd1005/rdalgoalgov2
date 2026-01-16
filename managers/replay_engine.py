@@ -76,6 +76,16 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         logs.append(f"[{c_date_str}] ⏰ Universal Time Exit @ {final_exit_price}")
                         current_qty = 0
                         break
+                    elif status == "PENDING":
+                        # --- NEW: Handle Pending Time Exit ---
+                        final_status = "NOT_ACTIVE"
+                        exit_reason = "TIME_EXIT"
+                        final_exit_price = entry_price # No fill, neutral price
+                        realized_pnl = 0.0
+                        logs.append(f"[{c_date_str}] ⏰ Universal Time Exit (Order Not Triggered)")
+                        current_qty = 0
+                        break
+
             except: pass
 
             O, H, L, C = candle['open'], candle['high'], candle['low'], candle['close']

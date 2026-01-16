@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime, timedelta
 import pytz
+import re
 
 # Global IST Timezone
 IST = pytz.timezone('Asia/Kolkata')
@@ -315,3 +316,48 @@ def fetch_historical_data(kite, token, from_date, to_date, interval='minute'):
     except Exception as e:
         print(f"History Fetch Error: {e}")
         return []
+
+def get_telegram_symbol(tradingsymbol):
+    """
+    Converts raw Zerodha symbol to readable Telegram format.
+    Input:  NIFTY2412025900PE  -> Output: NIFTY 25900 PE 20JAN
+    Input:  NIFTY24JAN25900PE  -> Output: NIFTY 25900 PE JAN (Monthly)
+    Input:  RELIANCE           -> Output: RELIANCE
+    """
+    try:
+        # Regex for Weekly Options: NIFTY 24 1 20 25900 PE
+        # Groups: 1=Name, 2=YY, 3=M(1-9,O,N,D), 4=DD, 5=Strike, 6=Type
+        weekly_pattern = r"^([A-Z]+)(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)$"
+        w_match = re.match(weekly_pattern, tradingsymbol)
+        
+        if w_match:
+            name, yy, m_char, dd, strike, opt_type = w_match.groups()
+            
+            # Map Month Char to Name
+            m_map = {'1':'JAN', '2':'FEB', '3':'MAR', '4':'APR', '5':'MAY', '6':'JUN', 
+                     '7':'JUL', '8':'AUG', '9':'SEP', 'O':'OCT', 'N':'NOV', 'D':'DEC'}
+            month_str = m_map.get(m_char, '???')
+            
+            return f"{name} {strike} {opt_type} {dd}{month_str}"
+
+        # Regex for Monthly Options: NIFTY 24 JAN 25900 PE
+        monthly_pattern = r"^([A-Z]+)(\d{2})([A-Z]{3})(\d+)(CE|PE)$"
+        m_match = re.match(monthly_pattern, tradingsymbol)
+        
+        if m_match:
+            name, yy, mon, strike, opt_type = m_match.groups()
+            return f"{name} {strike} {opt_type} {mon}"
+            
+        # Regex for Futures: NIFTY 24 JAN FUT
+        fut_pattern = r"^([A-Z]+)(\d{2})([A-Z]{3})FUT$"
+        f_match = re.match(fut_pattern, tradingsymbol)
+        if f_match:
+             name, yy, mon = f_match.groups()
+             return f"{name} FUT {mon}"
+
+        # Default: Return original if no match (e.g., Equity)
+        return tradingsymbol
+
+    except Exception as e:
+        print(f"Symbol Parse Error: {e}")
+        return tradingsymbol

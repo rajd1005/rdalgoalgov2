@@ -2,6 +2,7 @@ import requests
 import json
 import time
 import settings
+import smart_trader
 from managers.common import get_time_str
 
 class TelegramManager:
@@ -51,7 +52,10 @@ class TelegramManager:
         Constructs and sends a notification based on the event type.
         Returns the Message ID if a new thread is started (NEW_TRADE).
         """
-        symbol = trade.get('symbol', 'Unknown')
+        raw_symbol = trade.get('symbol', 'Unknown')
+        # --- FORMAT SYMBOL USING SMART_TRADER ---
+        symbol = smart_trader.get_telegram_symbol(raw_symbol)
+        
         mode = trade.get('mode', 'PAPER')
         qty = trade.get('quantity', 0)
         entry_price = trade.get('entry_price', 0)

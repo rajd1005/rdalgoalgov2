@@ -393,11 +393,22 @@ def close_trade_manual(kite, trade_id):
         for t in trades:
             if t['id'] == int(trade_id):
                 found = True
-                # Fetch fresh exit price
+                
+                # Default Exit Reason
+                exit_reason = "MANUAL_EXIT"
                 exit_p = t.get('current_ltp', 0)
+                
+                # Fetch fresh LTP if possible
                 try: 
                     exit_p = kite.quote(f"{t['exchange']}:{t['symbol']}")[f"{t['exchange']}:{t['symbol']}"]['last_price']
                 except: pass
+                
+                # --- NEW: Handle Pending Cancellations ---
+                # If closing a PENDING order, it means we canceled it. 
+                # PnL should be 0, so we set exit_price = entry_price and status = NOT_ACTIVE
+                if t['status'] == 'PENDING':
+                    exit_reason = "NOT_ACTIVE"
+                    exit_p = t['entry_price']
                 
                 # Handle Live Execution
                 if t['mode'] == "LIVE" and t['status'] != "PENDING":
@@ -414,7 +425,7 @@ def close_trade_manual(kite, trade_id):
                         )
                     except: pass
                 
-                move_to_history(t, "MANUAL_EXIT", exit_p)
+                move_to_history(t, exit_reason, exit_p)
             else:
                 active_list.append(t)
         

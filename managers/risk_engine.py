@@ -8,6 +8,358 @@ from managers.common import IST, log_event
 from managers.broker_ops import manage_broker_sl, move_to_history
 from managers.telegram_manager import bot as telegram_bot
 
+# --- NEW: End of Day Report Helper (Automated) ---
+def send_eod_report(mode):
+    """
+    Generates and sends two Telegram reports:
+    1. Individual Trade Status (Entries, Exits, Highs, Potentials)
+    2. Aggregate Summary (Total P/L, Funds, Wins/Losses)
+    """
+    try:
+        today_str = datetime.now(IST).strftime("%Y-%m-%d")
+        history = load_history()
+        
+        # Filter for Today's trades in the specific Mode (LIVE/PAPER)
+        todays_trades = [t for t in history if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode]
+        
+        if not todays_trades:
+            return
+
+        # --- REPORT 1: INDIVIDUAL TRADE DETAILS ---
+        msg_details = f"📊 <b>{mode} - FINAL TRADE STATUS</b>\n"
+        
+        total_pnl = 0.0
+        total_wins = 0.0
+        total_loss = 0.0
+        total_funds_used = 0.0
+        total_max_potential = 0.0
+        
+        # Counters for specific request
+        cnt_not_active = 0
+        cnt_direct_sl = 0
+
+        for t in todays_trades:
+            raw_symbol = t.get('symbol', 'Unknown')
+            symbol = smart_trader.get_telegram_symbol(raw_symbol)
+            
+            entry = t.get('entry_price', 0)
+            sl = t.get('sl', 0)
+            targets = t.get('targets', [])
+            raw_status = t.get('status', 'CLOSED')
+            qty = t.get('quantity', 0)
+            pnl = t.get('pnl', 0)
+            
+            # --- CUSTOM STATUS DISPLAY LOGIC ---
+            display_status = raw_status
+            is_direct_sl = False 
+            
+            # 1. Check for "Time_Exit" (Not active trade)
+            if raw_status == "NOT_ACTIVE" or (raw_status == "TIME_EXIT" and pnl == 0):
+                display_status = "Not Active"
+                cnt_not_active += 1
+                is_direct_sl = True 
+            
+            # 2. Check for "SL (Without going T1)"
+            elif raw_status == "SL_HIT":
+                if not t.get('targets_hit_indices'): # No targets were hit
+                    display_status = "Stop-Loss"
+                    cnt_direct_sl += 1
+                    is_direct_sl = True 
+                else:
+                    display_status = "SL Hit (After Target)"
+            
+            # Use made_high if available, else exit price, else entry
+            made_high = t.get('made_high', t.get('exit_price', entry))
+            
+            # Suppress Potential for Direct SL
+            if is_direct_sl:
+                made_high = entry 
+                max_pot_val = 0.0
+                pot_target = "None"
+            else:
+                # Max Potential Calculation
+                max_pot_val = (made_high - entry) * qty
+                if max_pot_val < 0: max_pot_val = 0
+                
+                # Potential Target Logic
+                pot_target = "None"
+                if len(targets) >= 3:
+                    if made_high >= targets[2]: pot_target = "T3 ✅"
+                    elif made_high >= targets[1]: pot_target = "T2 ✅"
+                    elif made_high >= targets[0]: pot_target = "T1 ✅"
+
+            total_pnl += pnl
+            if pnl >= 0: 
+                total_wins += pnl
+            else: 
+                total_loss += pnl
+            
+            total_max_potential += max_pot_val
+            
+            # Funds Used
+            invested = entry * qty
+            total_funds_used += invested
+            
+            msg_details += (
+                f"\n🔹 <b>{symbol}</b>\n"
+                f"Entry: {entry}\n"
+                f"SL: {sl}\n"
+                f"Targets: {targets}\n"
+                f"Status: {display_status}\n" 
+                f"High Made: {made_high}\n"
+                f"Potential Target: {pot_target}\n"
+                f"Max Potential: {max_pot_val:.2f}\n"
+                f"----------------"
+            )
+
+        # Send Detailed Report
+        telegram_bot.send_message(msg_details)
+
+        # --- REPORT 2: AGGREGATE SUMMARY ---
+        msg_summary = (
+            f"📈 <b>{mode} - EOD SUMMARY</b>\n\n"
+            f"💰 <b>Total P/L: ₹ {total_pnl:.2f}</b>\n"
+            f"----------------\n"
+            f"🟢 Total Wins: ₹ {total_wins:.2f}\n"
+            f"🔴 Total Loss: ₹ {total_loss:.2f}\n"
+            f"🚀 Max Potential: ₹ {total_max_potential:.2f}\n"
+            f"💼 Funds Used: ₹ {total_funds_used:.2f}\n"
+            f"📊 Total Trades: {len(todays_trades)}\n"
+            f"🚫 Not Active: {cnt_not_active}\n" 
+            f"🛑 Direct SL: {cnt_direct_sl}"     
+        )
+        
+        # Send Summary Report
+        telegram_bot.send_message(msg_summary)
+
+    except Exception as e:
+        print(f"Error generating EOD report: {e}")
+
+# --- NEW: Manual Report Helpers (Triggered by Button) ---
+
+def send_manual_trade_status(mode):
+    """
+    Sends the detailed 'Final Trade Status' report for all trades of the day (Manual Trigger).
+    """
+    try:
+        today_str = datetime.now(IST).strftime("%Y-%m-%d")
+        history = load_history()
+        
+        # Filter for Today's trades in the specific Mode
+        todays_trades = [t for t in history if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode]
+        
+        if not todays_trades:
+            return {"status": "error", "message": "No trades found for today."}
+
+        msg_details = f"📊 <b>{mode} - FINAL TRADE STATUS (MANUAL)</b>\n"
+        
+        for t in todays_trades:
+            raw_symbol = t.get('symbol', 'Unknown')
+            symbol = smart_trader.get_telegram_symbol(raw_symbol)
+            
+            entry = t.get('entry_price', 0)
+            sl = t.get('sl', 0)
+            targets = t.get('targets', [])
+            raw_status = t.get('status', 'CLOSED')
+            qty = t.get('quantity', 0)
+            pnl = t.get('pnl', 0)
+            
+            # --- CUSTOM STATUS DISPLAY LOGIC ---
+            display_status = raw_status
+            is_direct_sl = False 
+            
+            if raw_status == "NOT_ACTIVE" or (raw_status == "TIME_EXIT" and pnl == 0):
+                display_status = "Not Active"
+                is_direct_sl = True
+            elif raw_status == "SL_HIT":
+                if not t.get('targets_hit_indices'):
+                    display_status = "Stop-Loss"
+                    is_direct_sl = True
+                else:
+                    display_status = "SL Hit (After Target)"
+            
+            made_high = t.get('made_high', t.get('exit_price', entry))
+            
+            # Suppress Potential for Direct SL
+            if is_direct_sl:
+                made_high = entry 
+                max_pot_val = 0.0
+                pot_target = "None"
+            else:
+                max_pot_val = (made_high - entry) * qty
+                if max_pot_val < 0: max_pot_val = 0
+                
+                pot_target = "None"
+                if len(targets) >= 3:
+                    if made_high >= targets[2]: pot_target = "T3 ✅"
+                    elif made_high >= targets[1]: pot_target = "T2 ✅"
+                    elif made_high >= targets[0]: pot_target = "T1 ✅"
+            
+            msg_details += (
+                f"\n🔹 <b>{symbol}</b>\n"
+                f"Entry: {entry}\n"
+                f"SL: {sl}\n"
+                f"Targets: {targets}\n"
+                f"Status: {display_status}\n" 
+                f"High Made: {made_high}\n"
+                f"Potential Target: {pot_target}\n"
+                f"Max Potential: {max_pot_val:.2f}\n"
+                f"----------------"
+            )
+
+        telegram_bot.send_message(msg_details)
+        return {"status": "success"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def send_manual_trade_report(trade_id):
+    """
+    Sends a detailed status report for a SINGLE specific trade.
+    """
+    try:
+        # Look in History first
+        history = load_history()
+        trade = next((t for t in history if str(t['id']) == str(trade_id)), None)
+        
+        # If not in history, check Active trades
+        if not trade:
+            active = load_trades()
+            trade = next((t for t in active if str(t['id']) == str(trade_id)), None)
+            
+        if not trade:
+            return {"status": "error", "message": "Trade not found"}
+
+        # Construct Message
+        raw_symbol = trade.get('symbol', 'Unknown')
+        symbol = smart_trader.get_telegram_symbol(raw_symbol)
+        
+        entry = trade.get('entry_price', 0)
+        sl = trade.get('sl', 0)
+        targets = trade.get('targets', [])
+        raw_status = trade.get('status', 'UNKNOWN')
+        qty = trade.get('quantity', 0)
+        pnl = trade.get('pnl', 0)
+        
+        # --- CUSTOM STATUS DISPLAY LOGIC ---
+        display_status = raw_status
+        is_direct_sl = False
+
+        if raw_status == "NOT_ACTIVE" or (raw_status == "TIME_EXIT" and pnl == 0):
+            display_status = "Not Active"
+            is_direct_sl = True
+        elif raw_status == "SL_HIT" and not trade.get('targets_hit_indices'):
+            display_status = "Stop-Loss"
+            is_direct_sl = True
+        
+        # Use made_high if available, else exit price, else entry
+        made_high = trade.get('made_high', trade.get('exit_price', entry))
+        
+        # --- FIX: Suppress Potential for Direct SL ---
+        if is_direct_sl:
+            made_high = entry 
+            max_pot_val = 0.0
+            pot_target = "None"
+        else:
+            # Max Potential
+            max_pot_val = (made_high - entry) * qty
+            if max_pot_val < 0: max_pot_val = 0
+            
+            # Potential Target Logic
+            pot_target = "None"
+            if len(targets) >= 3:
+                if made_high >= targets[2]: pot_target = "T3 ✅"
+                elif made_high >= targets[1]: pot_target = "T2 ✅"
+                elif made_high >= targets[0]: pot_target = "T1 ✅"
+
+        msg = (
+            f"🔹 <b>TRADE STATUS: {symbol}</b>\n"
+            f"Entry: {entry}\n"
+            f"SL: {sl}\n"
+            f"Targets: {targets}\n"
+            f"Status: {display_status}\n"
+            f"High Made: {made_high}\n"
+            f"Potential Target: {pot_target}\n"
+            f"Max Potential: {max_pot_val:.2f}"
+        )
+        
+        telegram_bot.send_message(msg)
+        return {"status": "success"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+def send_manual_summary(mode):
+    """
+    Sends the Aggregate Summary for the current day.
+    """
+    try:
+        # This function reuses the logic to include the new counts
+        today_str = datetime.now(IST).strftime("%Y-%m-%d")
+        history = load_history()
+        
+        todays_trades = [t for t in history if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode]
+        
+        if not todays_trades:
+            return {"status": "error", "message": "No trades found for today."}
+
+        total_pnl = 0.0
+        total_wins = 0.0
+        total_loss = 0.0
+        total_funds_used = 0.0
+        total_max_potential = 0.0
+        
+        cnt_not_active = 0
+        cnt_direct_sl = 0
+
+        for t in todays_trades:
+            entry = t.get('entry_price', 0)
+            qty = t.get('quantity', 0)
+            pnl = t.get('pnl', 0)
+            made_high = t.get('made_high', t.get('exit_price', entry))
+            raw_status = t.get('status', 'CLOSED')
+
+            is_direct_sl = False
+
+            # Counters
+            if raw_status == "NOT_ACTIVE" or (raw_status == "TIME_EXIT" and pnl == 0):
+                cnt_not_active += 1
+                is_direct_sl = True
+            elif raw_status == "SL_HIT" and not t.get('targets_hit_indices'):
+                cnt_direct_sl += 1
+                is_direct_sl = True
+
+            total_pnl += pnl
+            if pnl >= 0: total_wins += pnl
+            else: total_loss += pnl
+            
+            total_funds_used += (entry * qty)
+            
+            # --- FIX: Suppress Potential in Summary too ---
+            if not is_direct_sl:
+                max_pot_val = (made_high - entry) * qty
+                if max_pot_val < 0: max_pot_val = 0
+                total_max_potential += max_pot_val
+
+        msg_summary = (
+            f"📈 <b>{mode} - MANUAL SUMMARY</b>\n\n"
+            f"💰 <b>Total P/L: ₹ {total_pnl:.2f}</b>\n"
+            f"----------------\n"
+            f"🟢 Total Wins: ₹ {total_wins:.2f}\n"
+            f"🔴 Total Loss: ₹ {total_loss:.2f}\n"
+            f"🚀 Max Potential: ₹ {total_max_potential:.2f}\n"
+            f"💼 Funds Used: ₹ {total_funds_used:.2f}\n"
+            f"📊 Total Trades: {len(todays_trades)}\n"
+            f"🚫 Not Active: {cnt_not_active}\n"
+            f"🛑 Direct SL: {cnt_direct_sl}"
+        )
+        
+        telegram_bot.send_message(msg_summary)
+        return {"status": "success"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def check_global_exit_conditions(kite, mode, mode_settings):
     """
     Checks and executes global risk rules:
@@ -27,19 +379,32 @@ def check_global_exit_conditions(kite, mode, mode_settings):
             # Trigger within 2 minutes of the time
             if now >= exit_dt and (now - exit_dt).seconds < 120:
                  active_mode = [t for t in trades if t['mode'] == mode]
+                 
                  if active_mode:
                      for t in active_mode:
+                         # Determine if it's ACTIVE or PENDING
+                         exit_reason = "TIME_EXIT"
+                         exit_price = t.get('current_ltp', 0)
+                         
+                         if t['status'] == 'PENDING':
+                             exit_reason = "NOT_ACTIVE"
+                             exit_price = t['entry_price'] # Force 0 PnL for pending
+                         
                          if t['mode'] == "LIVE" and t['status'] != 'PENDING':
                             manage_broker_sl(kite, t, cancel_completely=True)
                             try: 
                                 kite.place_order(variety=kite.VARIETY_REGULAR, tradingsymbol=t['symbol'], exchange=t['exchange'], transaction_type=kite.TRANSACTION_TYPE_SELL, quantity=t['quantity'], order_type=kite.ORDER_TYPE_MARKET, product=kite.PRODUCT_MIS)
                             except: pass
                          
-                         move_to_history(t, "TIME_EXIT", t.get('current_ltp', 0))
+                         move_to_history(t, exit_reason, exit_price)
                      
                      # Save remaining trades (those not in the current mode)
                      remaining = [t for t in trades if t['mode'] != mode]
                      save_trades(remaining)
+                     
+                     # --- TRIGGER EOD REPORT ---
+                     send_eod_report(mode)
+                     
                      return
         except Exception as e: 
             print(f"Time Check Error: {e}")
@@ -311,8 +676,7 @@ def update_risk_engine(kite):
                     else:
                         active_list.append(t)
             except Exception as e:
-                # SAFETY CATCH: If this specific trade fails, log it and keep it in the list.
-                # This ensures the loop continues for other trades and the UI doesn't freeze.
+                # SAFETY CATCH
                 print(f"Error processing trade {t.get('symbol', 'UNKNOWN')}: {e}")
                 active_list.append(t)
         

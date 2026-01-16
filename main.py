@@ -4,7 +4,7 @@ import threading
 import time
 import gc 
 import requests
-from flask import Flask, render_template, request, redirect, flash, jsonify
+from flask import Flask, render_template, request, redirect, flash, jsonify, url_for
 from kiteconnect import KiteConnect
 import config
 # --- REFACTORED IMPORTS ---
@@ -270,6 +270,47 @@ def api_panic_exit():
         flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
     return jsonify({"status": "error", "message": "Failed to execute panic mode"})
+
+# --- ROUTES FOR TELEGRAM REPORTS ---
+
+@app.route('/api/manual_trade_report', methods=['POST'])
+def api_manual_trade_report():
+    """
+    Triggered by the 'Speaker' icon on a closed trade card.
+    Sends detailed stats of that specific trade to Telegram.
+    """
+    trade_id = request.json.get('trade_id')
+    if not trade_id:
+        return jsonify({"status": "error", "message": "Trade ID missing"})
+    
+    # Calls the new function we added to risk_engine.py
+    result = risk_engine.send_manual_trade_report(trade_id)
+    return jsonify(result)
+
+@app.route('/api/manual_summary', methods=['POST'])
+def api_manual_summary():
+    """
+    Triggered by the 'Send Daily Summary' button in History tab.
+    Sends the aggregate P/L, Wins/Loss report to Telegram.
+    """
+    mode = request.json.get('mode', 'PAPER')
+    # Calls the new function we added to risk_engine.py
+    result = risk_engine.send_manual_summary(mode)
+    return jsonify(result)
+
+# --- NEW: Route for "Final Trade Status" Button ---
+@app.route('/api/manual_trade_status', methods=['POST'])
+def api_manual_trade_status():
+    """
+    Triggered by the 'Final Trade Status' button.
+    Sends the detailed status list of all trades to Telegram.
+    """
+    mode = request.json.get('mode', 'PAPER')
+    # Calls the new function we added to risk_engine.py
+    result = risk_engine.send_manual_trade_status(mode)
+    return jsonify(result)
+
+# -------------------------------------------------------------
 
 # --- NEW TELEGRAM TEST ROUTE ---
 @app.route('/api/test_telegram', methods=['POST'])
