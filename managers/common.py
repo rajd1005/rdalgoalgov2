@@ -1,7 +1,7 @@
 import pytz
 from datetime import datetime
 import settings
-from managers.persistence import load_history, load_trades
+# REMOVED: from managers.persistence import load_history, load_trades (Caused Circular Import)
 
 # Global Timezone
 IST = pytz.timezone('Asia/Kolkata')
@@ -44,6 +44,9 @@ def get_day_pnl(mode):
     1. Realized P&L from closed trades today.
     2. Unrealized P&L from currently active trades.
     """
+    # --- Local Import to Break Circular Dependency ---
+    from managers.persistence import load_history, load_trades
+    
     today_str = datetime.now(IST).strftime("%Y-%m-%d")
     total = 0.0
     
