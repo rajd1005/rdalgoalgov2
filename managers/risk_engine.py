@@ -531,8 +531,10 @@ def update_risk_engine(kite):
                         t['highest_ltp'] = t['entry_price']
                         log_event(t, f"Order ACTIVATED @ {ltp}")
                         
-                        # --- TELEGRAM NOTIFICATION: ACTIVE ---
-                        telegram_bot.notify_trade_event(t, "ACTIVE", ltp)
+                        # --- TELEGRAM NOTIFICATION: ACTIVE (CAPTURE ID) ---
+                        msg_id = telegram_bot.notify_trade_event(t, "ACTIVE", ltp)
+                        if msg_id:
+                            t.setdefault('telegram_update_ids', []).append(msg_id)
                         
                         if t['mode'] == 'LIVE':
                             try: 
@@ -562,7 +564,7 @@ def update_risk_engine(kite):
                         t['highest_ltp'] = ltp
                         t['made_high'] = ltp
                         
-                        # --- TELEGRAM NOTIFICATION: HIGH MADE ---
+                        # --- TELEGRAM NOTIFICATION: HIGH MADE (CAPTURE ID) ---
                         # Correct logic: Check if T3 hit OR Price > T3
                         has_crossed_t3 = False
                         if 2 in t.get('targets_hit_indices', []):
@@ -571,7 +573,9 @@ def update_risk_engine(kite):
                             has_crossed_t3 = True
 
                         if has_crossed_t3:
-                             telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
+                             msg_id = telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
+                             if msg_id:
+                                t.setdefault('telegram_update_ids', []).append(msg_id)
                     
                     # --- Step Trailing Logic ---
                     if t.get('trailing_sl', 0) > 0:
@@ -619,8 +623,10 @@ def update_risk_engine(kite):
                                 t.setdefault('targets_hit_indices', []).append(i)
                                 conf = controls[i]
                                 
-                                # --- TELEGRAM NOTIFICATION: TARGET HIT ---
-                                telegram_bot.notify_trade_event(t, "TARGET_HIT", {'t_num': i+1, 'price': tgt})
+                                # --- TELEGRAM NOTIFICATION: TARGET HIT (CAPTURE ID) ---
+                                msg_id = telegram_bot.notify_trade_event(t, "TARGET_HIT", {'t_num': i+1, 'price': tgt})
+                                if msg_id:
+                                    t.setdefault('telegram_update_ids', []).append(msg_id)
 
                                 # Feature: Trail SL to Entry on Target Hit
                                 if conf.get('trail_to_entry') and t['sl'] < t['entry_price']:
@@ -665,12 +671,14 @@ def update_risk_engine(kite):
                         
                         final_price = t['sl'] if exit_reason=="SL_HIT" else (t['targets'][-1] if exit_reason=="TARGET_HIT" else ltp)
                         
-                        # --- TELEGRAM NOTIFICATION: EXIT ---
+                        # --- TELEGRAM NOTIFICATION: EXIT (CAPTURE ID) ---
                         if exit_reason == "SL_HIT":
                             trade_snap = t.copy()
                             trade_snap['exit_price'] = final_price
                             pnl_realized = (final_price - t['entry_price']) * t['quantity']
-                            telegram_bot.notify_trade_event(trade_snap, "SL_HIT", pnl_realized)
+                            msg_id = telegram_bot.notify_trade_event(trade_snap, "SL_HIT", pnl_realized)
+                            if msg_id:
+                                t.setdefault('telegram_update_ids', []).append(msg_id)
                         
                         move_to_history(t, exit_reason, final_price)
                     else:
@@ -704,9 +712,11 @@ def update_risk_engine(kite):
                     if ltp > current_high:
                         t['made_high'] = ltp
                         
-                        # --- NOTIFICATION: High Made on Closed Trade ---
+                        # --- NOTIFICATION: High Made on Closed Trade (CAPTURE ID) ---
                         try:
-                            telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
+                            msg_id = telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
+                            if msg_id:
+                                t.setdefault('telegram_update_ids', []).append(msg_id)
                         except: pass
                         
                     # Direct DB merge for efficiency (updating historical record)
