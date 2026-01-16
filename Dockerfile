@@ -18,5 +18,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 4. Copy all project files
 COPY . .
 
-# 5. Run the app
-CMD ["python", "main.py"]
+# Old/Current (Risk of multiple workers):
+# CMD ["gunicorn", "main:app"]
+
+# New (Safe & Liberated):
+CMD ["gunicorn", "-w", "1", "--threads", "8", "-b", "0.0.0.0:8080", "main:app"]
