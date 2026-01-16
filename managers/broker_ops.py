@@ -1,105 +1,143 @@
+import time
+from datetime import datetime
+from managers.persistence import save_to_history_db, save_trades, load_trades, TRADE_LOCK
 from managers.common import log_event, get_time_str
-from managers.persistence import TRADE_LOCK, load_trades, save_trades, save_to_history_db
 
-def move_to_history(trade, final_status, exit_price):
+def manage_broker_sl(kite, trade, quantity_to_exit=0, cancel_completely=False):
     """
-    Finalizes a trade, calculates PnL, logs the closure, and moves it to the history database.
+    Modifies or Cancels the Broker Stop Loss Order (SL-M).
     """
-    real_pnl = 0
-    was_active = trade['status'] != 'PENDING'
-    
-    # --- FIX START: Respect Pre-Calculated P/L (for Replay/Partial Exits) ---
-    # If the trade already has a calculated 'pnl' (e.g. from Replay Engine), use it.
-    if 'pnl' in trade and trade['pnl'] is not None:
-         real_pnl = trade['pnl']
-    # --- FIX END ---
-    elif was_active:
-        # Standard calculation (Exit - Entry) * Qty
-        # Used for standard Live/Paper trades that don't track cumulative P/L yet
-        real_pnl = round((exit_price - trade['entry_price']) * trade['quantity'], 2)
-        
-    trade['pnl'] = real_pnl if was_active else 0
-    trade['status'] = final_status
-    trade['exit_price'] = exit_price
-    trade['exit_time'] = get_time_str()
-    trade['exit_type'] = final_status
-    
-    # Avoid duplicate logging if called multiple times (sanity check)
-    if "Closed:" not in str(trade.get('logs', [])):
-         log_event(trade, f"Closed: {final_status} @ {exit_price} | P/L ₹ {real_pnl:.2f}")
-    
-    save_to_history_db(trade)
+    if trade.get('mode') != 'LIVE':
+        return
 
-def manage_broker_sl(kite, trade, qty_to_remove=0, cancel_completely=False):
-    """
-    Manages the physical Stop Loss order on the Broker (Zerodha) side.
-    Can cancel the SL completely or modify the quantity (for partial exits).
-    """
-    sl_id = trade.get('sl_order_id')
-    # Only proceed if there is an SL Order ID and the mode is LIVE
-    if not sl_id or trade['mode'] != 'LIVE': 
+    order_id = trade.get('sl_order_id')
+    if not order_id:
         return
 
     try:
-        # Scenario 1: Cancel SL completely (Full Exit or Panic)
-        if cancel_completely or qty_to_remove >= trade['quantity']:
-            kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=sl_id)
-            log_event(trade, f"Broker SL Cancelled (ID: {sl_id})")
-            trade['sl_order_id'] = None 
+        # 1. CANCEL COMPLETELY (e.g., Target Hit full exit, or Manual Close)
+        if cancel_completely:
+            try:
+                kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=order_id)
+                log_event(trade, "Broker SL Order Cancelled")
+            except Exception as e:
+                # Ignore if already cancelled/completed
+                log_event(trade, f"Broker SL Cancel Failed (Might be closed): {e}")
             
-        # Scenario 2: Reduce SL Quantity (Partial Exit)
-        elif qty_to_remove > 0:
-            new_qty = trade['quantity'] - qty_to_remove
+            trade['sl_order_id'] = None
+            return
+
+        # 2. PARTIAL EXIT (Reduce SL Quantity)
+        if quantity_to_exit > 0:
+            current_qty = trade['quantity']
+            new_qty = current_qty - quantity_to_exit
+            
             if new_qty > 0:
-                kite.modify_order(
-                    variety=kite.VARIETY_REGULAR,
-                    order_id=sl_id,
-                    quantity=new_qty
-                )
-                log_event(trade, f"Broker SL Qty Modified to {new_qty}")
-                
+                try:
+                    kite.modify_order(
+                        variety=kite.VARIETY_REGULAR, 
+                        order_id=order_id, 
+                        quantity=new_qty
+                    )
+                    log_event(trade, f"Broker SL Qty Reduced to {new_qty}")
+                except Exception as e:
+                    log_event(trade, f"Broker SL Mod Failed: {e}")
+            else:
+                # If new qty is 0 or less, cancel it
+                try:
+                    kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=order_id)
+                except: pass
+                trade['sl_order_id'] = None
+
     except Exception as e:
-        log_event(trade, f"⚠️ Broker SL Update Failed: {e}")
+        print(f"Manage Broker SL Error: {e}")
 
 def panic_exit_all(kite):
     """
-    Emergency Function: Immediately closes all active positions.
-    1. Cancels pending Broker SL orders.
-    2. Places Market Sell orders for all open quantities.
-    3. Moves all trades to history with status 'PANIC_EXIT'.
+    Emergency Function: Exits all LIVE positions and cancels pending orders.
     """
     with TRADE_LOCK:
         trades = load_trades()
-        if not trades: 
-            return True
-            
-        print(f"🚨 PANIC MODE TRIGGERED: Closing {len(trades)} positions.")
+        active_list = []
         
         for t in trades:
-            # Handle LIVE trades on the broker side
-            if t['mode'] == "LIVE" and t['status'] != 'PENDING':
-                # First, cancel the protection SL to avoid double execution
-                manage_broker_sl(kite, t, cancel_completely=True)
+            if t['mode'] == 'LIVE':
+                # 1. Cancel SL Order
+                if t.get('sl_order_id'):
+                    try:
+                        kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=t['sl_order_id'])
+                    except: pass
                 
-                # Then place the exit order
-                try: 
-                    kite.place_order(
-                        variety=kite.VARIETY_REGULAR, 
-                        tradingsymbol=t['symbol'], 
-                        exchange=t['exchange'], 
-                        transaction_type=kite.TRANSACTION_TYPE_SELL, 
-                        quantity=t['quantity'], 
-                        order_type=kite.ORDER_TYPE_MARKET, 
-                        product=kite.PRODUCT_MIS
-                    )
-                except Exception as e: 
-                    print(f"Panic Broker Fail {t['symbol']}: {e}")
-            
-            # Move to internal history
-            # Use current_ltp if available, else fallback to entry (neutral exit logic for panic if data missing)
-            exit_p = t.get('current_ltp', t['entry_price'])
-            move_to_history(t, "PANIC_EXIT", exit_p)
+                # 2. Exit Position (Market Sell)
+                if t['status'] != 'PENDING':
+                    try:
+                        kite.place_order(
+                            variety=kite.VARIETY_REGULAR,
+                            tradingsymbol=t['symbol'],
+                            exchange=t['exchange'],
+                            transaction_type=kite.TRANSACTION_TYPE_SELL,
+                            quantity=t['quantity'],
+                            order_type=kite.ORDER_TYPE_MARKET,
+                            product=kite.PRODUCT_MIS
+                        )
+                    except Exception as e:
+                        print(f"Panic Exit Fail {t['symbol']}: {e}")
+                
+                # Move to History immediately to clear Dashboard
+                t['exit_time'] = get_time_str()
+                t['status'] = "PANIC_EXIT"
+                t['exit_price'] = t.get('current_ltp', 0)
+                t['pnl'] = (t['exit_price'] - t['entry_price']) * t['quantity']
+                
+                save_to_history_db(t)
+            else:
+                # Keep PAPER trades or handle them if needed (currently keeping them)
+                active_list.append(t)
         
-        # Clear active trades list
-        save_trades([])
-        return True
+        save_trades(active_list)
+
+def move_to_history(trade, exit_reason, exit_price):
+    """
+    Finalizes a trade: calculates PnL, sets timestamps, and moves it to the History DB.
+    CRITICAL: Preserves Telegram IDs for 'Delete Thread' functionality.
+    """
+    trade['status'] = exit_reason
+    trade['exit_time'] = get_time_str()
+    trade['exit_price'] = float(exit_price)
+    
+    # Calculate Final PnL
+    # For PENDING orders that were cancelled (NOT_ACTIVE), PnL is 0
+    if exit_reason == "NOT_ACTIVE":
+        trade['pnl'] = 0.0
+    else:
+        trade['pnl'] = (trade['exit_price'] - trade['entry_price']) * trade['quantity']
+
+    log_event(trade, f"Trade Closed: {exit_reason} @ {exit_price}")
+    
+    # --- PREPARE DATA FOR HISTORY ---
+    # We explicitly ensure Telegram IDs are carried over
+    history_entry = {
+        "id": trade['id'],
+        "symbol": trade['symbol'],
+        "exchange": trade['exchange'],
+        "mode": trade['mode'],
+        "entry_time": trade['entry_time'],
+        "exit_time": trade['exit_time'],
+        "order_type": trade['order_type'],
+        "status": trade['status'],
+        "entry_price": trade['entry_price'],
+        "exit_price": trade['exit_price'],
+        "quantity": trade['quantity'],
+        "pnl": trade['pnl'],
+        "sl": trade['sl'],
+        "targets": trade['targets'],
+        "made_high": trade.get('made_high', 0),
+        "logs": trade.get('logs', []),
+        
+        # --- CRITICAL: PRESERVE TELEGRAM DATA ---
+        "telegram_msg_id": trade.get('telegram_msg_id'),
+        "telegram_update_ids": trade.get('telegram_update_ids', [])
+    }
+    
+    # Save to History DB
+    save_to_history_db(history_entry)
