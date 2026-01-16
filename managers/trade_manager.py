@@ -144,10 +144,12 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             "made_high": entry_price, 
             "current_ltp": current_ltp, 
             "trigger_dir": trigger_dir, 
-            "logs": logs
+            "logs": logs,
+            # Initialize list for future updates (Target Hit, Updates, etc.)
+            "telegram_update_ids": [] 
         }
         
-        # --- SEND TELEGRAM NOTIFICATION ---
+        # --- SEND TELEGRAM NOTIFICATION (NEW TRADE) ---
         msg_id = telegram_bot.notify_trade_event(record, "NEW_TRADE")
         if msg_id:
             record['telegram_msg_id'] = msg_id
@@ -160,6 +162,7 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
     """
     Updates the protection parameters (SL, Targets, Trailing) for an existing trade.
     Also syncs the changes to the broker if the trade is LIVE.
+    CRITICAL: Captures 'UPDATE' notification ID for 'Delete Thread'.
     """
     with TRADE_LOCK:
         trades = load_trades()
@@ -238,6 +241,7 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                 log_event(t, f"Manual Update: SL {t['sl']}{entry_msg}. Trailing: {t['trailing_sl']} pts. Multiplier: {exit_multiplier}x")
                 
                 # --- TELEGRAM UPDATE (CAPTURE ID) ---
+                # This ensures the 'Update' message is deletable later
                 msg_id = telegram_bot.notify_trade_event(t, "UPDATE")
                 if msg_id:
                     t.setdefault('telegram_update_ids', []).append(msg_id)
@@ -337,6 +341,7 @@ def promote_to_live(kite, trade_id):
     """
     Promotes a PAPER trade to LIVE execution.
     Places a Market Buy order and a Stop Loss order immediately.
+    CRITICAL: Captures 'Promoted' notification ID for 'Delete Thread'.
     """
     with TRADE_LOCK:
         trades = load_trades()
