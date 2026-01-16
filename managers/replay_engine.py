@@ -10,6 +10,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
     """
     Simulates a trade based on historical data.
     Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
+    Also captures Message IDs if simulation is run in a way that triggers notifications immediately (though Import usually queues them).
     """
     try:
         # 1. Parse Input & Initialize Data
@@ -55,11 +56,17 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
             "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list
         }
+        # Note: 'notification_queue' is returned to the frontend/controller which then sends messages.
+        # The IDs generated *there* need to be saved. But since this function is 'Import', 
+        # it typically runs instantly. We rely on the caller to handle the ID saving if they send messages.
+        # However, for the data structure, we prepare the field.
+        
         notification_queue.append({'event': 'NEW_TRADE', 'data': initial_trade_data})
 
         final_status = "PENDING"
         exit_reason = ""
         final_exit_price = 0.0
+        telegram_update_ids = [] # List to store potential IDs if we were running live logic here
         
         # 3. Candle-by-Candle Simulation
         for idx, candle in enumerate(hist_data):
@@ -238,7 +245,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "sl_order_id": None, "targets_hit_indices": targets_hit_indices, 
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": current_ltp, "trigger_dir": trigger_dir, "logs": logs,
-                    "is_replay": True, "last_update_time": hist_data[-1]['date'] if hist_data else get_time_str()
+                    "is_replay": True, "last_update_time": hist_data[-1]['date'] if hist_data else get_time_str(),
+                    "telegram_update_ids": telegram_update_ids # Placeholder for Future
                 }
                 trades = load_trades(); trades.append(record); save_trades(trades)
                 
@@ -267,7 +275,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "sl_order_id": None, "targets_hit_indices": targets_hit_indices, 
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
-                    "logs": logs, "is_replay": True, "pnl": realized_pnl
+                    "logs": logs, "is_replay": True, "pnl": realized_pnl,
+                    "telegram_update_ids": telegram_update_ids
                 }
                 move_to_history(record, exit_reason, final_exit_price)
                 
