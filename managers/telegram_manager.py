@@ -47,6 +47,29 @@ class TelegramManager:
             print(f"❌ Telegram Request Failed: {e}")
         return None
 
+    def delete_message(self, message_id):
+        """
+        Deletes a specific message from the Telegram channel.
+        """
+        conf = self._get_config()
+        token = conf.get('bot_token')
+        chat_id = conf.get('channel_id')
+
+        if not token or not chat_id or not message_id:
+            return
+
+        url = f"{self.base_url}{token}/deleteMessage"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id
+        }
+        
+        try:
+            # Send delete request to Telegram
+            requests.post(url, json=payload, timeout=5)
+        except Exception as e:
+            print(f"❌ Telegram Delete Failed: {e}")
+
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends a notification based on the event type.
