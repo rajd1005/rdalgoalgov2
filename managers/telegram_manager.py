@@ -8,6 +8,13 @@ from managers.common import get_time_str
 class TelegramManager:
     def __init__(self):
         self.base_url = "https://api.telegram.org/bot"
+        self.app = None # Hold reference to Flask App
+
+    def init_app(self, app):
+        """
+        Initialize with Flask app to allow DB access in background threads.
+        """
+        self.app = app
 
     def _get_config(self):
         s = settings.load_settings()
@@ -79,7 +86,6 @@ class TelegramManager:
                     target = next((t for t in history if str(t['id']) == str(trade_id)), None)
                     if target:
                         # Need to parse JSON, update, and re-serialize
-                        # Persistence load_history returns dicts, save_to_history expects dict
                         if update_type == 'SET_MAIN_ID':
                             target['telegram_msg_id'] = msg_id
                         else:
@@ -208,10 +214,22 @@ class TelegramManager:
 
             # 2. Spawn Background Task if message exists
             if msg:
+                # Capture Flask App Reference for the thread
+                app_ref = self.app
+
                 def task():
-                    mid = self._send_http_request(msg, thread_id)
-                    if mid:
-                        self._bg_update_db(trade_id, mid, update_type)
+                    # Helper to run the logic
+                    def run_logic():
+                        mid = self._send_http_request(msg, thread_id)
+                        if mid:
+                            self._bg_update_db(trade_id, mid, update_type)
+
+                    # Wrap in App Context if available (Fixes DB Update)
+                    if app_ref:
+                        with app_ref.app_context():
+                            run_logic()
+                    else:
+                        run_logic()
 
                 threading.Thread(target=task).start()
 
