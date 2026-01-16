@@ -121,8 +121,11 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
 
         logs.insert(0, f"[{get_time_str()}] Trade Added. Status: {status}")
         
+        # Use Microsecond precision for ID to prevent collisions
+        trade_id = int(time.time() * 1000000)
+
         record = {
-            "id": int(time.time()), 
+            "id": trade_id, 
             "entry_time": get_time_str(), 
             "symbol": specific_symbol, 
             "exchange": exchange,
@@ -145,24 +148,25 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             "current_ltp": current_ltp, 
             "trigger_dir": trigger_dir, 
             "logs": logs,
-            # Initialize list for future updates (Target Hit, Updates, etc.)
+            # Initialize list for future updates
             "telegram_update_ids": [] 
         }
         
-        # --- SEND TELEGRAM NOTIFICATION (NEW TRADE) ---
-        msg_id = telegram_bot.notify_trade_event(record, "NEW_TRADE")
-        if msg_id:
-            record['telegram_msg_id'] = msg_id
-        
+        # 1. SAVE TO DB FIRST
+        # This ensures the background Telegram thread can find the trade by ID
         trades.append(record)
         save_trades(trades)
+
+        # 2. SEND TELEGRAM NOTIFICATION (ASYNC)
+        # We do not wait for the result here. The background thread will update the DB.
+        telegram_bot.notify_trade_event(record, "NEW_TRADE")
+        
         return {"status": "success", "trade": record}
 
 def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_price=None, target_controls=None, sl_to_entry=0, exit_multiplier=1):
     """
     Updates the protection parameters (SL, Targets, Trailing) for an existing trade.
     Also syncs the changes to the broker if the trade is LIVE.
-    CRITICAL: Captures 'UPDATE' notification ID for 'Delete Thread'.
     """
     with TRADE_LOCK:
         trades = load_trades()
@@ -240,11 +244,9 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                 
                 log_event(t, f"Manual Update: SL {t['sl']}{entry_msg}. Trailing: {t['trailing_sl']} pts. Multiplier: {exit_multiplier}x")
                 
-                # --- TELEGRAM UPDATE (CAPTURE ID) ---
-                # This ensures the 'Update' message is deletable later
-                msg_id = telegram_bot.notify_trade_event(t, "UPDATE")
-                if msg_id:
-                    t.setdefault('telegram_update_ids', []).append(msg_id)
+                # --- TELEGRAM UPDATE (ASYNC) ---
+                # Fire and forget. Background thread handles it.
+                telegram_bot.notify_trade_event(t, "UPDATE")
                 
                 updated = True
                 break
@@ -341,7 +343,6 @@ def promote_to_live(kite, trade_id):
     """
     Promotes a PAPER trade to LIVE execution.
     Places a Market Buy order and a Stop Loss order immediately.
-    CRITICAL: Captures 'Promoted' notification ID for 'Delete Thread'.
     """
     with TRADE_LOCK:
         trades = load_trades()
@@ -378,10 +379,8 @@ def promote_to_live(kite, trade_id):
                     t['mode'] = "LIVE"
                     t['status'] = "PROMOTED_LIVE"
                     
-                    # Notify Promotion (CAPTURE ID)
-                    msg_id = telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
-                    if msg_id:
-                        t.setdefault('telegram_update_ids', []).append(msg_id)
+                    # Notify Promotion (ASYNC)
+                    telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
                     
                     save_trades(trades)
                     return True
