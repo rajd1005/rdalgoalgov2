@@ -95,14 +95,12 @@ def background_monitor():
                         if not kite.access_token: 
                             raise Exception("No Access Token Found")
 
-                        # --- FIX START: HEARTBEAT CHECK ---
                         # Force a simple API call to validate the token 
                         # even if there are no trades to process.
                         try:
-                            kite.profile() # or kite.quote(["NSE:NIFTY 50"])
+                            kite.profile() 
                         except Exception as e:
                             raise e # Re-raise to trigger the disconnection logic below
-                        # --- FIX END ---
                         
                         # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
@@ -131,7 +129,8 @@ def background_monitor():
             finally:
                 db.session.remove()
         
-        time.sleep(3) # Pulse interval
+        # --- FIX: Reduced Sleep from 3s to 0.5s for Real-Time Updates ---
+        time.sleep(0.5) 
 
 @app.route('/')
 def home():
@@ -313,19 +312,17 @@ def api_import_trade():
         )
         
         # --- SEQUENTIAL TELEGRAM SENDER ---
-        # If the import generated notification events, send them sequentially in a background thread
         queue = result.get('notification_queue', [])
         trade_ref = result.get('trade_ref', {})
         
         if queue and trade_ref:
             def send_seq_notifications():
-                # --- FIX: Wrap ENTIRE thread logic in app_context to access DB (Settings) ---
+                # Wrap thread in app_context to access DB
                 with app.app_context():
                     # 1. Send Initial "NEW_TRADE" message to get a Thread ID
                     msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
                     
                     if msg_id:
-                        # Save the msg_id so replies work
                         from managers.persistence import load_trades, save_trades, save_to_history_db
                         
                         trade_id = trade_ref['id']
@@ -356,9 +353,7 @@ def api_import_trade():
                         time.sleep(1.0)
                         
                         dat = item.get('data')
-                        # Use specific trade snapshot if available (e.g. for SL Hit params), else default ref
                         t_obj = item.get('trade', trade_ref)
-                        # Ensure the snapshot has the thread ID
                         t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
                         
                         telegram_bot.notify_trade_event(t_obj, evt, dat)
@@ -380,6 +375,57 @@ def api_simulate_scenario():
     
     result = replay_engine.simulate_trade_scenario(kite, trade_id, config)
     return jsonify(result)
+
+# --- NEW: Aggregated Sync Route for High Performance ---
+@app.route('/api/sync', methods=['POST'])
+def api_sync():
+    # 1. Base Data (Status & Indices)
+    response = {
+        "status": {
+            "active": bot_active, 
+            "state": login_state, 
+            "login_url": kite.login_url()
+        },
+        "indices": {"NIFTY": 0, "BANKNIFTY": 0, "SENSEX": 0},
+        "positions": [],
+        "closed_trades": [],
+        "specific_ltp": 0
+    }
+
+    # 2. Fetch Indices (Only if active)
+    if bot_active:
+        try:
+            response["indices"] = smart_trader.get_indices_ltp(kite)
+        except: pass
+
+    # 3. Active Positions
+    trades = persistence.load_trades()
+    for t in trades:
+        t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
+        t['symbol'] = smart_trader.get_display_name(t['symbol'])
+    response["positions"] = trades
+
+    # 4. Closed Trades (Only if requested to save bandwidth)
+    if request.json.get('include_closed'):
+        history = persistence.load_history()
+        for t in history:
+            t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        response["closed_trades"] = history
+
+    # 5. Specific LTP (For Trade Panel)
+    req_ltp = request.json.get('ltp_req')
+    if bot_active and req_ltp and req_ltp.get('symbol'):
+        try:
+            response["specific_ltp"] = smart_trader.get_specific_ltp(
+                kite, 
+                req_ltp['symbol'], 
+                req_ltp['expiry'], 
+                req_ltp['strike'], 
+                req_ltp['type']
+            )
+        except: pass
+
+    return jsonify(response)
 
 @app.route('/trade', methods=['POST'])
 def place_trade():

@@ -1,4 +1,8 @@
 $(document).ready(function() {
+    // --- CONFIGURATION ---
+    const REFRESH_INTERVAL = 500; // Update Interval in milliseconds (1000ms = 1 second)
+    // ---------------------
+
     renderWatchlist();
     loadSettings();
     
@@ -45,7 +49,9 @@ $(document).ready(function() {
 
     // Loops
     setInterval(updateClock, 1000); updateClock();
-    setInterval(updateData, 1000); updateData();
+    
+    // Trade Data Update Loop (Uses Configured Interval)
+    setInterval(updateData, REFRESH_INTERVAL); updateData();
 });
 
 function updateDisplayValues() {
