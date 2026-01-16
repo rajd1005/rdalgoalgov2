@@ -97,10 +97,10 @@ def background_monitor():
 
                         # Force a simple API call to validate the token 
                         # even if there are no trades to process.
-                        try:
-                            kite.profile() 
-                        except Exception as e:
-                            raise e # Re-raise to trigger the disconnection logic below
+                        # try:
+                        #   kite.profile() 
+                        # except Exception as e:
+                        #   raise e # Re-raise to trigger the disconnection logic below
                         
                         # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
@@ -130,7 +130,7 @@ def background_monitor():
                 db.session.remove()
         
         # --- FIX: Reduced Sleep from 3s to 0.5s for Real-Time Updates ---
-        time.sleep(0.5) 
+        time.sleep(1) 
 
 @app.route('/')
 def home():
