@@ -6,14 +6,28 @@ from managers.common import IST, get_exchange, log_event, get_time_str
 from managers.persistence import TRADE_LOCK, load_trades, save_trades, load_history
 from managers.broker_ops import move_to_history
 
-def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls):
+def import_past_trade(kite, data):
     """
     Simulates a trade based on historical data.
     Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
-    Also captures Message IDs if simulation is run in a way that triggers notifications immediately (though Import usually queues them).
     """
     try:
-        # 1. Parse Input & Initialize Data
+        # 1. Parse Input Data
+        symbol = data.get('symbol')
+        entry_dt_str = data.get('entry_time')
+        qty = int(data.get('quantity', 0))
+        entry_price = float(data.get('entry_price', 0))
+        sl_price = float(data.get('sl', 0))
+        targets = [float(x) for x in data.get('targets', [])]
+        trailing_sl = float(data.get('trailing_sl', 0))
+        sl_to_entry = int(data.get('sl_to_entry', 0))
+        exit_multiplier = int(data.get('exit_multiplier', 1))
+        target_controls = data.get('target_controls')
+
+        if not target_controls:
+            target_controls = [{'enabled': True, 'lots': 0, 'trail_to_entry': False} for _ in range(3)]
+
+        # Initialize Time
         entry_time = datetime.strptime(entry_dt_str, "%Y-%m-%dT%H:%M") 
         try: entry_time = IST.localize(entry_time)
         except: pass
@@ -44,29 +58,22 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         current_qty = int(qty)
         highest_ltp = float(entry_price)
         targets_hit_indices = []
-        t_list = [float(x) for x in targets]
         realized_pnl = 0.0 
         
         logs = [f"[{entry_time.strftime('%Y-%m-%d %H:%M:%S')}] 📋 Replay Import Started. Entry: {entry_price}. Trigger: {trigger_dir}"]
         
         # --- Notification Queue ---
         notification_queue = []
-        # Create a base object for the initial notification
         initial_trade_data = {
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
-            "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list
+            "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": targets
         }
-        # Note: 'notification_queue' is returned to the frontend/controller which then sends messages.
-        # The IDs generated *there* need to be saved. But since this function is 'Import', 
-        # it typically runs instantly. We rely on the caller to handle the ID saving if they send messages.
-        # However, for the data structure, we prepare the field.
         
         notification_queue.append({'event': 'NEW_TRADE', 'data': initial_trade_data})
 
         final_status = "PENDING"
         exit_reason = ""
         final_exit_price = 0.0
-        telegram_update_ids = [] # List to store potential IDs if we were running live logic here
         
         # 3. Candle-by-Candle Simulation
         for idx, candle in enumerate(hist_data):
@@ -84,7 +91,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         current_qty = 0
                         break
                     elif status == "PENDING":
-                        # --- NEW: Handle Pending Time Exit ---
+                        # --- Handle Pending Time Exit ---
                         final_status = "NOT_ACTIVE"
                         exit_reason = "TIME_EXIT"
                         final_exit_price = entry_price # No fill, neutral price
@@ -133,9 +140,9 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                 limit_val = float('inf')
                                 mode = int(sl_to_entry)
                                 if mode == 1: limit_val = entry_price
-                                elif mode == 2 and len(t_list)>0: limit_val = t_list[0]
-                                elif mode == 3 and len(t_list)>1: limit_val = t_list[1]
-                                elif mode == 4 and len(t_list)>2: limit_val = t_list[2]
+                                elif mode == 2 and len(targets)>0: limit_val = targets[0]
+                                elif mode == 3 and len(targets)>1: limit_val = targets[1]
+                                elif mode == 4 and len(targets)>2: limit_val = targets[2]
                                 if mode > 0: new_sl = min(new_sl, limit_val)
                                 if new_sl > current_sl:
                                     current_sl = new_sl
@@ -157,7 +164,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         break
 
                     # Target Hits
-                    for i, tgt in enumerate(t_list):
+                    for i, tgt in enumerate(targets):
                         if i in targets_hit_indices: continue 
                         if ltp >= tgt:
                             targets_hit_indices.append(i)
@@ -191,7 +198,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                          final_exit_price = ltp
                          break 
             
-            # --- FIXED: POST-EXIT SCAN NOTIFICATION ---
+            # --- POST-EXIT SCAN NOTIFICATION ---
             if current_qty == 0:
                 skip_scan = (final_status == "SL_HIT" and len(targets_hit_indices) > 0)
                 if not skip_scan:
@@ -238,7 +245,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "order_type": "MARKET", "status": final_status, 
                     "entry_price": entry_price, 
                     "quantity": current_qty if final_status == "OPEN" else qty,
-                    "sl": current_sl, "targets": t_list, 
+                    "sl": current_sl, "targets": targets, 
                     "target_controls": target_controls,
                     "lot_size": smart_trader.get_lot_size(symbol), 
                     "trailing_sl": float(trailing_sl), "sl_to_entry": int(sl_to_entry), "exit_multiplier": int(exit_multiplier), 
@@ -246,7 +253,9 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": current_ltp, "trigger_dir": trigger_dir, "logs": logs,
                     "is_replay": True, "last_update_time": hist_data[-1]['date'] if hist_data else get_time_str(),
-                    "telegram_update_ids": telegram_update_ids # Placeholder for Future
+                    # --- CRITICAL: Initialize Telegram IDs for deletion support ---
+                    "telegram_update_ids": [],
+                    "telegram_msg_id": None
                 }
                 trades = load_trades(); trades.append(record); save_trades(trades)
                 
@@ -268,7 +277,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "symbol": symbol, "exchange": exchange, "mode": "PAPER", 
                     "order_type": "MARKET", "status": final_status, 
                     "entry_price": entry_price, "quantity": qty,
-                    "sl": current_sl, "targets": t_list, 
+                    "sl": current_sl, "targets": targets, 
                     "target_controls": target_controls,
                     "lot_size": smart_trader.get_lot_size(symbol), 
                     "trailing_sl": float(trailing_sl), "sl_to_entry": int(sl_to_entry), "exit_multiplier": int(exit_multiplier), 
@@ -276,7 +285,9 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
                     "logs": logs, "is_replay": True, "pnl": realized_pnl,
-                    "telegram_update_ids": telegram_update_ids
+                    # --- CRITICAL: Initialize Telegram IDs for deletion support ---
+                    "telegram_update_ids": [],
+                    "telegram_msg_id": None
                 }
                 move_to_history(record, exit_reason, final_exit_price)
                 
@@ -291,7 +302,9 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         return {"status": "error", "message": str(e)}
 
 def simulate_trade_scenario(kite, trade_id, scenario_config):
-    # (Remains unchanged)
+    """
+    Simulates a 'What-If' scenario on an existing trade from history.
+    """
     try:
         trades = load_history()
         original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
