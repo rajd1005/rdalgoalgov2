@@ -60,8 +60,10 @@ function loadSettings() {
 
             // --- LOAD TELEGRAM SETTINGS ---
             if(settings.telegram) {
-                $('#tg_token').val(settings.telegram.bot_token || '');
-                $('#tg_chat').val(settings.telegram.channel_id || '');
+                // Updated IDs to match the HTML
+                $('#tg_bot_token').val(settings.telegram.bot_token || '');
+                $('#tg_channel_id').val(settings.telegram.channel_id || '');
+                $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); // NEW
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
             }
 
@@ -120,8 +122,9 @@ function saveSettings() {
 
     // --- SAVE TELEGRAM SETTINGS ---
     settings.telegram = {
-        bot_token: $('#tg_token').val().trim(),
-        channel_id: $('#tg_chat').val().trim(),
+        bot_token: $('#tg_bot_token').val().trim(),
+        channel_id: $('#tg_channel_id').val().trim(),
+        system_channel_id: $('#tg_system_channel_id').val().trim(), // NEW
         enable_notifications: $('#tg_enable').is(':checked')
     };
 
@@ -135,8 +138,10 @@ function saveSettings() {
 }
 
 function testTelegram() {
-    let token = $('#tg_token').val().trim();
-    let chat = $('#tg_chat').val().trim();
+    // Updated IDs to match
+    let token = $('#tg_bot_token').val().trim();
+    let chat = $('#tg_channel_id').val().trim();
+    
     if(!token || !chat) { alert("Enter Token & ID first"); return; }
     
     $.post('/api/test_telegram', { token: token, chat_id: chat }, function(res) {
