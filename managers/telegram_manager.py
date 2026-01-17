@@ -48,6 +48,26 @@ class TelegramManager:
             print(f"❌ Telegram Request Failed: {e}")
         return None
 
+    def notify_system_event(self, event_type, message=""):
+        """
+        Sends system status alerts (Online, Offline, Login Success/Fail).
+        """
+        icons = {
+            "STARTUP": "🖥️",
+            "ONLINE": "🟢",
+            "OFFLINE": "🔴",
+            "LOGIN_SUCCESS": "✅",
+            "LOGIN_FAIL": "⚠️",
+            "RESET": "🔄"
+        }
+        icon = icons.get(event_type, "ℹ️")
+        
+        # Format the message
+        text = f"{icon} <b>SYSTEM ALERT: {event_type}</b>\n{message}\nTime: {get_time_str()}"
+        
+        # Send immediately
+        self.send_message(text)
+
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends a notification based on the event type.
