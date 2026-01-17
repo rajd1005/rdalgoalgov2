@@ -518,11 +518,16 @@ def api_sync():
 def place_trade():
     if not bot_active: return redirect('/')
     try:
-        sym = request.form['index']
-        type_ = request.form['type']
-        mode = request.form['mode']
-        qty = int(request.form['qty'])
-        order_type = request.form['order_type']
+        # Compatibility: Check for both 'symbol' (JS) and 'index' (Legacy)
+        sym = request.form.get('symbol') or request.form.get('index')
+        if not sym:
+            flash("❌ Symbol is required")
+            return redirect('/')
+
+        type_ = request.form.get('type')
+        mode = request.form.get('mode')
+        qty = int(request.form.get('qty', 0))
+        order_type = request.form.get('order_type', 'MARKET')
         
         limit_price = float(request.form.get('limit_price') or 0)
         sl_points = float(request.form.get('sl_points', 0))
@@ -542,10 +547,13 @@ def place_trade():
         custom_targets = [t1, t2, t3] if t1 > 0 else []
         
         target_controls = []
+        # Helper check for booleans ('on' from HTML form, 'true' from JS AJAX)
+        def is_on(val): return str(val).lower() in ['on', 'true', '1']
+
         for i in range(1, 4):
-            enabled = request.form.get(f't{i}_active') == 'on'
+            enabled = is_on(request.form.get(f't{i}_active'))
             lots = int(request.form.get(f't{i}_lots') or 0)
-            trail_cost = request.form.get(f't{i}_cost') == 'on'
+            trail_cost = is_on(request.form.get(f't{i}_cost'))
             if i == 3 and lots == 0: lots = 1000 
             target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost})
         
@@ -554,7 +562,22 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
 
-        res = trade_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
+        # --- CAPTURE NEW NOTIFICATION CHANNELS ---
+        notify_channels = []
+        if is_on(request.form.get('notify_main')):
+            notify_channels.append('main')
+
+        for i in range(1, 4):
+            cid = f"ch{i}"
+            if is_on(request.form.get(f'notify_{cid}')):
+                notify_channels.append(cid)
+        # -----------------------------------------
+
+        res = trade_manager.create_trade_direct(
+            kite, mode, final_sym, qty, sl_points, custom_targets, 
+            order_type, limit_price, target_controls, trailing_sl, 
+            sl_to_entry, exit_multiplier, notify_channels=notify_channels
+        )
         
         if res['status'] == 'success':
             flash(f"✅ Order Placed: {final_sym}")
