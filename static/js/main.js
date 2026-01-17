@@ -13,24 +13,32 @@ $(document).ready(function() {
     $('#hist_date, #hist_filter').change(loadClosedTrades);
     $('#active_filter').change(updateData);
     
-    $('input[name="type"]').change(function() {
-        let s = $('#sym').val();
-        if(s) loadDetails('#sym', '#exp', 'input[name="type"]:checked', '#qty', '#sl_pts');
+    // --- TRADE TAB BINDINGS (Updated to match tab_trade.html) ---
+    $('input[name="trans_type"]').change(function() {
+        let s = $('#trade_symbol').val();
+        if(s) loadDetails('#trade_symbol', '#opt_expiry', 'input[name="trans_type"]:checked', '#trade_qty', '#trade_sl');
     });
     
-    $('#sl_pts, #qty, #lim_pr, #ord').on('input change', calcRisk);
+    // Recalculate Risk on input changes
+    $('#trade_sl, #trade_qty, #trade_trigger, #trade_price, #order_type').on('input change', calcRisk);
     
     // Bind Search Logic
-    bindSearch('#sym', '#sym_list'); 
+    bindSearch('#trade_symbol', '#symbol_list'); 
     bindSearch('#imp_sym', '#sym_list'); 
 
     // Chain & input Bindings
-    $('#sym').change(() => loadDetails('#sym', '#exp', 'input[name="type"]:checked', '#qty', '#sl_pts'));
-    $('#exp').change(() => fillChain('#sym', '#exp', 'input[name="type"]:checked', '#str'));
-    $('#ord').change(function() { if($(this).val() === 'LIMIT') $('#lim_box').show(); else $('#lim_box').hide(); });
-    $('#str').change(fetchLTP);
+    $('#trade_symbol').change(() => loadDetails('#trade_symbol', '#opt_expiry', 'input[name="trans_type"]:checked', '#trade_qty', '#trade_sl'));
+    $('#opt_expiry').change(() => fillChain('#trade_symbol', '#opt_expiry', 'input[name="trans_type"]:checked', '#opt_strike'));
+    
+    $('#order_type').change(function() { 
+        // Logic to toggle Trigger Price visibility if needed, or handled via CSS/TradeJS
+        // For now ensuring consistency with previous logic
+        if(typeof checkOrderType === 'function') checkOrderType(); 
+    });
+    
+    $('#opt_strike').change(fetchLTP);
 
-    // Import Modal Bindings
+    // --- IMPORT MODAL BINDINGS (Matches modals.html) ---
     $('#imp_sym').change(() => loadDetails('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_qty', '#imp_sl_pts')); 
     $('#imp_exp').change(() => fillChain('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_str'));
     $('input[name="imp_type"]').change(() => loadDetails('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_qty', '#imp_sl_pts'));
@@ -58,9 +66,10 @@ function updateDisplayValues() {
     let mode = $('#mode_input').val(); 
     let s = settings.modes[mode]; if(!s) return;
     $('#qty_mult_disp').text(s.qty_mult); 
-    $('#r_t1').text(s.ratios[0]); 
-    $('#r_t2').text(s.ratios[1]); 
-    $('#r_t3').text(s.ratios[2]); 
+    // Ratios display can be updated if UI elements exist, otherwise silent
+    if($('#r_t1').length) $('#r_t1').text(s.ratios[0]); 
+    if($('#r_t2').length) $('#r_t2').text(s.ratios[1]); 
+    if($('#r_t3').length) $('#r_t3').text(s.ratios[2]); 
     if(typeof calcRisk === "function") calcRisk();
 }
 
@@ -77,7 +86,8 @@ function setMode(el, mode) {
     $(el).parent().find('.btn').removeClass('active'); 
     $(el).addClass('active'); 
     updateDisplayValues(); 
-    loadDetails('#sym', '#exp', 'input[name="type"]:checked', '#qty', '#sl_pts'); 
+    // Update Trade Tab details with new mode settings
+    loadDetails('#trade_symbol', '#opt_expiry', 'input[name="trans_type"]:checked', '#trade_qty', '#trade_sl'); 
 }
 
 function panicExit() {
@@ -224,6 +234,6 @@ function renderWatchlist() {
     let wl = settings.watchlist || [];
     let opts = '<option value="">📺 Select</option>';
     wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
-    $('#trade_watch').html(opts);
+    $('#watchlist_select').html(opts); // Updated to match tab_trade.html ID
     $('#imp_watch').html(opts); 
 }
