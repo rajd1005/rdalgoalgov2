@@ -195,11 +195,22 @@ def get_specific_ltp(kite, symbol, expiry, strike, type_):
     Ex: NIFTY 23OCT 19500 CE
     """
     try:
+        # --- FIX: Validate inputs before converting to float ---
+        if not strike or not expiry or not type_:
+            return 0
+        
+        # Check if strike is a valid number, otherwise return 0 (handles 'Select Type First')
+        try:
+            strike_val = float(strike)
+        except (ValueError, TypeError):
+            return 0
+        # --- END FIX ---
+
         with INSTRUMENT_LOCK:
             if instrument_dump is None: return 0
             
             mask = (instrument_dump['name'] == symbol) & \
-                   (instrument_dump['strike'] == float(strike)) & \
+                   (instrument_dump['strike'] == strike_val) & \
                    (instrument_dump['instrument_type'] == type_) & \
                    (instrument_dump['expiry'] == expiry)
                    
