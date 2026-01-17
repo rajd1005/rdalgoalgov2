@@ -7,8 +7,7 @@ class AppSetting(db.Model):
     data = db.Column(db.Text, nullable=False) # Stores JSON string
 
 class ActiveTrade(db.Model):
-    # CHANGED: Updated to BigInteger to safely match TradeHistory and handle timestamp IDs
-    id = db.Column(db.BigInteger, primary_key=True) 
+    id = db.Column(db.Integer, primary_key=True)
     data = db.Column(db.Text, nullable=False) # Stores JSON string
 
 class TradeHistory(db.Model):

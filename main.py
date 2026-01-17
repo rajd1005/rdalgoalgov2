@@ -7,11 +7,9 @@ import requests
 from flask import Flask, render_template, request, redirect, flash, jsonify, url_for
 from kiteconnect import KiteConnect
 import config
-
 # --- REFACTORED IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
 from managers.telegram_manager import bot as telegram_bot
-from managers.persistence import load_trades, load_history
 # --------------------------
 import smart_trader
 import settings
@@ -25,10 +23,6 @@ app.config.from_object(config)
 db.init_app(app)
 with app.app_context():
     db.create_all()
-
-# --- INITIALIZE TELEGRAM BOT WITH APP CONTEXT ---
-telegram_bot.init_app(app)
-# ------------------------------------------------
 
 kite = KiteConnect(api_key=config.API_KEY)
 
@@ -101,6 +95,13 @@ def background_monitor():
                         if not kite.access_token: 
                             raise Exception("No Access Token Found")
 
+                        # Force a simple API call to validate the token 
+                        # even if there are no trades to process.
+                        try:
+                            kite.profile() 
+                        except Exception as e:
+                            raise e # Re-raise to trigger the disconnection logic below
+                        
                         # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
                         
@@ -128,8 +129,8 @@ def background_monitor():
             finally:
                 db.session.remove()
         
-        # Reduced Sleep for Real-Time Updates
-        time.sleep(1) 
+        # --- FIX: Reduced Sleep from 3s to 0.5s for Real-Time Updates ---
+        time.sleep(0.5) 
 
 @app.route('/')
 def home():
@@ -146,8 +147,6 @@ def home():
 @app.route('/secure', methods=['GET', 'POST'])
 def secure_login_page():
     if request.method == 'POST':
-        # Added slight delay to prevent brute-force
-        time.sleep(2)
         if request.form.get('password') == config.ADMIN_PASSWORD:
             return redirect(kite.login_url())
         else:
@@ -276,26 +275,44 @@ def api_panic_exit():
 
 @app.route('/api/manual_trade_report', methods=['POST'])
 def api_manual_trade_report():
+    """
+    Triggered by the 'Speaker' icon on a closed trade card.
+    Sends detailed stats of that specific trade to Telegram.
+    """
     trade_id = request.json.get('trade_id')
     if not trade_id:
         return jsonify({"status": "error", "message": "Trade ID missing"})
+    
+    # Calls the new function we added to risk_engine.py
     result = risk_engine.send_manual_trade_report(trade_id)
     return jsonify(result)
 
 @app.route('/api/manual_summary', methods=['POST'])
 def api_manual_summary():
+    """
+    Triggered by the 'Send Daily Summary' button in History tab.
+    Sends the aggregate P/L, Wins/Loss report to Telegram.
+    """
     mode = request.json.get('mode', 'PAPER')
+    # Calls the new function we added to risk_engine.py
     result = risk_engine.send_manual_summary(mode)
     return jsonify(result)
 
+# --- NEW: Route for "Final Trade Status" Button ---
 @app.route('/api/manual_trade_status', methods=['POST'])
 def api_manual_trade_status():
+    """
+    Triggered by the 'Final Trade Status' button.
+    Sends the detailed status list of all trades to Telegram.
+    """
     mode = request.json.get('mode', 'PAPER')
+    # Calls the new function we added to risk_engine.py
     result = risk_engine.send_manual_trade_status(mode)
     return jsonify(result)
 
 # -------------------------------------------------------------
 
+# --- NEW TELEGRAM TEST ROUTE ---
 @app.route('/api/test_telegram', methods=['POST'])
 def test_telegram():
     token = request.form.get('token')
@@ -303,6 +320,7 @@ def test_telegram():
     if not token or not chat:
         return jsonify({"status": "error", "message": "Missing credentials"})
     
+    # Direct test via Requests (bypassing stored settings to test new input)
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat,
@@ -325,22 +343,14 @@ def api_import_trade():
         final_sym = smart_trader.get_exact_symbol(data['symbol'], data['expiry'], data['strike'], data['type'])
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
-        # FIX: Pack arguments into a dictionary to match replay_engine.import_past_trade(kite, data) signature
-        replay_data = {
-            "symbol": final_sym,
-            "entry_time": data['entry_time'],
-            "quantity": int(data['qty']),
-            "entry_price": float(data['price']),
-            "sl": float(data['sl']),
-            "targets": [float(t) for t in data['targets']],
-            "trailing_sl": float(data.get('trailing_sl', 0)),
-            "sl_to_entry": int(data.get('sl_to_entry', 0)),
-            "exit_multiplier": int(data.get('exit_multiplier', 1)),
-            "target_controls": data.get('target_controls')
-        }
-        
-        # Call Replay Engine with correct signature
-        result = replay_engine.import_past_trade(kite, replay_data)
+        # Call Replay Engine
+        result = replay_engine.import_past_trade(
+            kite, final_sym, data['entry_time'], 
+            int(data['qty']), float(data['price']), 
+            float(data['sl']), [float(t) for t in data['targets']],
+            data.get('trailing_sl', 0), data.get('sl_to_entry', 0),
+            data.get('exit_multiplier', 1), data.get('target_controls')
+        )
         
         # --- SEQUENTIAL TELEGRAM SENDER ---
         queue = result.get('notification_queue', [])
@@ -350,31 +360,32 @@ def api_import_trade():
             def send_seq_notifications():
                 # Wrap thread in app_context to access DB
                 with app.app_context():
-                    # 1. Trigger Async Notification (returns None)
-                    telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
+                    # 1. Send Initial "NEW_TRADE" message to get a Thread ID
+                    msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
                     
-                    # 2. POLL DB for the assigned Message ID
-                    # Since Telegram Manager is async, we wait up to 5s for the ID to be saved.
-                    msg_id = None
-                    trade_id = trade_ref['id']
+                    if msg_id:
+                        from managers.persistence import load_trades, save_trades, save_to_history_db
+                        
+                        trade_id = trade_ref['id']
+                        updated_ref = False
+                        
+                        # Try updating Active Trades
+                        trades = load_trades()
+                        for t in trades:
+                            if t['id'] == trade_id:
+                                t['telegram_msg_id'] = msg_id
+                                save_trades(trades)
+                                updated_ref = True
+                                break
+                        
+                        # If not active, update History
+                        if not updated_ref:
+                            save_to_history_db({**trade_ref, "telegram_msg_id": msg_id})
+                            
+                        # Update local ref for the loop
+                        trade_ref['telegram_msg_id'] = msg_id
                     
-                    for _ in range(10): # 10 checks * 0.5s = 5 seconds max
-                        time.sleep(0.5)
-                        # Check Active
-                        t_found = next((t for t in persistence.load_trades() if t['id'] == trade_id), None)
-                        if t_found and t_found.get('telegram_msg_id'):
-                            msg_id = t_found['telegram_msg_id']
-                            break
-                        # Check History
-                        h_found = next((t for t in persistence.load_history() if t['id'] == trade_id), None)
-                        if h_found and h_found.get('telegram_msg_id'):
-                            msg_id = h_found['telegram_msg_id']
-                            break
-                    
-                    # Update local ref so subsequent messages reply to this thread
-                    trade_ref['telegram_msg_id'] = msg_id
-                    
-                    # 3. Process the rest of the queue
+                    # 2. Process the rest of the queue
                     for item in queue:
                         evt = item['event']
                         if evt == 'NEW_TRADE': continue # Already sent
@@ -406,10 +417,10 @@ def api_simulate_scenario():
     result = replay_engine.simulate_trade_scenario(kite, trade_id, config)
     return jsonify(result)
 
-# --- Aggregated Sync Route ---
+# --- NEW: Aggregated Sync Route for High Performance ---
 @app.route('/api/sync', methods=['POST'])
 def api_sync():
-    # 1. Base Data
+    # 1. Base Data (Status & Indices)
     response = {
         "status": {
             "active": bot_active, 
@@ -422,7 +433,7 @@ def api_sync():
         "specific_ltp": 0
     }
 
-    # 2. Fetch Indices
+    # 2. Fetch Indices (Only if active)
     if bot_active:
         try:
             response["indices"] = smart_trader.get_indices_ltp(kite)
@@ -435,14 +446,14 @@ def api_sync():
         t['symbol'] = smart_trader.get_display_name(t['symbol'])
     response["positions"] = trades
 
-    # 4. Closed Trades (Optional)
+    # 4. Closed Trades (Only if requested to save bandwidth)
     if request.json.get('include_closed'):
         history = persistence.load_history()
         for t in history:
             t['symbol'] = smart_trader.get_display_name(t['symbol'])
         response["closed_trades"] = history
 
-    # 5. Specific LTP
+    # 5. Specific LTP (For Trade Panel)
     req_ltp = request.json.get('ltp_req')
     if bot_active and req_ltp and req_ltp.get('symbol'):
         try:

@@ -1,5 +1,5 @@
 import requests
-import threading
+import json
 import time
 import settings
 import smart_trader
@@ -8,22 +8,15 @@ from managers.common import get_time_str
 class TelegramManager:
     def __init__(self):
         self.base_url = "https://api.telegram.org/bot"
-        self.app = None # Hold reference to Flask App
-
-    def init_app(self, app):
-        """
-        Initialize with Flask app to allow DB access in background threads.
-        """
-        self.app = app
 
     def _get_config(self):
-        # This accesses DB, so it needs app_context
         s = settings.load_settings()
         return s.get('telegram', {})
 
-    def _send_http_request(self, text, reply_to_id=None):
+    def send_message(self, text, reply_to_id=None):
         """
-        Internal blocking method to send HTTP request.
+        Sends a message to the configured Telegram Channel.
+        Returns the Message ID of the sent message (for threading/replying).
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -54,207 +47,116 @@ class TelegramManager:
             print(f"❌ Telegram Request Failed: {e}")
         return None
 
-    def _bg_update_db(self, trade_id, msg_id, update_type):
-        """
-        Background worker to update DB with the new Message ID.
-        """
-        # Local import to prevent circular dependency
-        from managers.persistence import load_trades, save_trades, load_history, save_to_history_db, TRADE_LOCK
-        
-        try:
-            with TRADE_LOCK:
-                # 1. Try Active Trades
-                trades = load_trades()
-                found = False
-                for t in trades:
-                    if str(t['id']) == str(trade_id):
-                        if update_type == 'SET_MAIN_ID':
-                            t['telegram_msg_id'] = msg_id
-                        else:
-                            if 'telegram_update_ids' not in t: t['telegram_update_ids'] = []
-                            t['telegram_update_ids'].append(msg_id)
-                        found = True
-                        break
-                
-                if found:
-                    save_trades(trades)
-                    return
-
-                # 2. Try History
-                if not found:
-                    history = load_history()
-                    target = next((t for t in history if str(t['id']) == str(trade_id)), None)
-                    if target:
-                        if update_type == 'SET_MAIN_ID':
-                            target['telegram_msg_id'] = msg_id
-                        else:
-                            if 'telegram_update_ids' not in target: target['telegram_update_ids'] = []
-                            target['telegram_update_ids'].append(msg_id)
-                        save_to_history_db(target)
-        except Exception as e:
-            print(f"⚠️ Telegram BG Update Error: {e}")
-
-    # --- PUBLIC API ---
-
-    def send_message(self, text, reply_to_id=None):
-        """
-        Sends a generic message asynchronously.
-        """
-        # Capture app ref for thread
-        app_ref = self.app
-
-        def task():
-            # Helper to run logic
-            def run_logic():
-                self._send_http_request(text, reply_to_id)
-            
-            # Wrap in context if app exists
-            if app_ref:
-                with app_ref.app_context():
-                    run_logic()
-            else:
-                run_logic()
-        
-        threading.Thread(target=task).start()
-
-    def delete_message(self, message_id):
-        """
-        Deletes a message asynchronously.
-        """
-        # Capture app ref for thread
-        app_ref = self.app
-
-        def task():
-            def run_logic():
-                # _get_config calls settings.load_settings() which needs DB access
-                conf = self._get_config()
-                token = conf.get('bot_token')
-                chat_id = conf.get('channel_id')
-                if token and chat_id and message_id:
-                    try:
-                        url = f"{self.base_url}{token}/deleteMessage"
-                        requests.post(url, json={"chat_id": chat_id, "message_id": message_id}, timeout=5)
-                    except Exception as e:
-                        print(f"Delete Error: {e}")
-
-            # Wrap in context if app exists
-            if app_ref:
-                with app_ref.app_context():
-                    run_logic()
-            else:
-                run_logic()
-        
-        threading.Thread(target=task).start()
-
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
-        Constructs message and sends it in a BACKGROUND THREAD.
+        Constructs and sends a notification based on the event type.
+        Returns the Message ID if a new thread is started (NEW_TRADE).
         """
-        try:
-            # 1. Prepare Data (Fast, In-Memory)
-            raw_symbol = trade.get('symbol', 'Unknown')
-            symbol = smart_trader.get_telegram_symbol(raw_symbol)
-            mode = trade.get('mode', 'PAPER')
-            qty = trade.get('quantity', 0)
-            entry_price = trade.get('entry_price', 0)
-            trade_id = trade.get('id')
+        raw_symbol = trade.get('symbol', 'Unknown')
+        # --- FORMAT SYMBOL USING SMART_TRADER ---
+        symbol = smart_trader.get_telegram_symbol(raw_symbol)
+        
+        mode = trade.get('mode', 'PAPER')
+        qty = trade.get('quantity', 0)
+        entry_price = trade.get('entry_price', 0)
+        
+        # Determine Thread ID (Reply to the original "Trade Added" message)
+        thread_id = trade.get('telegram_msg_id')
+        
+        # --- DETERMINE ACTION TIME ---
+        # Default to current time, but override if 'time' is passed in extra_data
+        action_time = get_time_str() 
+        
+        if isinstance(extra_data, dict) and 'time' in extra_data:
+            action_time = extra_data['time']
+        elif event_type == "NEW_TRADE" and trade.get('entry_time'):
+            # For NEW_TRADE, prefer the trade's specific entry timestamp
+            action_time = trade.get('entry_time')
+
+        msg = ""
+        
+        if event_type == "NEW_TRADE":
+            icon = "🔴" if mode == "LIVE" else "🟡"
+            order_type = trade.get('order_type', 'MARKET')
+            sl = trade.get('sl', 0)
+            targets = trade.get('targets', [])
             
-            thread_id = trade.get('telegram_msg_id')
+            msg = (
+                f"{icon} <b>NEW TRADE: {symbol}</b>\n"
+                f"Mode: {mode}\n"
+                f"Type: {order_type}\n"
+                f"Qty: {qty}\n"
+                f"Entry: {entry_price}\n"
+                f"SL: {sl}\n"
+                f"Targets: {targets}\n"
+                f"Time: {action_time}"
+            )
+            # New trades start a new thread, so no reply_id needed
+            return self.send_message(msg)
+
+        # For updates/exits, we need a thread_id. If missing, we can't reply properly.
+        if not thread_id:
+            return None
+
+        if event_type == "ACTIVE":
+            # Handle float (Live) or Dict (Import)
+            fill_price = extra_data['price'] if isinstance(extra_data, dict) else extra_data
+            msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {fill_price}\nTime: {action_time}"
             
-            action_time = get_time_str()
-            if isinstance(extra_data, dict) and 'time' in extra_data:
-                action_time = extra_data['time']
-            elif event_type == "NEW_TRADE" and trade.get('entry_time'):
-                action_time = trade.get('entry_time')
-
-            msg = ""
-            update_type = "APPEND_UPDATE_ID" # Default
-
-            if event_type == "NEW_TRADE":
-                update_type = "SET_MAIN_ID"
-                icon = "🔴" if mode == "LIVE" else "🟡"
-                order_type = trade.get('order_type', 'MARKET')
-                sl = trade.get('sl', 0)
-                targets = trade.get('targets', [])
-                
+        elif event_type == "UPDATE":
+            update_text = extra_data if extra_data else ""
+            if update_text:
+                msg = f"✏️ <b>Trade Update</b>\n{update_text}\nTime: {action_time}"
+            else:
                 msg = (
-                    f"{icon} <b>NEW TRADE: {symbol}</b>\n"
-                    f"Mode: {mode}\n"
-                    f"Type: {order_type}\n"
-                    f"Qty: {qty}\n"
-                    f"Entry: {entry_price}\n"
-                    f"SL: {sl}\n"
-                    f"Targets: {targets}\n"
-                    f"Time: {action_time}"
-                )
-                thread_id = None 
-
-            elif event_type == "ACTIVE" and thread_id:
-                fill_price = extra_data['price'] if isinstance(extra_data, dict) else extra_data
-                msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {fill_price}\nTime: {action_time}"
-                
-            elif event_type == "UPDATE" and thread_id:
-                update_text = extra_data if extra_data else ""
-                if update_text:
-                    msg = f"✏️ <b>Trade Update</b>\n{update_text}\nTime: {action_time}"
-                else:
-                    msg = (
-                        f"✏️ <b>Protection Updated</b>\n"
-                        f"New SL: {trade.get('sl')}\n"
-                        f"Trailing: {trade.get('trailing_sl')}\n"
-                        f"Targets: {trade.get('targets')}\n"
-                        f"Time: {action_time}"
-                    )
-
-            elif event_type == "SL_HIT" and thread_id:
-                pnl = extra_data.get('pnl') if isinstance(extra_data, dict) else (extra_data if extra_data else 0)
-                exit_price = trade.get('exit_price', 0)
-                msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}\nTime: {action_time}"
-
-            elif event_type == "TARGET_HIT" and thread_id:
-                t_data = extra_data if isinstance(extra_data, dict) else {}
-                t_num = t_data.get('t_num', '?')
-                t_price = t_data.get('price', 0)
-                pot_pnl = (t_price - entry_price) * qty
-                msg = (
-                    f"🎯 <b>Target {t_num} HIT</b>\n"
-                    f"Price: {t_price}\n"
-                    f"Max Potential: {pot_pnl:.2f}\n"
-                    f"Time: {action_time}"
-                )
-                
-            elif event_type == "HIGH_MADE" and thread_id:
-                h_price = extra_data.get('price') if isinstance(extra_data, dict) else extra_data
-                pot_pnl = (h_price - entry_price) * qty
-                msg = (
-                    f"📈 <b>New High Made: {h_price}</b>\n"
-                    f"Max Potential: {pot_pnl:.2f}\n"
+                    f"✏️ <b>Protection Updated</b>\n"
+                    f"New SL: {trade.get('sl')}\n"
+                    f"Trailing: {trade.get('trailing_sl')}\n"
+                    f"Targets: {trade.get('targets')}\n"
                     f"Time: {action_time}"
                 )
 
-            # 2. Spawn Background Task
-            if msg:
-                # Capture Flask App Reference
-                app_ref = self.app
+        elif event_type == "SL_HIT":
+            # Handle float (Live) or Dict (Import)
+            pnl = extra_data.get('pnl') if isinstance(extra_data, dict) else (extra_data if extra_data else 0)
+            exit_price = trade.get('exit_price', 0)
+            msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}\nTime: {action_time}"
 
-                def task():
-                    # Helper to run logic
-                    def run_logic():
-                        mid = self._send_http_request(msg, thread_id)
-                        if mid:
-                            self._bg_update_db(trade_id, mid, update_type)
+        elif event_type == "TARGET_HIT":
+            # extra_data is always a dict for Target Hit
+            t_data = extra_data if isinstance(extra_data, dict) else {}
+            t_num = t_data.get('t_num', '?')
+            t_price = t_data.get('price', 0)
+            
+            # Calculate Max Potential
+            pot_pnl = (t_price - entry_price) * qty
+            
+            msg = (
+                f"🎯 <b>Target {t_num} HIT</b>\n"
+                f"Price: {t_price}\n"
+                f"Max Potential: {pot_pnl:.2f}\n"
+                f"Time: {action_time}"
+            )
+            
+        elif event_type == "HIGH_MADE":
+            # Handle float (Live) or Dict (Import)
+            if isinstance(extra_data, dict):
+                h_price = extra_data.get('price')
+            else:
+                h_price = extra_data
+                
+            # Calculate Max Potential
+            pot_pnl = (h_price - entry_price) * qty
+            
+            msg = (
+                f"📈 <b>New High Made: {h_price}</b>\n"
+                f"Max Potential: {pot_pnl:.2f}\n"
+                f"Time: {action_time}"
+            )
 
-                    # Wrap in context
-                    if app_ref:
-                        with app_ref.app_context():
-                            run_logic()
-                    else:
-                        run_logic()
-
-                threading.Thread(target=task).start()
-
-        except Exception as e:
-            print(f"Notify Error: {e}")
+        if msg:
+            return self.send_message(msg, reply_to_id=thread_id)
+        return None
 
 # Singleton Instance
 bot = TelegramManager()
