@@ -1,8 +1,3 @@
-// Global variables for trade context (assumed to be used across the app)
-var curLTP = 0;
-var curLotSize = 1;
-var symLTP = {};
-
 function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     let s = $(symId).val(); if(!s) return;
     
@@ -139,21 +134,21 @@ function fillChain(sym, exp, typeSelector, str) {
 }
 
 function fetchLTP() {
-    let sVal = $('#trade_sym').val(); 
+    let sVal = $('#sym').val(); 
     if(!sVal) return;
     if(sVal.includes(':')) sVal = sVal.split(':')[0].trim();
     
     // Main Tab Fetch
     $.get('/api/specific_ltp', {
         symbol: sVal, 
-        expiry: $('#trade_exp').val(), 
-        strike: $('#trade_str').val(), 
-        type: $('input[name="trade_type"]:checked').val()
+        expiry: $('#exp').val(), 
+        strike: $('#str').val(), 
+        type: $('input[name="type"]:checked').val()
     }, function(d) {
         if(d.ltp) {
             curLTP = d.ltp; 
-            $('#trade_ltp').text("LTP: " + curLTP); 
-            if ($('#trade_price').val() === '' && $('#trade_sl').val() !== '') calcRisk();
+            $('#inst_ltp').text("LTP: " + curLTP); 
+            if ($('#ord').val() === 'LIMIT' && !$('#lim_pr').val()) $('#lim_pr').val(curLTP);
             calcRisk();
         }
     });
@@ -179,12 +174,7 @@ function fetchLTP() {
 
 function calcSLPriceFromPts(ptsId, priceId) {
     let pts = parseFloat($(ptsId).val()) || 0;
-    let basePrice = curLTP;
-    // If limit price is set and order type is LIMIT, use that
-    // Note: ID for price input in trade tab is trade_price
-    let limitInput = parseFloat($('#trade_price').val());
-    if(limitInput > 0) basePrice = limitInput;
-
+    let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
     if(basePrice > 0) {
         let price = basePrice - pts;
         $(priceId).val(price.toFixed(2));
@@ -194,10 +184,7 @@ function calcSLPriceFromPts(ptsId, priceId) {
 
 function calcSLPtsFromPrice(priceId, ptsId) {
     let price = parseFloat($(priceId).val()) || 0;
-    let basePrice = curLTP;
-    let limitInput = parseFloat($('#trade_price').val());
-    if(limitInput > 0) basePrice = limitInput;
-
+    let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
     if(basePrice > 0 && price > 0) {
         let pts = basePrice - price;
         $(ptsId).val(pts.toFixed(2));
@@ -206,22 +193,20 @@ function calcSLPtsFromPrice(priceId, ptsId) {
 }
 
 function calcRisk() {
-    let p = parseFloat($('#trade_sl').val())||0; 
-    let qty = parseInt($('#trade_qty').val())||1;
-    let basePrice = curLTP;
-    let limitInput = parseFloat($('#trade_price').val());
-    if(limitInput > 0) basePrice = limitInput;
+    let p = parseFloat($('#sl_pts').val())||0; 
+    let qty = parseInt($('#qty').val())||1;
+    let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
     
     if(basePrice <= 0) return;
 
-    // We no longer display calculated SL price in a separate read-only field in the new UI structure
-    // but if we did, it would go here.
+    if (document.activeElement && document.activeElement.id !== 'p_sl') {
+        let calculatedPrice = basePrice - p;
+        $('#p_sl').val(calculatedPrice.toFixed(2));
+    }
 
     // Safely get ratios
-    let mode = $('#mode_input').val(); // Assuming mode_input exists in main layout
-    if(!mode) mode = 'PAPER'; // Default fallback
-
-    let modeObj = (settings && settings.modes) ? (settings.modes[mode] || settings.modes.PAPER) : {};
+    let mode = $('#mode_input').val(); 
+    let modeObj = settings.modes[mode] || settings.modes.PAPER;
     let ratios = modeObj.ratios || [0.5, 1.0, 1.5];
 
     let sl = basePrice - p;
@@ -229,134 +214,23 @@ function calcRisk() {
     let t2 = basePrice + p * ratios[1]; 
     let t3 = basePrice + p * ratios[2];
 
-    // If inputs are not being edited manually, auto-fill them
-    if (document.activeElement && document.activeElement.id !== 'trade_t1') $('#trade_t1').val(t1.toFixed(2));
-    if (document.activeElement && document.activeElement.id !== 'trade_t2') $('#trade_t2').val(t2.toFixed(2));
-    if (document.activeElement && document.activeElement.id !== 'trade_t3') $('#trade_t3').val(t3.toFixed(2));
-    
-    // Manage readonly states for full exit
+    if (!document.activeElement || !['p_t1', 'p_t2', 'p_t3'].includes(document.activeElement.id)) {
+        $('#p_t1').val(t1.toFixed(2)); 
+        $('#p_t2').val(t2.toFixed(2)); 
+        $('#p_t3').val(t3.toFixed(2));
+        
+        $('#pnl_t1').text(`₹ ${((t1-basePrice)*qty).toFixed(0)}`); 
+        $('#pnl_t2').text(`₹ ${((t2-basePrice)*qty).toFixed(0)}`); 
+        $('#pnl_t3').text(`₹ ${((t3-basePrice)*qty).toFixed(0)}`);
+    }
+    $('#pnl_sl').text(`₹ ${((sl-basePrice)*qty).toFixed(0)}`);
+    $('#risk_disp').text("Risk: ₹ " + (p*qty).toFixed(0));
+
     ['t1', 't2', 't3'].forEach(k => {
-        if ($(`#trade_${k}_full`).is(':checked')) {
-            $(`#trade_${k}_lots`).val(1000).prop('readonly', true);
+        if ($(`#${k}_full`).is(':checked')) {
+            $(`#${k}_lots`).val(1000).prop('readonly', true);
         } else {
-            $(`#trade_${k}_lots`).prop('readonly', false);
-        }
-    });
-}
-
-/**
- * NEW: Renders the channel selector checkboxes based on global settings.
- * This should be called after settings are loaded.
- */
-function renderChannelSelector() {
-    let container = $('#channel_selector');
-    if(!container.length) return; // Guard if element doesn't exist
-    
-    container.empty();
-    
-    // 1. Always add Main Channel (Checked by default)
-    container.append(`
-        <div class="form-check form-check-inline">
-            <input class="form-check-input" type="checkbox" name="notify_main" id="notify_main" checked>
-            <label class="form-check-label" style="font-size:0.8rem; font-weight:600;" for="notify_main">Main</label>
-        </div>
-    `);
-
-    // 2. Add Extra Channels if enabled in settings
-    if(settings && settings.telegram && settings.telegram.extra_channels) {
-        settings.telegram.extra_channels.forEach(ch => {
-            if(ch.enabled && ch.chat_id) {
-                container.append(`
-                    <div class="form-check form-check-inline">
-                        <input class="form-check-input" type="checkbox" name="notify_${ch.id}" id="notify_${ch.id}">
-                        <label class="form-check-label" style="font-size:0.8rem;" for="notify_${ch.id}">${ch.name}</label>
-                    </div>
-                `);
-            }
-        });
-    }
-}
-
-/**
- * Executes the trade by gathering all form data including new channels.
- * @param {string} direction - 'BUY' or 'SELL'
- */
-function placeTrade(direction) {
-    // 1. Basic Validation
-    let sym = $('#trade_sym').val();
-    if(!sym) { alert("Please enter a symbol"); return; }
-    
-    let qty = parseInt($('#trade_qty').val());
-    if(!qty || qty <= 0) { alert("Invalid Quantity"); return; }
-    
-    // 2. Gather Data
-    let data = {
-        symbol: sym,
-        exchange: "NFO", // Default, could be derived from watchlist metadata
-        type: $('input[name="trade_type"]:checked').val(),
-        expiry: $('#trade_exp').val(),
-        strike: $('#trade_str').val(),
-        qty: qty,
-        direction: direction,
-        price: parseFloat($('#trade_price').val()) || 0, // 0 = Market
-        sl_points: parseFloat($('#trade_sl').val()) || 0,
-        sl_price: parseFloat($('#trade_sl_price').val()) || 0,
-        
-        // Settings / Context
-        mode: $('#mode_input').val(),
-        exit_multiplier: $('#trade_exit_mult').val() || 1,
-        
-        // Targets Configuration
-        t1_price: $('#trade_t1').val(),
-        t1_active: $('#trade_t1_active').is(':checked'),
-        t1_lots: $('#trade_t1_full').is(':checked') ? 1000 : ($('#trade_t1_lots').val() || 0),
-        t1_cost: $('#trade_t1_cost').is(':checked'),
-        
-        t2_price: $('#trade_t2').val(),
-        t2_active: $('#trade_t2_active').is(':checked'),
-        t2_lots: $('#trade_t2_full').is(':checked') ? 1000 : ($('#trade_t2_lots').val() || 0),
-        t2_cost: $('#trade_t2_cost').is(':checked'),
-        
-        t3_price: $('#trade_t3').val(),
-        t3_active: $('#trade_t3_active').is(':checked'),
-        t3_lots: $('#trade_t3_full').is(':checked') ? 1000 : ($('#trade_t3_lots').val() || 0),
-        t3_cost: $('#trade_t3_cost').is(':checked'),
-    };
-
-    // 3. NEW: Collect Notification Channels
-    data.notify_main = $('#notify_main').is(':checked') ? 'on' : 'off';
-    
-    // Check extra channels
-    if(settings && settings.telegram && settings.telegram.extra_channels) {
-        settings.telegram.extra_channels.forEach(ch => {
-            if($(`#notify_${ch.id}`).is(':checked')) {
-                data[`notify_${ch.id}`] = 'on';
-            }
-        });
-    }
-
-    // 4. Send Request
-    let btn = event.target; 
-    let originalText = $(btn).html();
-    $(btn).prop('disabled', true).text('Processing...');
-
-    $.ajax({
-        type: "POST",
-        url: "/trade",
-        data: data,
-        success: function(res) {
-            $(btn).prop('disabled', false).html(originalText);
-            if(res.status === 'success') {
-                alert("✅ Order Placed Successfully!");
-                // Optionally clear form or refresh positions
-                if(typeof updateData === 'function') updateData(); // Trigger immediate refresh
-            } else {
-                alert("❌ Error: " + res.message);
-            }
-        },
-        error: function(err) {
-            $(btn).prop('disabled', false).html(originalText);
-            alert("❌ Server Error: " + err.statusText);
+            $(`#${k}_lots`).prop('readonly', false);
         }
     });
 }

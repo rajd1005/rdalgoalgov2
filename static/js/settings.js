@@ -60,25 +60,14 @@ function loadSettings() {
 
             // --- LOAD TELEGRAM SETTINGS ---
             if(settings.telegram) {
+                // Updated IDs to match the HTML
                 $('#tg_bot_token').val(settings.telegram.bot_token || '');
                 $('#tg_channel_id').val(settings.telegram.channel_id || '');
-                $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); 
+                $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); // NEW
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
-
-                // --- NEW EXTRA CHANNELS ---
-                if(settings.telegram.extra_channels) {
-                    settings.telegram.extra_channels.forEach((ch, idx) => {
-                        let i = idx + 1;
-                        $(`#tg_ch${i}_enable`).prop('checked', ch.enabled);
-                        $(`#tg_ch${i}_name`).val(ch.name);
-                        $(`#tg_ch${i}_id`).val(ch.chat_id);
-                    });
-                }
             }
 
             if (typeof updateDisplayValues === "function") updateDisplayValues(); 
-            // Update the Trade Tab Channel Selector if the function exists
-            if (typeof renderChannelSelector === "function") renderChannelSelector();
         }
     });
 }
@@ -135,29 +124,8 @@ function saveSettings() {
     settings.telegram = {
         bot_token: $('#tg_bot_token').val().trim(),
         channel_id: $('#tg_channel_id').val().trim(),
-        system_channel_id: $('#tg_system_channel_id').val().trim(),
-        enable_notifications: $('#tg_enable').is(':checked'),
-        // --- NEW EXTRA CHANNELS ---
-        extra_channels: [
-            {
-                id: "ch1",
-                enabled: $('#tg_ch1_enable').is(':checked'),
-                name: $('#tg_ch1_name').val().trim() || "VIP Channel",
-                chat_id: $('#tg_ch1_id').val().trim()
-            },
-            {
-                id: "ch2",
-                enabled: $('#tg_ch2_enable').is(':checked'),
-                name: $('#tg_ch2_name').val().trim() || "Free Channel",
-                chat_id: $('#tg_ch2_id').val().trim()
-            },
-            {
-                id: "ch3",
-                enabled: $('#tg_ch3_enable').is(':checked'),
-                name: $('#tg_ch3_name').val().trim() || "ZeroToHero",
-                chat_id: $('#tg_ch3_id').val().trim()
-            }
-        ]
+        system_channel_id: $('#tg_system_channel_id').val().trim(), // NEW
+        enable_notifications: $('#tg_enable').is(':checked')
     };
 
     $.ajax({ 
@@ -170,6 +138,7 @@ function saveSettings() {
 }
 
 function testTelegram() {
+    // Updated IDs to match
     let token = $('#tg_bot_token').val().trim();
     let chat = $('#tg_channel_id').val().trim();
     
@@ -186,6 +155,7 @@ function renderWatchlist() {
     let opts = '<option value="">📺 Select</option>';
     wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
     $('#trade_watch').html(opts);
+    // Also update import modal watchlist if it exists
     if($('#imp_watch').length) $('#imp_watch').html(opts);
 }
 

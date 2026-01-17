@@ -5,7 +5,7 @@ from managers.common import get_time_str, log_event
 from managers import broker_ops
 from managers.telegram_manager import bot as telegram_bot
 
-def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, notify_channels=None):
+def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1):
     """
     Creates a new trade (Live or Paper). 
     Handles initial broker orders (if Live), calculates targets, and saves the trade to the DB.
@@ -131,10 +131,6 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
 
             logs.insert(0, f"[{get_time_str()}] Trade Added. Status: {status}")
             
-            # NEW: Handle Notification Channels
-            if not notify_channels:
-                notify_channels = ['main']
-
             record = {
                 "id": int(time.time()), 
                 "entry_time": get_time_str(), 
@@ -158,18 +154,13 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "made_high": entry_price, 
                 "current_ltp": current_ltp, 
                 "trigger_dir": trigger_dir, 
-                "logs": logs,
-                "notify_channels": notify_channels, # Store selected channels
-                "telegram_msg_ids": {} # Store IDs for multiple channels
+                "logs": logs
             }
             
             # --- SEND TELEGRAM NOTIFICATION ---
-            # If telegram_manager is updated to return a dict, this should be adjusted. 
-            # Currently assuming it returns the Main ID or handles DB storage internally.
             msg_id = telegram_bot.notify_trade_event(record, "NEW_TRADE")
             if msg_id:
                 record['telegram_msg_id'] = msg_id
-                record['telegram_msg_ids']['main'] = msg_id
             
             trades.append(record)
             save_trades(trades)
