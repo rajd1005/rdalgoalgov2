@@ -65,13 +65,37 @@ def fetch_instruments(kite):
 
 def get_ltp(kite, symbol):
     """
-    Fetches the Last Traded Price (LTP) for a single symbol.
-    CRITICAL: This was missing in previous versions and is required by trade_manager.
+    Fetches the Last Traded Price (LTP) with automatic exchange detection.
     """
     try:
-        quote = kite.quote(symbol)
-        if quote and symbol in quote:
-            return quote[symbol]['last_price']
+        # 1. If symbol already has exchange (e.g., NSE:RELIANCE), try directly
+        if ":" in symbol:
+            quote = kite.quote(symbol)
+            if quote and symbol in quote:
+                return quote[symbol]['last_price']
+
+        # 2. If raw symbol, lookup the exchange
+        global instrument_dump, symbol_map
+        exch = "NSE" # Default fallback
+        
+        # Fast Lookup via Map
+        if symbol_map and symbol in symbol_map:
+            exch = symbol_map[symbol]['exchange']
+        # DataFrame Lookup
+        elif instrument_dump is not None and not instrument_dump.empty:
+            row = instrument_dump[instrument_dump['tradingsymbol'] == symbol]
+            if not row.empty: exch = row.iloc[0]['exchange']
+        # Heuristic Fallback
+        else:
+            if "NIFTY" in symbol or "BANKNIFTY" in symbol:
+                if any(x in symbol for x in ["FUT", "CE", "PE"]): exch = "NFO"
+        
+        # 3. Fetch Quote with constructed format
+        full_sym = f"{exch}:{symbol}"
+        quote = kite.quote(full_sym)
+        if quote and full_sym in quote:
+            return quote[full_sym]['last_price']
+            
         return 0
     except Exception as e:
         print(f"⚠️ Error fetching LTP for {symbol}: {e}")
