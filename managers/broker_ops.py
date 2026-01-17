@@ -1,5 +1,6 @@
 from managers.common import log_event, get_time_str
 from managers.persistence import TRADE_LOCK, load_trades, save_trades, save_to_history_db
+import smart_trader
 
 def place_order(kite, symbol, transaction_type, quantity, order_type="MARKET", product="MIS", price=0, trigger_price=0, exchange=None, tag="RD_ALGO"):
     """
@@ -8,8 +9,7 @@ def place_order(kite, symbol, transaction_type, quantity, order_type="MARKET", p
     try:
         # Determine exchange if not provided
         if not exchange:
-            from managers.common import get_exchange
-            exchange = get_exchange(symbol)
+            exchange = smart_trader.get_exchange_name(symbol)
             
         order_id = kite.place_order(
             variety=kite.VARIETY_REGULAR,
