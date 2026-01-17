@@ -23,16 +23,12 @@ def create_trade_direct(kite, mode, symbol, qty, sl_points, targets, order_type,
         if order_type == 'LIMIT' and limit_price > 0:
             entry_price = limit_price
 
+        # --- FIX: Determine Exchange ---
+        exchange = common.get_exchange(symbol)
+        # -------------------------------
+
         # 3. Calculate Stop Loss Price
-        # If sl_points is provided, use it. Otherwise, assume direct SL price (logic can be adjusted)
-        # Here we assume sl_points is the distance from entry.
-        # Determine direction based on Targets (if provided) or standard logic?
-        # For simplicity in this terminal, we assume LONG trades for now, or infer from SL.
-        
-        # NOTE: The dashboard logic usually implies LONG if targets > entry.
-        # But 'sl_points' is a distance. Let's assume LONG for simple placement, 
-        # or we could add a 'direction' field in the form. 
-        # For now, let's assume LONG.
+        # For simplicity in this terminal, we assume LONG trades for now.
         direction = "LONG"
         sl_price = entry_price - sl_points
         
@@ -44,7 +40,8 @@ def create_trade_direct(kite, mode, symbol, qty, sl_points, targets, order_type,
             try:
                 order_id = broker_ops.place_order(
                     kite, 
-                    symbol=symbol, 
+                    symbol=symbol,
+                    exchange=exchange, # Pass exchange explicitly
                     transaction_type=kite.TRANSACTION_TYPE_BUY, 
                     quantity=qty, 
                     order_type=order_type, 
@@ -55,10 +52,10 @@ def create_trade_direct(kite, mode, symbol, qty, sl_points, targets, order_type,
                      return {"status": "error", "message": "Broker Rejected Entry Order"}
                      
                 # Place SL-M Order (Broker Side Protection)
-                # We place a separate SL-M order for safety
                 sl_order_id = broker_ops.place_order(
                     kite,
                     symbol=symbol,
+                    exchange=exchange, # Pass exchange explicitly
                     transaction_type=kite.TRANSACTION_TYPE_SELL,
                     quantity=qty,
                     order_type=kite.ORDER_TYPE_SLM,
@@ -75,6 +72,7 @@ def create_trade_direct(kite, mode, symbol, qty, sl_points, targets, order_type,
             "id": int(time.time()),
             "entry_time": common.get_time_str(),
             "symbol": symbol,
+            "exchange": exchange, # CRITICAL: Save exchange to DB
             "mode": mode,
             "status": "OPEN" if mode == "PAPER" else "MONITORING", # LIVE trades start as MONITORING
             "order_type": order_type,
