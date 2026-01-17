@@ -306,6 +306,33 @@
                             <input type="text" id="tg_system_channel_id" class="form-control" placeholder="e.g. -100987654321">
                             <small class="text-muted">For System Alerts (Startup, Login, Errors). Leave empty to use Trade Channel.</small>
                         </div>
+
+                        <hr>
+                        <h6 class="text-primary mb-2">📢 Additional Channels (New/Active/Update Only)</h6>
+                        
+                        <div class="input-group mb-2">
+                            <div class="input-group-text">
+                                <input class="form-check-input mt-0" type="checkbox" id="tg_ch1_enable">
+                            </div>
+                            <input type="text" id="tg_ch1_name" class="form-control" placeholder="Name (e.g. VIP)">
+                            <input type="text" id="tg_ch1_id" class="form-control" placeholder="Chat ID">
+                        </div>
+
+                        <div class="input-group mb-2">
+                            <div class="input-group-text">
+                                <input class="form-check-input mt-0" type="checkbox" id="tg_ch2_enable">
+                            </div>
+                            <input type="text" id="tg_ch2_name" class="form-control" placeholder="Name (e.g. Free)">
+                            <input type="text" id="tg_ch2_id" class="form-control" placeholder="Chat ID">
+                        </div>
+
+                        <div class="input-group mb-2">
+                            <div class="input-group-text">
+                                <input class="form-check-input mt-0" type="checkbox" id="tg_ch3_enable">
+                            </div>
+                            <input type="text" id="tg_ch3_name" class="form-control" placeholder="Name (e.g. ZeroToHero)">
+                            <input type="text" id="tg_ch3_id" class="form-control" placeholder="Chat ID">
+                        </div>
                         <hr>
                         <button class="btn btn-outline-primary w-100" onclick="testTelegram()">📩 Send Test Message</button>
                     </div>
