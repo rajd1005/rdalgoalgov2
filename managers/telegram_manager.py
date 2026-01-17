@@ -4,6 +4,7 @@ import time
 import settings
 import smart_trader
 from managers.common import get_time_str
+from database import db, TelegramMessage
 
 class TelegramManager:
     def __init__(self):
@@ -51,6 +52,7 @@ class TelegramManager:
         """
         Constructs and sends a notification based on the event type.
         Returns the Message ID if a new thread is started (NEW_TRADE).
+        Automatically saves the resulting Message ID to the database linked to the Trade ID.
         """
         raw_symbol = trade.get('symbol', 'Unknown')
         # --- FORMAT SYMBOL USING SMART_TRADER ---
@@ -92,7 +94,11 @@ class TelegramManager:
                 f"Time: {action_time}"
             )
             # New trades start a new thread, so no reply_id needed
-            return self.send_message(msg)
+            msg_id = self.send_message(msg)
+            
+            # --- SAVE MSG ID TO DB ---
+            self._save_msg_to_db(trade.get('id'), msg_id)
+            return msg_id
 
         # For updates/exits, we need a thread_id. If missing, we can't reply properly.
         if not thread_id:
@@ -155,8 +161,72 @@ class TelegramManager:
             )
 
         if msg:
-            return self.send_message(msg, reply_to_id=thread_id)
+            msg_id = self.send_message(msg, reply_to_id=thread_id)
+            # --- SAVE MSG ID TO DB ---
+            self._save_msg_to_db(trade.get('id'), msg_id)
+            return msg_id
+            
         return None
+
+    def _save_msg_to_db(self, trade_id, msg_id):
+        """Helper to safely save message ID to database"""
+        if not trade_id or not msg_id:
+            return
+            
+        try:
+            # We need the chat_id to delete later
+            conf = self._get_config()
+            chat_id = conf.get('channel_id')
+            
+            if chat_id:
+                rec = TelegramMessage(trade_id=str(trade_id), message_id=msg_id, chat_id=str(chat_id))
+                db.session.add(rec)
+                db.session.commit()
+        except Exception as e:
+            print(f"⚠️ Failed to save Telegram Msg ID: {e}")
+            try:
+                db.session.rollback()
+            except:
+                pass
+
+    def delete_trade_messages(self, trade_id):
+        """
+        Deletes all Telegram messages (Thread & Replies) associated with a Trade ID.
+        """
+        try:
+            # 1. Fetch all message records for this trade
+            messages = TelegramMessage.query.filter_by(trade_id=str(trade_id)).all()
+            
+            if not messages:
+                return
+
+            conf = self._get_config()
+            token = conf.get('bot_token')
+            if not token: 
+                return
+
+            delete_url = f"{self.base_url}{token}/deleteMessage"
+
+            # 2. Loop and Delete from Telegram
+            for msg in messages:
+                try:
+                    payload = {"chat_id": msg.chat_id, "message_id": msg.message_id}
+                    requests.post(delete_url, json=payload, timeout=2)
+                except Exception as req_err:
+                    print(f"TG Delete Request Error: {req_err}")
+
+                # 3. Remove from Local DB
+                db.session.delete(msg)
+            
+            db.session.commit()
+            print(f"🗑️ Deleted {len(messages)} Telegram messages for Trade {trade_id}")
+
+        except Exception as e:
+            print(f"❌ Error deleting Telegram messages: {e}")
+            try:
+                db.session.rollback()
+            except:
+                pass
 
 # Singleton Instance
 bot = TelegramManager()
