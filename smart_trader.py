@@ -12,7 +12,7 @@ symbol_map = {} # FAST LOOKUP CACHE
 def fetch_instruments(kite):
     """
     Downloads the master instrument list, optimizes dates, and builds a fast lookup map.
-    Prioritizes specific exchanges (NFO > MCX > NSE) to handle duplicate symbols (like RELIANCE).
+    Prioritizes specific exchanges (NFO > MCX > NSE) to handle duplicate symbols.
     """
     global instrument_dump, symbol_map
     
@@ -58,10 +58,32 @@ def fetch_instruments(kite):
         
     except Exception as e:
         print(f"❌ Failed to fetch instruments: {e}")
-        # Do not reset to None here if partial data exists, to prevent infinite loops
+        # Do not reset to None here if partial data exists
         if instrument_dump is None:
              instrument_dump = pd.DataFrame()
         symbol_map = {}
+
+def get_exchange_name(symbol):
+    """
+    Determines the exchange (NSE, NFO, MCX) for a given symbol.
+    """
+    global symbol_map, instrument_dump
+    
+    # 1. Check if symbol already has exchange prefix (e.g. "NSE:RELIANCE")
+    if ":" in symbol:
+        return symbol.split(":")[0]
+
+    # 2. Fast Lookup via Map
+    if symbol_map and symbol in symbol_map:
+        return symbol_map[symbol]['exchange']
+        
+    # 3. Fallback Heuristics (if map not ready)
+    if "NIFTY" in symbol or "BANKNIFTY" in symbol:
+        if any(x in symbol for x in ["FUT", "CE", "PE"]): 
+            return "NFO"
+            
+    # Default to NSE if unable to determine
+    return "NSE"
 
 def get_ltp(kite, symbol):
     """
@@ -74,25 +96,13 @@ def get_ltp(kite, symbol):
             if quote and symbol in quote:
                 return quote[symbol]['last_price']
 
-        # 2. If raw symbol, lookup the exchange
-        global instrument_dump, symbol_map
-        exch = "NSE" # Default fallback
-        
-        # Fast Lookup via Map
-        if symbol_map and symbol in symbol_map:
-            exch = symbol_map[symbol]['exchange']
-        # DataFrame Lookup
-        elif instrument_dump is not None and not instrument_dump.empty:
-            row = instrument_dump[instrument_dump['tradingsymbol'] == symbol]
-            if not row.empty: exch = row.iloc[0]['exchange']
-        # Heuristic Fallback
-        else:
-            if "NIFTY" in symbol or "BANKNIFTY" in symbol:
-                if any(x in symbol for x in ["FUT", "CE", "PE"]): exch = "NFO"
+        # 2. Determine Exchange
+        exch = get_exchange_name(symbol)
         
         # 3. Fetch Quote with constructed format
         full_sym = f"{exch}:{symbol}"
         quote = kite.quote(full_sym)
+        
         if quote and full_sym in quote:
             return quote[full_sym]['last_price']
             
@@ -135,7 +145,7 @@ def get_lot_size(tradingsymbol):
 
 def get_display_name(tradingsymbol):
     global symbol_map
-    # Attempt to load if missing (with safety check inside fetch)
+    # Attempt to load if missing
     if not symbol_map:
         return tradingsymbol
         
