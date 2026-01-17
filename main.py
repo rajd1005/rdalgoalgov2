@@ -60,8 +60,15 @@ def run_auto_login_process():
                 bot_active = True
                 login_state = "IDLE"
                 gc.collect()
+                
+                # [NOTIFICATION] Success
+                telegram_bot.notify_system_event("LOGIN_SUCCESS", "Auto-Login Successful. Session Renewed.")
                 print("✅ Session Generated Successfully & Instruments Fetched")
+                
             except Exception as e:
+                # [NOTIFICATION] Session Gen Failure
+                telegram_bot.notify_system_event("LOGIN_FAIL", f"Session Gen Failed: {str(e)}")
+                
                 if "Token is invalid" in str(e):
                     print("⚠️ Generated Token Expired or Invalid. Retrying...")
                     login_state = "FAILED" 
@@ -74,18 +81,28 @@ def run_auto_login_process():
                 print("✅ Auto-Login: Handled via Callback Route. System Online.")
                 login_state = "IDLE"
             else:
+                # [NOTIFICATION] Auto-Login Failure
+                telegram_bot.notify_system_event("LOGIN_FAIL", f"Auto-Login Failed: {error}")
+                
                 print(f"❌ Auto-Login Failed: {error}")
                 login_state = "FAILED"
                 login_error_msg = error
             
     except Exception as e:
+        # [NOTIFICATION] Critical Error
+        telegram_bot.notify_system_event("LOGIN_FAIL", f"Critical Login Error: {str(e)}")
+        
         print(f"❌ Critical Session Error: {e}")
         login_state = "FAILED"
         login_error_msg = str(e)
 
 def background_monitor():
     global bot_active, login_state
+    
+    # [NOTIFICATION] Startup
+    telegram_bot.notify_system_event("STARTUP", "Server Deployed & Monitor Started.")
     print("🖥️ Background Monitor Started")
+    
     time.sleep(5) # Allow Flask to start up
     
     while True:
@@ -111,6 +128,11 @@ def background_monitor():
                         err = str(e)
                         if "Token is invalid" in err or "Network" in err or "No Access Token" in err or "access_token" in err:
                             print(f"⚠️ Connection Lost: {err}")
+                            
+                            # [NOTIFICATION] Offline (Only send if it was previously active)
+                            if bot_active:
+                                telegram_bot.notify_system_event("OFFLINE", f"Connection Lost: {err}")
+                            
                             bot_active = False 
                         else:
                             print(f"⚠️ Risk Loop Warning: {err}")
@@ -162,6 +184,10 @@ def api_status():
 @app.route('/reset_connection')
 def reset_connection():
     global bot_active, login_state
+    
+    # [NOTIFICATION] Manual Reset
+    telegram_bot.notify_system_event("RESET", "Manual Connection Reset Initiated.")
+    
     bot_active = False
     login_state = "IDLE"
     flash("🔄 Connection Reset. Login Monitor will retry.")
@@ -178,6 +204,10 @@ def callback():
             bot_active = True
             smart_trader.fetch_instruments(kite)
             gc.collect()
+            
+            # [NOTIFICATION] Manual Login Success
+            telegram_bot.notify_system_event("LOGIN_SUCCESS", "Manual Login (Callback) Successful.")
+            
             flash("✅ System Online")
         except Exception as e:
             flash(f"Login Error: {e}")
@@ -285,7 +315,7 @@ def api_manual_trade_report():
     if not trade_id:
         return jsonify({"status": "error", "message": "Trade ID missing"})
     
-    # Calls the new function we added to risk_engine.py
+    # Calls the function in risk_engine.py
     result = risk_engine.send_manual_trade_report(trade_id)
     return jsonify(result)
 
@@ -296,11 +326,10 @@ def api_manual_summary():
     Sends the aggregate P/L, Wins/Loss report to Telegram.
     """
     mode = request.json.get('mode', 'PAPER')
-    # Calls the new function we added to risk_engine.py
+    # Calls the function in risk_engine.py
     result = risk_engine.send_manual_summary(mode)
     return jsonify(result)
 
-# --- NEW: Route for "Final Trade Status" Button ---
 @app.route('/api/manual_trade_status', methods=['POST'])
 def api_manual_trade_status():
     """
@@ -308,7 +337,7 @@ def api_manual_trade_status():
     Sends the detailed status list of all trades to Telegram.
     """
     mode = request.json.get('mode', 'PAPER')
-    # Calls the new function we added to risk_engine.py
+    # Calls the function in risk_engine.py
     result = risk_engine.send_manual_trade_status(mode)
     return jsonify(result)
 
