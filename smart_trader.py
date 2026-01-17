@@ -10,9 +10,13 @@ instrument_dump = None
 symbol_map = {} # FAST LOOKUP CACHE
 
 def fetch_instruments(kite):
+    """
+    Downloads the master instrument list, optimizes dates, and builds a fast lookup map.
+    Prioritizes specific exchanges (NFO > MCX > NSE) to handle duplicate symbols (like RELIANCE).
+    """
     global instrument_dump, symbol_map
     
-    # If already loaded and map exists, skip
+    # If already loaded and map exists, skip to save bandwidth
     if instrument_dump is not None and not instrument_dump.empty and symbol_map: 
         return
 
@@ -36,7 +40,7 @@ def fetch_instruments(kite):
         # Create a copy to sort and deduplicate without affecting the main search dump
         temp_df = instrument_dump.copy()
         
-        # prioritize exchanges: NFO > MCX > CDS > NSE > BSE
+        # Prioritize exchanges: NFO > MCX > CDS > NSE > BSE
         # This ensures 'RELIANCE' maps to NSE, not BSE
         exchange_priority = {'NFO': 0, 'MCX': 1, 'CDS': 2, 'NSE': 3, 'BSE': 4, 'BFO': 5}
         temp_df['priority'] = temp_df['exchange'].map(exchange_priority).fillna(99)
@@ -58,6 +62,20 @@ def fetch_instruments(kite):
         if instrument_dump is None:
              instrument_dump = pd.DataFrame()
         symbol_map = {}
+
+def get_ltp(kite, symbol):
+    """
+    Fetches the Last Traded Price (LTP) for a single symbol.
+    CRITICAL: This was missing in previous versions and is required by trade_manager.
+    """
+    try:
+        quote = kite.quote(symbol)
+        if quote and symbol in quote:
+            return quote[symbol]['last_price']
+        return 0
+    except Exception as e:
+        print(f"⚠️ Error fetching LTP for {symbol}: {e}")
+        return 0
 
 def get_indices_ltp(kite):
     try:
