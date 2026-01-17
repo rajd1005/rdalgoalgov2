@@ -1,6 +1,6 @@
 import json
 import threading
-from database import db, ActiveTrade, TradeHistory, RiskState
+from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
 # Global Lock for thread safety to prevent race conditions during DB saves
 # This lock should be acquired by other managers before performing read-modify-write operations on trades.
@@ -76,9 +76,17 @@ def load_history():
 def delete_trade(trade_id):
     """
     Deletes a specific trade from history by ID. Thread-safe.
+    Also triggers deletion of associated Telegram messages.
     """
+    # Import locally to avoid circular dependency with telegram_manager -> settings -> database
+    from managers.telegram_manager import bot as telegram_bot
+    
     with TRADE_LOCK:
         try:
+            # 1. Delete associated Telegram messages
+            telegram_bot.delete_trade_messages(trade_id)
+            
+            # 2. Delete the trade record
             TradeHistory.query.filter_by(id=int(trade_id)).delete()
             db.session.commit()
             return True
