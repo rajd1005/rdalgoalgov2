@@ -14,17 +14,20 @@ class TelegramManager:
         s = settings.load_settings()
         return s.get('telegram', {})
 
-    def send_message(self, text, reply_to_id=None):
+    def send_message(self, text, reply_to_id=None, override_chat_id=None):
         """
         Sends a message to the configured Telegram Channel.
-        Returns the Message ID of the sent message (for threading/replying).
+        Allows overriding the chat_id for specific alerts (like System Alerts).
+        Returns the Message ID of the sent message.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
             return None
         
         token = conf.get('bot_token')
-        chat_id = conf.get('channel_id')
+        
+        # Use the specific channel if provided, otherwise fallback to the default trade channel
+        chat_id = override_chat_id if override_chat_id else conf.get('channel_id')
 
         if not token or not chat_id:
             return None
@@ -51,7 +54,11 @@ class TelegramManager:
     def notify_system_event(self, event_type, message=""):
         """
         Sends system status alerts (Online, Offline, Login Success/Fail).
+        Uses 'system_channel_id' if set, otherwise uses the default 'channel_id'.
         """
+        conf = self._get_config()
+        sys_channel_id = conf.get('system_channel_id')
+
         icons = {
             "STARTUP": "🖥️",
             "ONLINE": "🟢",
@@ -65,8 +72,8 @@ class TelegramManager:
         # Format the message
         text = f"{icon} <b>SYSTEM ALERT: {event_type}</b>\n{message}\nTime: {get_time_str()}"
         
-        # Send immediately
-        self.send_message(text)
+        # Send immediately using the system channel (if configured) or default
+        self.send_message(text, override_chat_id=sys_channel_id)
 
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
