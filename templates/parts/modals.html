@@ -294,11 +294,17 @@
                         </div>
                         <div class="mb-3">
                             <label class="pos-grid-label">Bot Token (From BotFather)</label>
-                            <input type="text" id="tg_token" class="form-control" placeholder="e.g. 123456:AbCdEf...">
+                            <input type="text" id="tg_bot_token" class="form-control" placeholder="e.g. 123456:AbCdEf...">
                         </div>
                         <div class="mb-3">
-                            <label class="pos-grid-label">Channel ID (or User ID)</label>
-                            <input type="text" id="tg_chat" class="form-control" placeholder="e.g. -10012345678 or @mychannel">
+                            <label class="pos-grid-label">Trade Channel ID (Default)</label>
+                            <input type="text" id="tg_channel_id" class="form-control" placeholder="e.g. -10012345678">
+                            <small class="text-muted">For Trade Alerts (Buy/Sell/SL/Target)</small>
+                        </div>
+                        <div class="mb-3">
+                            <label class="pos-grid-label">System Channel ID (Optional)</label>
+                            <input type="text" id="tg_system_channel_id" class="form-control" placeholder="e.g. -100987654321">
+                            <small class="text-muted">For System Alerts (Startup, Login, Errors). Leave empty to use Trade Channel.</small>
                         </div>
                         <hr>
                         <button class="btn btn-outline-primary w-100" onclick="testTelegram()">📩 Send Test Message</button>
