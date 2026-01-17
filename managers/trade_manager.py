@@ -86,12 +86,11 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             # Use custom targets if provided (valid T1 > 0), else calculate ratio-based defaults
             targets = custom_targets if len(custom_targets) == 3 and custom_targets[0] > 0 else [entry_price + (sl_points * x) for x in [0.5, 1.0, 2.0]]
             
-            # Default Controls if not provided (Ensure 'full' key exists)
             if not target_controls: 
                 target_controls = [
-                    {'enabled': True, 'lots': 0, 'trail_to_entry': False, 'full': False}, 
-                    {'enabled': True, 'lots': 0, 'trail_to_entry': False, 'full': False}, 
-                    {'enabled': True, 'lots': 1000, 'trail_to_entry': False, 'full': True}
+                    {'enabled': True, 'lots': 0, 'trail_to_entry': False}, 
+                    {'enabled': True, 'lots': 0, 'trail_to_entry': False}, 
+                    {'enabled': True, 'lots': 1000, 'trail_to_entry': False}
                 ]
             
             lot_size = smart_trader.get_lot_size(specific_symbol)
@@ -120,14 +119,12 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                     new_targets.append(round(t_price, 2))
                     
                     lots_here = base_lots + (rem if i == exit_multiplier else 0)
-                    # For generated splits, usually disabled Full Exit until the last one? 
-                    # For safety, we disable explicit 'Full' flag on splits and rely on lots.
-                    new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': False, 'full': False})
+                    new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': False})
                 
                 # Fill remaining slots up to 3 (system expects list of 3)
                 while len(new_targets) < 3: 
                     new_targets.append(0)
-                    new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False, 'full': False})
+                    new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False})
                 
                 targets = new_targets
                 target_controls = new_controls
@@ -238,11 +235,11 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                         new_targets.append(round(t_price, 2))
                         
                         lots_here = base_lots + (remainder if i == exit_multiplier else 0)
-                        new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': False, 'full': False})
+                        new_controls.append({'enabled': True, 'lots': int(lots_here), 'trail_to_entry': False})
                     
                     while len(new_targets) < 3: 
                         new_targets.append(0)
-                        new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False, 'full': False})
+                        new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False})
                         
                     t['targets'] = new_targets
                     t['target_controls'] = new_controls
@@ -395,61 +392,6 @@ def promote_to_live(kite, trade_id):
                     return False
         return False
 
-def import_trade(kite, mode, specific_symbol, data):
-    """
-    Imports an external/past trade into the system.
-    """
-    try:
-        with TRADE_LOCK:
-            trades = load_trades()
-            current_ts = int(time.time())
-            
-            # Extract fields
-            quantity = int(data.get('qty', 0))
-            entry_price = float(data.get('price', 0))
-            sl_price = float(data.get('sl', 0))
-            targets = data.get('targets', [])
-            target_controls = data.get('target_controls', [])
-            
-            # Detect Exchange
-            exchange = smart_trader.get_exchange_name(specific_symbol)
-            current_ltp = smart_trader.get_ltp(kite, specific_symbol)
-            
-            record = {
-                "id": current_ts,
-                "entry_time": data.get('entry_time', get_time_str()),
-                "symbol": specific_symbol,
-                "exchange": exchange,
-                "mode": mode,
-                "status": "OPEN", # Imported trades are assumed Active/Open
-                "order_type": "LIMIT", # Mocking as Limit since we have a specific price
-                "entry_price": entry_price,
-                "quantity": quantity,
-                "sl": sl_price,
-                "targets": targets,
-                "target_controls": target_controls,
-                "lot_size": smart_trader.get_lot_size(specific_symbol),
-                "trailing_sl": float(data.get('trailing_sl', 0)),
-                "sl_to_entry": int(data.get('sl_to_entry', 0)),
-                "exit_multiplier": int(data.get('exit_multiplier', 1)),
-                "sl_order_id": None, # No broker order for imported trades
-                "targets_hit_indices": [],
-                "highest_ltp": current_ltp if current_ltp > 0 else entry_price,
-                "made_high": current_ltp if current_ltp > 0 else entry_price,
-                "current_ltp": current_ltp,
-                "trigger_dir": "ABOVE" if entry_price >= current_ltp else "BELOW",
-                "logs": [f"[{get_time_str()}] Trade Imported Manually"]
-            }
-            
-            # Notify Telegram
-            telegram_bot.notify_trade_event(record, "NEW_TRADE", "IMPORTED TRADE")
-            
-            trades.append(record)
-            save_trades(trades)
-            return {"status": "success", "message": "Trade Imported Successfully"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
 def close_trade_manual(kite, trade_id):
     """
     Manually closes a trade via the UI.
@@ -473,7 +415,7 @@ def close_trade_manual(kite, trade_id):
                     exit_p = smart_trader.get_ltp(kite, t['symbol'])
                 except: pass
                 
-                # --- Handle Pending Cancellations ---
+                # --- NEW: Handle Pending Cancellations ---
                 # If closing a PENDING order, it means we canceled it. 
                 # PnL should be 0, so we set exit_price = entry_price and status = NOT_ACTIVE
                 if t['status'] == 'PENDING':

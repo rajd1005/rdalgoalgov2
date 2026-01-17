@@ -370,58 +370,85 @@ def test_telegram():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
-@app.route('/api/place_order', methods=['POST'])
-def api_place_order():
-    """
-    Unified JSON endpoint for placing trades via frontend (Live/Paper).
-    Supports advanced target controls (Full Exit, Trail to Entry).
-    """
-    if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
-    data = request.json
-    try:
-        # Resolve Symbol if component parts are provided
-        symbol = data.get('symbol')
-        # If frontend sends components (Symbol, Expiry, Strike, Type), resolve them
-        if not symbol and data.get('strike'):
-             symbol = smart_trader.get_exact_symbol(data.get('symbol_root'), data.get('expiry'), data.get('strike'), data.get('type'))
-        
-        # Call Trade Manager
-        response = trade_manager.create_trade_direct(
-            kite=kite,
-            mode=data.get('mode', 'PAPER'),
-            specific_symbol=symbol,
-            quantity=int(data.get('quantity', 0)),
-            sl_points=float(data.get('sl_points', 0)),
-            custom_targets=data.get('targets', []),
-            order_type=data.get('order_type', 'MARKET'),
-            limit_price=float(data.get('limit_price', 0)),
-            target_controls=data.get('target_controls', None),
-            trailing_sl=float(data.get('trailing_sl', 0)),
-            sl_to_entry=int(data.get('sl_to_entry', 0)),
-            exit_multiplier=int(data.get('exit_multiplier', 1))
-        )
-        return jsonify(response)
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
-
 @app.route('/api/import_trade', methods=['POST'])
 def api_import_trade():
-    """
-    Imports a past/external trade using the Trade Manager.
-    """
     if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
     data = request.json
     try:
         final_sym = smart_trader.get_exact_symbol(data['symbol'], data['expiry'], data['strike'], data['type'])
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
-        # Use Trade Manager for Import (Handles notifications internally now)
-        result = trade_manager.import_trade(
-            kite=kite,
-            mode=data.get('mode', 'PAPER'),
-            specific_symbol=final_sym,
-            data=data
+        # Call Replay Engine
+        result = replay_engine.import_past_trade(
+            kite, final_sym, data['entry_time'], 
+            int(data['qty']), float(data['price']), 
+            float(data['sl']), [float(t) for t in data['targets']],
+            data.get('trailing_sl', 0), data.get('sl_to_entry', 0),
+            data.get('exit_multiplier', 1), data.get('target_controls')
         )
+        
+        # --- SEQUENTIAL TELEGRAM SENDER ---
+        queue = result.get('notification_queue', [])
+        trade_ref = result.get('trade_ref', {})
+        
+        if queue and trade_ref:
+            def send_seq_notifications():
+                # Wrap thread in app_context to access DB
+                with app.app_context():
+                    # 1. Send Initial "NEW_TRADE" message to get a Thread ID
+                    msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
+                    
+                    if msg_id:
+                        from managers.persistence import load_trades, save_trades, save_to_history_db
+                        
+                        trade_id = trade_ref['id']
+                        updated_ref = False
+                        
+                        # Try updating Active Trades
+                        trades = load_trades()
+                        for t in trades:
+                            # Robust comparison: Convert both to strings
+                            if str(t['id']) == str(trade_id):
+                                t['telegram_msg_id'] = msg_id
+                                save_trades(trades)
+                                updated_ref = True
+                                break
+                        
+                        # If not active (e.g., trade closed immediately), update History
+                        if not updated_ref:
+                            # Add the msg_id to the trade_ref and save to DB
+                            trade_ref['telegram_msg_id'] = msg_id
+                            save_to_history_db(trade_ref)
+                            
+                        # Update local ref for the loop
+                        trade_ref['telegram_msg_id'] = msg_id
+                    
+                    # 2. Process the rest of the queue
+                    for item in queue:
+                        evt = item['event']
+                        if evt == 'NEW_TRADE': continue # Already sent
+                        
+                        # Small delay to ensure sequence order in Telegram
+                        time.sleep(1.0)
+                        
+                        dat = item.get('data')
+                        t_obj = item.get('trade', trade_ref).copy() 
+                        
+                        # --- CRITICAL FIX: INJECT ID IF MISSING ---
+                        # The replay engine often creates snapshot objects without IDs.
+                        # We must inject the original Trade ID so TelegramManager saves the msg ID to DB.
+                        if 'id' not in t_obj:
+                            t_obj['id'] = trade_ref['id']
+                        
+                        # Ensure threading works by injecting the thread ID
+                        t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
+                        
+                        telegram_bot.notify_trade_event(t_obj, evt, dat)
+
+            # Start thread
+            t = threading.Thread(target=send_seq_notifications)
+            t.start()
+        
         return jsonify(result)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
@@ -519,11 +546,8 @@ def place_trade():
             enabled = request.form.get(f't{i}_active') == 'on'
             lots = int(request.form.get(f't{i}_lots') or 0)
             trail_cost = request.form.get(f't{i}_cost') == 'on'
-            # Check for Full Exit flag from Form
-            full_exit = request.form.get(f't{i}_full') == 'on'
-            
             if i == 3 and lots == 0: lots = 1000 
-            target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost, 'full': full_exit})
+            target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost})
         
         final_sym = smart_trader.get_exact_symbol(sym, request.form.get('expiry'), request.form.get('strike', 0), type_)
         if not final_sym:

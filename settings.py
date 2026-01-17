@@ -15,13 +15,7 @@ def get_defaults():
         "max_loss": 0,       
         "profit_lock": 0,    
         "profit_min": 0,     
-        "profit_trail": 0,
-        # Default Target Configuration (T1, T2, T3)
-        "targets": [
-            {"active": True, "lots": 0, "full": False, "trail_to_entry": False},
-            {"active": True, "lots": 0, "full": False, "trail_to_entry": False},
-            {"active": True, "lots": 1000, "full": True, "trail_to_entry": False}
-        ]
+        "profit_trail": 0    
     }
     
     return {
@@ -39,7 +33,6 @@ def get_defaults():
         "telegram": {
             "bot_token": "",
             "channel_id": "",
-            "system_channel_id": "", # Added missing key for system alerts
             "enable_notifications": False
         }
     }
@@ -51,7 +44,7 @@ def load_settings():
         if setting:
             saved = json.loads(setting.data)
             
-            # Integrity Check for old database schemas
+            # Integrity Check
             if "modes" not in saved:
                 old_mult = saved.get("qty_mult", 1)
                 old_ratios = saved.get("ratios", [0.5, 1.0, 1.5])
@@ -61,7 +54,7 @@ def load_settings():
                     "PAPER": {"qty_mult": old_mult, "ratios": old_ratios, "symbol_sl": old_sl.copy()}
                 }
 
-            # Merge Defaults into Saved Modes
+            # Merge Defaults
             for m in ["LIVE", "PAPER"]:
                 if m in saved["modes"]:
                     for key, val in defaults["modes"][m].items():
@@ -74,13 +67,8 @@ def load_settings():
             
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
 
-            # Merge Telegram Settings (Deep Merge for new keys like system_channel_id)
-            if "telegram" not in saved: 
-                saved["telegram"] = defaults["telegram"]
-            else:
-                for k, v in defaults["telegram"].items():
-                    if k not in saved["telegram"]:
-                        saved["telegram"][k] = v
+            # Merge Telegram
+            if "telegram" not in saved: saved["telegram"] = defaults["telegram"]
 
             return saved
     except Exception as e: print(f"Error loading settings: {e}")

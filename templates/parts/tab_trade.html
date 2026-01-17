@@ -1,161 +1,149 @@
-<div class="tab-pane fade show active" id="pills-trade" role="tabpanel">
-    <div class="card border-0 shadow-sm">
-        <div class="card-body p-2">
-            
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <select id="watchlist_select" class="form-select form-select-sm" style="max-width: 60%;" onchange="loadWatchlist(this.value)">
-                    <option value="" selected>📺 Select Watchlist</option>
-                    </select>
-                <div id="connection_status">
-                    <span class="badge bg-secondary">Checking...</span>
+<div id="trade" class="dashboard-tab active">
+    <form action="/trade" method="post" id="tradeForm">
+        <div class="custom-card">
+            <div class="card-head"><span>New Order</span> <span id="inst_ltp" class="badge bg-primary">LTP: 0</span></div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <label class="pos-grid-label">WATCHLIST</label>
+                        <div class="input-group input-group-sm" style="width: auto;">
+                            <select id="trade_watch" class="form-select fw-bold border-secondary" onchange="loadWatchlist('trade_watch', '#sym')"><option value="">📺 Select</option></select>
+                            <button class="btn btn-outline-danger" type="button" onclick="removeFromWatchlist('trade_watch')">🗑️</button>
+                        </div>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="sym" name="index" class="form-control fw-bold" placeholder="e.g. NIFTY" list="sym_list" required>
+                        <button class="btn btn-outline-secondary" type="button" onclick="addToWatchlist('#sym')">➕</button>
+                    </div>
+                    <datalist id="sym_list"></datalist>
                 </div>
-            </div>
 
-            <div class="input-group mb-2">
-                <input type="text" id="trade_symbol" class="form-control fw-bold" placeholder="SEARCH SYMBOL (e.g. NIFTY)" autocomplete="off" list="symbol_list">
-                <datalist id="symbol_list"></datalist>
-                <button class="btn btn-outline-secondary" type="button" onclick="fetchLTP()"><i class="fas fa-sync"></i> LTP</button>
-            </div>
-            
-            <div id="option_selectors" class="row g-1 mb-2">
-                <div class="col-6">
-                    <select id="opt_expiry" class="form-select form-select-sm"></select>
-                </div>
-                <div class="col-6">
-                    <select id="opt_strike" class="form-select form-select-sm"></select>
-                </div>
-            </div>
-
-            <div class="text-center mb-2">
-                <h3 class="m-0" id="ltp_display">0.00</h3>
-                <small class="text-muted" id="ltp_time">--:--:--</small>
-            </div>
-
-            <hr class="my-2">
-
-            <div class="row g-1 mb-2">
-                <div class="col-6">
-                    <div class="btn-group w-100" role="group">
-                        <input type="radio" class="btn-check" name="trans_type" id="buy_btn" value="BUY" checked>
-                        <label class="btn btn-outline-success btn-sm" for="buy_btn">BUY</label>
-                        <input type="radio" class="btn-check" name="trans_type" id="sell_btn" value="SELL">
-                        <label class="btn btn-outline-danger btn-sm" for="sell_btn">SELL</label>
+                <div class="mb-3">
+                    <div class="btn-group w-100 btn-group-check" role="group">
+                        <input type="radio" class="btn-check" name="type" id="t_ce" value="CE" autocomplete="off">
+                        <label class="btn btn-outline-secondary" for="t_ce">CE</label>
+                        <input type="radio" class="btn-check" name="type" id="t_pe" value="PE" autocomplete="off">
+                        <label class="btn btn-outline-secondary" for="t_pe">PE</label>
+                        <input type="radio" class="btn-check" name="type" id="t_fut" value="FUT" autocomplete="off">
+                        <label class="btn btn-outline-secondary" for="t_fut">FUT</label>
+                        <input type="radio" class="btn-check" name="type" id="t_eq" value="EQ" autocomplete="off">
+                        <label class="btn btn-outline-secondary" for="t_eq">EQ</label>
                     </div>
                 </div>
-                <div class="col-6">
-                    <select id="order_type" class="form-select form-select-sm fw-bold">
-                        <option value="MARKET">MARKET</option>
-                        <option value="LIMIT">LIMIT</option>
-                        <option value="SL">SL-LIMIT</option>
-                    </select>
+
+                <div class="row g-2 mb-3">
+                    <div class="col-6"><select name="expiry" id="exp" class="form-select"></select></div>
+                    <div class="col-6"><select name="strike" id="str" class="form-select"></select></div>
+                </div>
+                
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="pos-grid-label">QTY (<span id="lot">1</span> x <span id="qty_mult_disp">1</span>)</label>
+                        <div class="input-group">
+                            <button class="btn btn-outline-secondary" type="button" onclick="adjQty('#qty', -1)">-</button>
+                            <input type="number" name="qty" id="qty" class="form-control fw-bold text-center" value="1">
+                            <button class="btn btn-outline-secondary" type="button" onclick="adjQty('#qty', 1)">+</button>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <label class="pos-grid-label">EXIT MULTIPLIER</label>
+                        <input type="number" name="exit_multiplier" id="exit_mult" class="form-control fw-bold text-center border-info" value="1" min="1" max="10">
+                    </div>
+                </div>
+                
+                <div class="row g-2 mb-3">
+                    <div class="col-6">
+                        <label class="pos-grid-label">ORDER TYPE</label>
+                        <select name="order_type" id="ord" class="form-select fw-bold"><option value="LIMIT">LIMIT</option><option value="MARKET">MARKET</option></select>
+                    </div>
+                    <div class="col-6" id="lim_box">
+                         <label class="pos-grid-label">LIMIT PRICE</label>
+                         <input type="number" step="0.05" name="limit_price" id="lim_pr" class="form-control text-primary fw-bold" placeholder="Limit Price">
+                    </div>
                 </div>
             </div>
-
-            <div class="row g-1 mb-2">
-                <div class="col-4">
-                    <label class="form-label small mb-0">Qty</label>
-                    <input type="number" id="trade_qty" class="form-control form-control-sm fw-bold" placeholder="Qty">
-                </div>
-                <div class="col-4">
-                    <label class="form-label small mb-0">Price</label>
-                    <input type="number" step="0.05" id="trade_price" class="form-control form-control-sm" placeholder="0.00">
-                </div>
-                <div class="col-4">
-                    <label class="form-label small mb-0">Trig. Price</label>
-                    <input type="number" step="0.05" id="trade_trigger" class="form-control form-control-sm" placeholder="0.00">
-                </div>
-            </div>
-
-            <div class="row g-1 mb-2">
-                <div class="col-6">
-                    <label class="form-label small mb-0 text-danger">Stop Loss (Pts/Abs)</label>
-                    <input type="number" step="0.5" id="trade_sl" class="form-control form-control-sm border-danger fw-bold" placeholder="SL">
-                </div>
-                <div class="col-6">
-                    <label class="form-label small mb-0 text-info">Trailing SL (Pts)</label>
-                    <input type="number" step="0.5" id="trade_trail" class="form-control form-control-sm border-info" placeholder="0 to Disable">
-                </div>
-            </div>
-
-            <hr class="my-2">
-            
-            <label class="form-label small text-success fw-bold mb-1">Targets (Price | Active | Lots | Full | Trail)</label>
-            
-            <div class="input-group input-group-sm mb-1">
-                <span class="input-group-text text-success fw-bold" style="width: 30px;">1</span>
-                <input type="number" step="0.05" id="entry_t1" class="form-control" placeholder="Price">
-                
-                <div class="input-group-text px-1" title="Active">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t1_active" checked>
-                </div>
-                
-                <input type="number" id="entry_t1_lots" class="form-control text-center px-1" placeholder="Lots">
-                
-                <div class="input-group-text px-1" title="Exit Full Quantity">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t1_full">
-                </div>
-                
-                <div class="input-group-text px-1" title="Trail SL to Entry">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t1_cost">
-                    <span style="font-size: 0.6rem; margin-left:1px;">C</span>
-                </div>
-            </div>
-
-            <div class="input-group input-group-sm mb-1">
-                <span class="input-group-text text-success fw-bold" style="width: 30px;">2</span>
-                <input type="number" step="0.05" id="entry_t2" class="form-control" placeholder="Price">
-                
-                <div class="input-group-text px-1" title="Active">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t2_active" checked>
-                </div>
-                
-                <input type="number" id="entry_t2_lots" class="form-control text-center px-1" placeholder="Lots">
-                
-                <div class="input-group-text px-1" title="Exit Full Quantity">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t2_full">
-                </div>
-                
-                <div class="input-group-text px-1" title="Trail SL to Entry">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t2_cost">
-                    <span style="font-size: 0.6rem; margin-left:1px;">C</span>
-                </div>
-            </div>
-
-            <div class="input-group input-group-sm mb-3">
-                <span class="input-group-text text-success fw-bold" style="width: 30px;">3</span>
-                <input type="number" step="0.05" id="entry_t3" class="form-control" placeholder="Price">
-                
-                <div class="input-group-text px-1" title="Active">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t3_active" checked>
-                </div>
-                
-                <input type="number" id="entry_t3_lots" class="form-control text-center px-1" placeholder="Lots">
-                
-                <div class="input-group-text px-1" title="Exit Full Quantity">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t3_full">
-                </div>
-                
-                <div class="input-group-text px-1" title="Trail SL to Entry">
-                    <input class="form-check-input mt-0" type="checkbox" id="entry_t3_cost">
-                    <span style="font-size: 0.6rem; margin-left:1px;">C</span>
-                </div>
-            </div>
-
-            <div class="d-flex align-items-center mb-3">
-                <label class="form-label small mb-0 me-2">Exit Mult:</label>
-                <input type="number" id="trade_exit_mult" class="form-control form-control-sm fw-bold border-primary text-center" value="1" min="1" max="10" style="width: 60px;">
-                <small class="text-muted ms-2">(Auto-Calc Targets)</small>
-            </div>
-
-            <div class="d-grid gap-2">
-                <button class="btn btn-primary fw-bold" type="button" onclick="placeOrder()">
-                    <i class="fas fa-paper-plane"></i> PLACE ORDER
-                </button>
-                <button class="btn btn-outline-secondary btn-sm" type="button" onclick="resetTradeForm()">
-                    <i class="fas fa-undo"></i> Reset
-                </button>
-            </div>
-
         </div>
-    </div>
+
+        <div class="custom-card">
+            <div class="card-head">🛡️ Projected P&L</div>
+            <div class="card-body">
+                <div class="row g-2 align-items-center mb-3">
+                        <div class="col-6">
+                            <label class="pos-grid-label">SL Points (Auto)</label>
+                            <input type="number" id="sl_pts" name="sl_points" class="form-control fw-bold text-center" value="20" oninput="calcSLPriceFromPts('#sl_pts', '#p_sl')">
+                        </div>
+                        <div class="col-6">
+                            <label class="pos-grid-label">SL Price (Edit)</label>
+                            <input type="number" step="0.05" id="p_sl" class="form-control text-center text-danger fw-bold border-danger" oninput="calcSLPtsFromPrice('#p_sl', '#sl_pts')">
+                        </div>
+                </div>
+
+                <div class="row g-2 align-items-center mb-3">
+                    <div class="col-6">
+                        <label class="pos-grid-label">Trailing SL (Points)</label>
+                        <input type="number" step="0.05" name="trailing_sl" id="trail_sl" class="form-control fw-bold text-center text-info" placeholder="0">
+                    </div>
+                    <div class="col-6">
+                        <label class="pos-grid-label">Trail Limit</label>
+                        <select name="sl_to_entry" class="form-select fw-bold text-center">
+                             <option value="0">Unlimited</option>
+                             <option value="1">Up-to Entry</option>
+                             <option value="2">Up-to T1</option>
+                             <option value="3">Up-to T2</option>
+                             <option value="4">Up-to T3</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="row g-2 text-center">
+                    <div class="col-4 px-1">
+                        <small class="text-success fw-bold">T1 (<span id="r_t1">0.5</span>x)</small>
+                        <input type="number" step="0.05" id="p_t1" name="t1_price" class="form-control form-control-sm text-center text-success fw-bold mb-1" oninput="calcPnl('t1')">
+                        <div class="input-group input-group-sm mb-1">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" name="t1_active" id="t1_active" checked></div>
+                            <input type="number" name="t1_lots" id="t1_lots" class="form-control px-1 text-center" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Exit All"><input class="form-check-input mt-0" type="checkbox" id="t1_full"> <span style="font-size:0.6rem;">F</span></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" name="t1_cost"> <span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <span id="pnl_t1" class="pnl-green">₹ 0</span>
+                    </div>
+                    <div class="col-4 px-1">
+                        <small class="text-success fw-bold">T2 (<span id="r_t2">1.0</span>x)</small>
+                        <input type="number" step="0.05" id="p_t2" name="t2_price" class="form-control form-control-sm text-center text-success fw-bold mb-1" oninput="calcPnl('t2')">
+                        <div class="input-group input-group-sm mb-1">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" name="t2_active" id="t2_active" checked></div>
+                            <input type="number" name="t2_lots" id="t2_lots" class="form-control px-1 text-center" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Exit All"><input class="form-check-input mt-0" type="checkbox" id="t2_full"> <span style="font-size:0.6rem;">F</span></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" name="t2_cost"> <span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <span id="pnl_t2" class="pnl-green">₹ 0</span>
+                    </div>
+                    <div class="col-4 px-1">
+                        <small class="text-success fw-bold">T3 (<span id="r_t3">1.5</span>x)</small>
+                        <input type="number" step="0.05" id="p_t3" name="t3_price" class="form-control form-control-sm text-center text-success fw-bold mb-1" oninput="calcPnl('t3')">
+                        <div class="input-group input-group-sm mb-1">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" name="t3_active" id="t3_active" checked></div>
+                            <input type="number" name="t3_lots" id="t3_lots" class="form-control px-1 text-center" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Exit All"><input class="form-check-input mt-0" type="checkbox" id="t3_full"> <span style="font-size:0.6rem;">F</span></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" name="t3_cost"> <span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <span id="pnl_t3" class="pnl-green">₹ 0</span>
+                    </div>
+                </div>
+                <div class="text-center mt-2">
+                    <small class="text-danger fw-bold">Est. Loss: </small><span id="pnl_sl" class="pnl-red" style="display:inline;">₹ 0</span>
+                </div>
+            </div>
+        </div>
+
+        <input type="hidden" name="mode" id="mode_input" value="PAPER">
+        <div class="d-flex gap-2 mb-3">
+            <div class="btn btn-outline-warning w-50 fw-bold active" onclick="setMode(this, 'PAPER')">PAPER</div>
+            <div class="btn btn-outline-danger w-50 fw-bold" onclick="setMode(this, 'LIVE')">LIVE</div>
+        </div>
+        
+        <div class="sticky-footer">
+            <button type="submit" form="tradeForm" class="btn btn-dark w-100 py-2 fw-bold rounded-pill shadow-lg" style="max-width: 600px;">🚀 EXECUTE</button>
+        </div>
+    </form>
 </div>
