@@ -7,6 +7,7 @@ import requests
 from flask import Flask, render_template, request, redirect, flash, jsonify, url_for
 from kiteconnect import KiteConnect
 import config
+
 # --- REFACTORED IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
 from managers.telegram_manager import bot as telegram_bot
@@ -20,6 +21,7 @@ app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 app.config.from_object(config)
 
+# Initialize Database
 db.init_app(app)
 with app.app_context():
     db.create_all()
@@ -129,7 +131,7 @@ def background_monitor():
             finally:
                 db.session.remove()
         
-        # --- FIX: Reduced Sleep from 3s to 0.5s for Real-Time Updates ---
+        # Reduced Sleep from 3s to 0.5s for Real-Time Updates
         time.sleep(0.5) 
 
 @app.route('/')
@@ -372,15 +374,18 @@ def api_import_trade():
                         # Try updating Active Trades
                         trades = load_trades()
                         for t in trades:
-                            if t['id'] == trade_id:
+                            # Robust comparison: Convert both to strings
+                            if str(t['id']) == str(trade_id):
                                 t['telegram_msg_id'] = msg_id
                                 save_trades(trades)
                                 updated_ref = True
                                 break
                         
-                        # If not active, update History
+                        # If not active (e.g., trade closed immediately), update History
                         if not updated_ref:
-                            save_to_history_db({**trade_ref, "telegram_msg_id": msg_id})
+                            # Add the msg_id to the trade_ref and save to DB
+                            trade_ref['telegram_msg_id'] = msg_id
+                            save_to_history_db(trade_ref)
                             
                         # Update local ref for the loop
                         trade_ref['telegram_msg_id'] = msg_id
@@ -394,11 +399,15 @@ def api_import_trade():
                         time.sleep(1.0)
                         
                         dat = item.get('data')
-                        t_obj = item.get('trade', trade_ref).copy()
-                        # --- FIX: INJECT ID IF MISSING (For SL/Exit Snapshots) ---
+                        t_obj = item.get('trade', trade_ref).copy() 
+                        
+                        # --- CRITICAL FIX: INJECT ID IF MISSING ---
+                        # The replay engine often creates snapshot objects without IDs.
+                        # We must inject the original Trade ID so TelegramManager saves the msg ID to DB.
                         if 'id' not in t_obj:
-                             t_obj['id'] = trade_ref['id']
-                        # ---------------------------------------------------------
+                            t_obj['id'] = trade_ref['id']
+                        
+                        # Ensure threading works by injecting the thread ID
                         t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
                         
                         telegram_bot.notify_trade_event(t_obj, evt, dat)
@@ -421,7 +430,7 @@ def api_simulate_scenario():
     result = replay_engine.simulate_trade_scenario(kite, trade_id, config)
     return jsonify(result)
 
-# --- NEW: Aggregated Sync Route for High Performance ---
+# --- Aggregated Sync Route for High Performance ---
 @app.route('/api/sync', methods=['POST'])
 def api_sync():
     # 1. Base Data (Status & Indices)
