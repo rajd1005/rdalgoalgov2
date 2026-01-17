@@ -29,11 +29,18 @@ def get_defaults():
             "enable_history_check": True,
             "default_interval": "minute"
         },
-        # --- NEW TELEGRAM CONFIG ---
+        # --- TELEGRAM CONFIG ---
         "telegram": {
             "bot_token": "",
             "channel_id": "",
-            "enable_notifications": False
+            "system_channel_id": "",
+            "enable_notifications": False,
+            # --- NEW EXTRA CHANNELS FEATURE ---
+            "extra_channels": [
+                {"id": "ch1", "name": "VIP Channel", "chat_id": "", "enabled": False},
+                {"id": "ch2", "name": "Free Channel", "chat_id": "", "enabled": False},
+                {"id": "ch3", "name": "ZeroToHero", "chat_id": "", "enabled": False}
+            ]
         }
     }
 
@@ -67,8 +74,13 @@ def load_settings():
             
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
 
-            # Merge Telegram
-            if "telegram" not in saved: saved["telegram"] = defaults["telegram"]
+            # Merge Telegram (Ensure new keys like extra_channels are added)
+            if "telegram" not in saved: 
+                saved["telegram"] = defaults["telegram"]
+            else:
+                for key, val in defaults["telegram"].items():
+                    if key not in saved["telegram"]:
+                        saved["telegram"][key] = val
 
             return saved
     except Exception as e: print(f"Error loading settings: {e}")
