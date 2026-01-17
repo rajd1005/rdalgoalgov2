@@ -394,7 +394,11 @@ def api_import_trade():
                         time.sleep(1.0)
                         
                         dat = item.get('data')
-                        t_obj = item.get('trade', trade_ref)
+                        t_obj = item.get('trade', trade_ref).copy()
+                        # --- FIX: INJECT ID IF MISSING (For SL/Exit Snapshots) ---
+                        if 'id' not in t_obj:
+                             t_obj['id'] = trade_ref['id']
+                        # ---------------------------------------------------------
                         t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
                         
                         telegram_bot.notify_trade_event(t_obj, evt, dat)
