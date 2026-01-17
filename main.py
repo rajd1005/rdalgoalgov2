@@ -99,9 +99,13 @@ def run_auto_login_process():
 def background_monitor():
     global bot_active, login_state
     
-    # [NOTIFICATION] Startup
-    telegram_bot.notify_system_event("STARTUP", "Server Deployed & Monitor Started.")
-    print("🖥️ Background Monitor Started")
+    # [FIXED] Wrapped Startup Notification in App Context to fix "Outside Context" Error
+    with app.app_context():
+        try:
+            telegram_bot.notify_system_event("STARTUP", "Server Deployed & Monitor Started.")
+            print("🖥️ Background Monitor Started")
+        except Exception as e:
+            print(f"❌ Startup Notification Failed: {e}")
     
     time.sleep(5) # Allow Flask to start up
     
