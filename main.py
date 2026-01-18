@@ -528,9 +528,18 @@ def api_sync():
 def place_trade():
     if not bot_active: return redirect('/')
     try:
+        # --- DEBUG LOG: INCOMING REQUEST ---
+        raw_mode = request.form['mode']
+        print(f"\n[DEBUG MAIN] Received Trade Request. RAW Mode: '{raw_mode}'")
+        
+        # --- FIX: Clean Mode Input ---
+        # Ensures "Shadow " (with space) or "shadow" (lowercase) becomes "SHADOW"
+        mode_input = raw_mode.strip().upper()
+        print(f"[DEBUG MAIN] Cleaned Mode: '{mode_input}'")
+        
         sym = request.form['index']
         type_ = request.form['type']
-        mode_input = request.form['mode'] # Can be PAPER, LIVE, or SHADOW
+        # mode_input defined above
         input_qty = int(request.form['qty'])
         order_type = request.form['order_type']
         
@@ -576,6 +585,7 @@ def place_trade():
         
         # Helper to execute trade
         def execute(ex_mode, ex_qty, ex_channels):
+            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}")
             return trade_manager.create_trade_direct(
                 kite, ex_mode, final_sym, ex_qty, sl_points, custom_targets, 
                 order_type, limit_price, target_controls, trailing_sl, 
@@ -583,6 +593,8 @@ def place_trade():
             )
 
         if mode_input == "SHADOW":
+            print("[DEBUG MAIN] Entering SHADOW Logic Block...")
+            
             # --- SHADOW MODE: LIVE FIRST (PRIMARY), THEN PAPER (FOLLOWER) ---
             
             # 1. Check Live Feasibility
@@ -596,6 +608,7 @@ def place_trade():
             live_qty = input_qty * live_mult
             
             # Live = Silent (no channels)
+            print("[DEBUG MAIN] calling execute('LIVE')...")
             res_live = execute("LIVE", live_qty, [])
             
             if res_live['status'] != 'success':
@@ -603,6 +616,7 @@ def place_trade():
                 return redirect('/')
             
             # 3. Wait for DB Safety (1s to ensure ID separation)
+            print("[DEBUG MAIN] LIVE Success. Waiting 1s...")
             time.sleep(1)
             
             # 4. Execute PAPER
@@ -610,6 +624,7 @@ def place_trade():
             paper_qty = input_qty * paper_mult
             
             # Paper = Notifier
+            print("[DEBUG MAIN] calling execute('PAPER')...")
             res_paper = execute("PAPER", paper_qty, target_channels)
             
             if res_paper['status'] == 'success':
@@ -619,6 +634,8 @@ def place_trade():
 
         else:
             # Standard Execution (PAPER or LIVE)
+            print(f"[DEBUG MAIN] Entering STANDARD Logic Block (Mode: {mode_input})...")
+            
             can_trade, reason = common.can_place_order(mode_input)
             if not can_trade:
                 flash(f"⛔ Trade Blocked: {reason}")
@@ -636,6 +653,7 @@ def place_trade():
                 flash(f"❌ Error: {res['message']}")
             
     except Exception as e:
+        print(f"[DEBUG MAIN] Exception: {e}")
         flash(f"Error: {e}")
     return redirect('/')
 
