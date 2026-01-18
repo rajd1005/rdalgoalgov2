@@ -551,7 +551,6 @@ def place_trade():
         if request.form.get('pub_z2h'): target_channels.append('z2h')
         
         # --- PREPARE TRADE FUNCTION ARGS ---
-        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
         # Note: Shadow mode checks both inside execution block
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
@@ -590,6 +589,10 @@ def place_trade():
             # Use gathered target_channels for PAPER so it notifies
             res_paper = execute("PAPER", paper_qty, target_channels)
             
+            # --- FIX: Tiny Delay to separate timestamps and prevent ID clash/race conditions ---
+            time.sleep(0.5) 
+            # ---------------------------------------------------------------------------------
+
             # 2. Execute LIVE (Silent)
             live_status_msg = ""
             can_live, reason = common.can_place_order("LIVE")
@@ -600,7 +603,7 @@ def place_trade():
                 live_qty = input_qty * live_mult
                 
                 # Empty list = No notifications
-                res_live = execute("LIVE", live_qty, [])
+                res_live = execute("LIVE", live_qty, []) 
                 
                 if res_live['status'] == 'success':
                      live_status_msg = "✅ Live"
