@@ -58,13 +58,20 @@ function loadSettings() {
                 renderSLTable(m);
             });
 
-            // --- LOAD TELEGRAM SETTINGS ---
+            // --- LOAD TELEGRAM SETTINGS (UPDATED) ---
             if(settings.telegram) {
-                // Updated IDs to match the HTML
                 $('#tg_bot_token').val(settings.telegram.bot_token || '');
-                $('#tg_channel_id').val(settings.telegram.channel_id || '');
-                $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); // NEW
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
+                
+                // 1. Main
+                $('#tg_channel_id').val(settings.telegram.channel_id || '');
+                $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); 
+                
+                // 2. Extra Channels
+                $('#tg_vip_channel_id').val(settings.telegram.vip_channel_id || '');
+                $('#tg_free_channel_id').val(settings.telegram.free_channel_id || '');
+                $('#tg_z2h_channel_id').val(settings.telegram.z2h_channel_id || '');
+                $('#tg_z2h_channel_name').val(settings.telegram.z2h_channel_name || 'Zero To Hero');
             }
 
             if (typeof updateDisplayValues === "function") updateDisplayValues(); 
@@ -120,12 +127,18 @@ function saveSettings() {
         ];
     });
 
-    // --- SAVE TELEGRAM SETTINGS ---
+    // --- SAVE TELEGRAM SETTINGS (UPDATED) ---
     settings.telegram = {
         bot_token: $('#tg_bot_token').val().trim(),
+        enable_notifications: $('#tg_enable').is(':checked'),
+        
+        // Channels
         channel_id: $('#tg_channel_id').val().trim(),
-        system_channel_id: $('#tg_system_channel_id').val().trim(), // NEW
-        enable_notifications: $('#tg_enable').is(':checked')
+        system_channel_id: $('#tg_system_channel_id').val().trim(),
+        vip_channel_id: $('#tg_vip_channel_id').val().trim(),
+        free_channel_id: $('#tg_free_channel_id').val().trim(),
+        z2h_channel_id: $('#tg_z2h_channel_id').val().trim(),
+        z2h_channel_name: $('#tg_z2h_channel_name').val().trim() || 'Zero To Hero'
     };
 
     $.ajax({ 
@@ -142,7 +155,7 @@ function testTelegram() {
     let token = $('#tg_bot_token').val().trim();
     let chat = $('#tg_channel_id').val().trim();
     
-    if(!token || !chat) { alert("Enter Token & ID first"); return; }
+    if(!token || !chat) { alert("Enter Token & Main Channel ID first"); return; }
     
     $.post('/api/test_telegram', { token: token, chat_id: chat }, function(res) {
         if(res.status === 'success') alert("✅ Message Sent Successfully!");
@@ -150,12 +163,12 @@ function testTelegram() {
     });
 }
 
+// ... (Rest of utils like renderWatchlist etc. remain unchanged) ...
 function renderWatchlist() {
     let wl = settings.watchlist || [];
     let opts = '<option value="">📺 Select</option>';
     wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
     $('#trade_watch').html(opts);
-    // Also update import modal watchlist if it exists
     if($('#imp_watch').length) $('#imp_watch').html(opts);
 }
 
