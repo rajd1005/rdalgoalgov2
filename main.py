@@ -591,9 +591,10 @@ def place_trade():
             res_paper = execute("PAPER", paper_qty, target_channels)
             
             # 2. Execute LIVE (Silent)
+            live_status_msg = ""
             can_live, reason = common.can_place_order("LIVE")
             if not can_live:
-                flash(f"⚠️ Shadow Mode Partial: Live Blocked ({reason})")
+                live_status_msg = f"⚠️ Live Blocked: {reason}"
             else:
                 live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
                 live_qty = input_qty * live_mult
@@ -602,13 +603,15 @@ def place_trade():
                 res_live = execute("LIVE", live_qty, [])
                 
                 if res_live['status'] == 'success':
-                     # Optional: You could log something here
-                     pass
+                     live_status_msg = "✅ Live"
+                else:
+                     live_status_msg = f"❌ Live Failed: {res_live['message']}"
             
+            # COMBINED REPORT
             if res_paper['status'] == 'success':
-                flash(f"👻 Shadow Trade Executed: {final_sym}")
+                flash(f"👻 Shadow: ✅ Paper | {live_status_msg}")
             else:
-                flash(f"❌ Error (Paper Leg): {res_paper['message']}")
+                flash(f"❌ Shadow Failed: Paper Error ({res_paper['message']}) | {live_status_msg}")
 
         else:
             # Standard Execution (PAPER or LIVE)
