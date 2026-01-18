@@ -543,6 +543,13 @@ def place_trade():
         t1 = float(request.form.get('t1_price', 0))
         t2 = float(request.form.get('t2_price', 0))
         t3 = float(request.form.get('t3_price', 0))
+
+        # --- NEW: Capture Broadcast Selection ---
+        target_channels = ['main'] # Main is mandatory
+        if request.form.get('pub_vip'): target_channels.append('vip')
+        if request.form.get('pub_free'): target_channels.append('free')
+        if request.form.get('pub_z2h'): target_channels.append('z2h')
+        # ----------------------------------------
         
         can_trade, reason = common.can_place_order(mode)
         if not can_trade:
@@ -564,7 +571,12 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
 
-        res = trade_manager.create_trade_direct(kite, mode, final_sym, qty, sl_points, custom_targets, order_type, limit_price, target_controls, trailing_sl, sl_to_entry, exit_multiplier)
+        # Pass target_channels to the manager
+        res = trade_manager.create_trade_direct(
+            kite, mode, final_sym, qty, sl_points, custom_targets, 
+            order_type, limit_price, target_controls, trailing_sl, 
+            sl_to_entry, exit_multiplier, target_channels=target_channels
+        )
         
         if res['status'] == 'success':
             flash(f"✅ Order Placed: {final_sym}")
