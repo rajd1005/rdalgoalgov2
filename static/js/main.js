@@ -6,8 +6,16 @@ $(document).ready(function() {
     renderWatchlist();
     loadSettings();
     
-    let now = new Date(); const offset = now.getTimezoneOffset(); let localDate = new Date(now.getTime() - (offset*60*1000));
+    // Date Logic
+    let now = new Date(); 
+    const offset = now.getTimezoneOffset(); 
+    let localDate = new Date(now.getTime() - (offset*60*1000));
+    
+    // 1. Set History Date (Existing)
     $('#hist_date').val(localDate.toISOString().slice(0,10)); 
+    
+    // 2. Set Import Time to Now (New Feature)
+    $('#imp_time').val(localDate.toISOString().slice(0,16)); 
     
     // Global Bindings
     $('#hist_date, #hist_filter').change(loadClosedTrades);
@@ -33,6 +41,10 @@ $(document).ready(function() {
     // Import Modal Bindings
     $('#imp_sym').change(() => loadDetails('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_qty', '#imp_sl_pts')); 
     $('#imp_exp').change(() => fillChain('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_str'));
+    
+    // 3. Bind Strike Change to fetch LTP (New Feature)
+    $('#imp_str').change(fetchLTP);
+
     $('input[name="imp_type"]').change(() => loadDetails('#imp_sym', '#imp_exp', 'input[name="imp_type"]:checked', '#imp_qty', '#imp_sl_pts'));
     
     // Import Risk Calc Bindings
