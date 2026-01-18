@@ -32,15 +32,24 @@ def get_defaults():
             "enable_history_check": True,
             "default_interval": "minute"
         },
+        # --- NEW TELEGRAM CONFIG (UPDATED) ---
         "telegram": {
             "bot_token": "",
             "enable_notifications": False,
+            
+            # 1. Main Channel (Receives ALL updates)
             "channel_id": "", 
             "system_channel_id": "",
+            
+            # 2. VIP Channel (New/Active/Update Only)
             "vip_channel_id": "",
+            
+            # 3. Free Channel (New/Active/Update Only)
             "free_channel_id": "",
+            
+            # 4. ZeroToHero Channel (New/Active/Update Only + Custom Name)
             "z2h_channel_id": "",
-            "z2h_channel_name": "Zero To Hero"
+            "z2h_channel_name": "Zero To Hero" # Default Name
         }
     }
 
