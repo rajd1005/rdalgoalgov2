@@ -8,13 +8,13 @@ function loadSettings() {
             }
             
             // --- NEW: Load Broadcast Defaults ---
-            // 1. Set values in Settings Modal
+            // 1. Set values in Settings Modal (General Tab)
             let defaults = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
             $('#def_vip').prop('checked', defaults.includes('vip'));
             $('#def_free').prop('checked', defaults.includes('free'));
             $('#def_z2h').prop('checked', defaults.includes('z2h'));
 
-            // 2. APPLY Defaults to Dashboard (if elements exist)
+            // 2. APPLY Defaults to Dashboard Trade Panel (if elements exist)
             if($('#chk_vip').length) $('#chk_vip').prop('checked', defaults.includes('vip'));
             if($('#chk_free').length) $('#chk_free').prop('checked', defaults.includes('free'));
             if($('#chk_z2h').length) $('#chk_z2h').prop('checked', defaults.includes('z2h'));
@@ -37,7 +37,7 @@ function loadSettings() {
                 $(`#${k}_trail_limit`).val(s.sl_to_entry || 0);
                 $(`#${k}_exit_mult`).val(s.exit_multiplier || 1);
                 
-                // Risk Settings
+                // --- NEW RISK SETTINGS ---
                 $(`#${k}_time`).val(s.universal_exit_time || "15:25");
                 $(`#${k}_max_loss`).val(s.max_loss || 0);
                 $(`#${k}_pl_start`).val(s.profit_lock || 0);
@@ -72,14 +72,16 @@ function loadSettings() {
                 renderSLTable(m);
             });
 
-            // Telegram Settings
+            // --- LOAD TELEGRAM SETTINGS (UPDATED) ---
             if(settings.telegram) {
                 $('#tg_bot_token').val(settings.telegram.bot_token || '');
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
                 
+                // Main & System
                 $('#tg_channel_id').val(settings.telegram.channel_id || '');
                 $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); 
                 
+                // Extra Channels
                 $('#tg_vip_channel_id').val(settings.telegram.vip_channel_id || '');
                 $('#tg_free_channel_id').val(settings.telegram.free_channel_id || '');
                 $('#tg_z2h_channel_id').val(settings.telegram.z2h_channel_id || '');
@@ -112,16 +114,19 @@ function saveSettings() {
         s.ratios = [parseFloat($(`#${k}_r1`).val()), parseFloat($(`#${k}_r2`).val()), parseFloat($(`#${k}_r3`).val())];
         s.trailing_sl = parseFloat($(`#${k}_def_trail`).val()) || 0;
         
+        // Save Defaults
         s.order_type = $(`#${k}_order_type`).val();
         s.sl_to_entry = parseInt($(`#${k}_trail_limit`).val()) || 0;
         s.exit_multiplier = parseInt($(`#${k}_exit_mult`).val()) || 1;
         
+        // --- SAVE NEW RISK SETTINGS ---
         s.universal_exit_time = $(`#${k}_time`).val();
         s.max_loss = parseFloat($(`#${k}_max_loss`).val()) || 0;
         s.profit_lock = parseFloat($(`#${k}_pl_start`).val()) || 0;
         s.profit_min = parseFloat($(`#${k}_pl_min`).val()) || 0;
         s.profit_trail = parseFloat($(`#${k}_pl_trail`).val()) || 0;
         
+        // Save Target Configs
         s.targets = [
             {
                 active: $(`#${k}_a1`).is(':checked'),
@@ -144,12 +149,15 @@ function saveSettings() {
         ];
     });
 
+    // --- SAVE TELEGRAM SETTINGS (UPDATED) ---
     settings.telegram = {
         bot_token: $('#tg_bot_token').val().trim(),
         enable_notifications: $('#tg_enable').is(':checked'),
         
         channel_id: $('#tg_channel_id').val().trim(),
         system_channel_id: $('#tg_system_channel_id').val().trim(),
+        
+        // Save Extra Channels
         vip_channel_id: $('#tg_vip_channel_id').val().trim(),
         free_channel_id: $('#tg_free_channel_id').val().trim(),
         z2h_channel_id: $('#tg_z2h_channel_id').val().trim(),
@@ -163,7 +171,7 @@ function saveSettings() {
         contentType: "application/json", 
         success: () => { 
             $('#settingsModal').modal('hide'); 
-            loadSettings(); // Reload to apply new defaults to dashboard
+            loadSettings(); // Reload to apply new defaults to dashboard immediately
         } 
     });
 }
@@ -180,7 +188,6 @@ function testTelegram() {
     });
 }
 
-// ... (Rest of utils like renderWatchlist etc. remain unchanged) ...
 function renderWatchlist() {
     let wl = settings.watchlist || [];
     let opts = '<option value="">📺 Select</option>';
