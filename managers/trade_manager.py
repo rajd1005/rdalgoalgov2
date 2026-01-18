@@ -157,10 +157,16 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "logs": logs
             }
             
-            # --- SEND TELEGRAM NOTIFICATION ---
-            msg_id = telegram_bot.notify_trade_event(record, "NEW_TRADE")
-            if msg_id:
-                record['telegram_msg_id'] = msg_id
+            # --- SEND TELEGRAM NOTIFICATION (UPDATED) ---
+            # Now returns a DICT of IDs: {'main': 123, 'vip': 456, ...}
+            msg_ids = telegram_bot.notify_trade_event(record, "NEW_TRADE")
+            if msg_ids:
+                record['telegram_msg_ids'] = msg_ids
+                # Legacy support for older code that might just check existence of 'telegram_msg_id'
+                if isinstance(msg_ids, dict):
+                    record['telegram_msg_id'] = msg_ids.get('main')
+                else:
+                    record['telegram_msg_id'] = msg_ids
             
             trades.append(record)
             save_trades(trades)
