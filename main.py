@@ -551,6 +551,7 @@ def place_trade():
         if request.form.get('pub_z2h'): target_channels.append('z2h')
         
         # --- PREPARE TRADE FUNCTION ARGS ---
+        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
         # Note: Shadow mode checks both inside execution block
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
