@@ -234,3 +234,19 @@ function calcRisk() {
         }
     });
 }
+
+// --- NEW: Toggle Limit Price Requirement on Order Type Change ---
+$(function() {
+    $('#ord').change(function() {
+        if($(this).val() === 'LIMIT') {
+            $('#lim_box').show();
+            $('#lim_pr').prop('required', true); // Make Mandatory
+        } else {
+            $('#lim_box').hide();
+            $('#lim_pr').prop('required', false); // Not Mandatory for Market
+        }
+    });
+    
+    // Initialize on load
+    $('#ord').trigger('change');
+});
