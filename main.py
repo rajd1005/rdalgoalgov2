@@ -582,39 +582,38 @@ def place_trade():
             )
 
         if mode_input == "SHADOW":
-            # 1. Execute PAPER (Notifier)
+            # --- SHADOW MODE: LIVE FIRST (PRIMARY), THEN PAPER (FOLLOWER) ---
+            
+            # 1. Validate & Execute LIVE
+            can_live, reason = common.can_place_order("LIVE")
+            if not can_live:
+                flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
+                return redirect('/')
+
+            live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
+            live_qty = input_qty * live_mult
+            
+            # Live executes silently (notifications delegated to Paper)
+            res_live = execute("LIVE", live_qty, [])
+            
+            if res_live['status'] != 'success':
+                # CRITICAL: If Live fails, do NOT proceed to Paper.
+                flash(f"❌ Shadow Failed: LIVE Execution Error ({res_live['message']})")
+                return redirect('/')
+            
+            # 2. Live Success -> Wait & Execute PAPER
+            time.sleep(0.5) # Prevent timestamp collision
+            
             paper_mult = app_settings['modes']['PAPER'].get('qty_mult', 1)
             paper_qty = input_qty * paper_mult
             
-            # Use gathered target_channels for PAPER so it notifies
+            # Paper handles the Telegram notifications
             res_paper = execute("PAPER", paper_qty, target_channels)
             
-            # --- FIX: Tiny Delay to separate timestamps and prevent ID clash/race conditions ---
-            time.sleep(0.5) 
-            # ---------------------------------------------------------------------------------
-
-            # 2. Execute LIVE (Silent)
-            live_status_msg = ""
-            can_live, reason = common.can_place_order("LIVE")
-            if not can_live:
-                live_status_msg = f"⚠️ Live Blocked: {reason}"
-            else:
-                live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
-                live_qty = input_qty * live_mult
-                
-                # Empty list = No notifications
-                res_live = execute("LIVE", live_qty, []) 
-                
-                if res_live['status'] == 'success':
-                     live_status_msg = "✅ Live"
-                else:
-                     live_status_msg = f"❌ Live Failed: {res_live['message']}"
-            
-            # COMBINED REPORT
             if res_paper['status'] == 'success':
-                flash(f"👻 Shadow: ✅ Paper | {live_status_msg}")
+                flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
             else:
-                flash(f"❌ Shadow Failed: Paper Error ({res_paper['message']}) | {live_status_msg}")
+                flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
 
         else:
             # Standard Execution (PAPER or LIVE)
