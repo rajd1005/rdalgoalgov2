@@ -3,27 +3,19 @@ import threading
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
 # Global Lock for thread safety to prevent race conditions during DB saves
-# This lock should be acquired by other managers before performing read-modify-write operations on trades.
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence ---
 def get_risk_state(mode):
-    """
-    Retrieves the persistent risk state (Profit Locking, High PnL) for a specific mode.
-    """
     try:
         record = RiskState.query.filter_by(id=mode).first()
         if record:
             return json.loads(record.data)
     except Exception as e:
         print(f"Error fetching risk state for {mode}: {e}")
-    # Default state if not found
     return {'high_pnl': float('-inf'), 'global_sl': float('-inf'), 'active': False}
 
 def save_risk_state(mode, state):
-    """
-    Saves or updates the risk state for a specific mode.
-    """
     try:
         record = RiskState.query.filter_by(id=mode).first()
         if not record:
@@ -40,13 +32,11 @@ def save_risk_state(mode, state):
 def load_trades():
     """
     Loads all currently active trades from the database.
-    UPDATED: Forces a session commit to ensure we see the latest writes,
-    preventing the 'Shadow Mode' overwrite bug.
+    UPDATED: Forces a session commit to ensure we see the latest writes.
     """
     try:
         # [CRITICAL FIX] Force refresh to avoid stale reads within the same request
-        # Without this, the second trade in Shadow mode loads an old list 
-        # and overwrites the first trade.
+        # This line is REQUIRED for Shadow mode to work correctly.
         db.session.commit() 
         
         return [json.loads(r.data) for r in ActiveTrade.query.all()]
@@ -57,10 +47,8 @@ def load_trades():
 def save_trades(trades):
     """
     Overwrites the ActiveTrade table with the provided list of trades.
-    Note: The caller is responsible for acquiring TRADE_LOCK if necessary.
     """
     try:
-        # Clear existing active trades and replace with new list
         db.session.query(ActiveTrade).delete()
         for t in trades: 
             db.session.add(ActiveTrade(data=json.dumps(t)))
@@ -71,9 +59,6 @@ def save_trades(trades):
 
 # --- Trade History Persistence ---
 def load_history():
-    """
-    Loads closed trade history, ordered by ID (timestamp) descending.
-    """
     try:
         return [json.loads(r.data) for r in TradeHistory.query.order_by(TradeHistory.id.desc()).all()]
     except Exception as e:
@@ -81,19 +66,10 @@ def load_history():
         return []
 
 def delete_trade(trade_id):
-    """
-    Deletes a specific trade from history by ID. Thread-safe.
-    Also triggers deletion of associated Telegram messages.
-    """
-    # Import locally to avoid circular dependency with telegram_manager -> settings -> database
     from managers.telegram_manager import bot as telegram_bot
-    
     with TRADE_LOCK:
         try:
-            # 1. Delete associated Telegram messages
             telegram_bot.delete_trade_messages(trade_id)
-            
-            # 2. Delete the trade record
             TradeHistory.query.filter_by(id=int(trade_id)).delete()
             db.session.commit()
             return True
@@ -103,11 +79,7 @@ def delete_trade(trade_id):
             return False
 
 def save_to_history_db(trade_data):
-    """
-    Saves or updates a trade record in the TradeHistory table.
-    """
     try:
-        # Use merge to handle both insert and update (e.g., updating 'made_high')
         db.session.merge(TradeHistory(id=trade_data['id'], data=json.dumps(trade_data)))
         db.session.commit()
     except Exception as e:
