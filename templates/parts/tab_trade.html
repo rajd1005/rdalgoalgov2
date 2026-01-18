@@ -158,11 +158,14 @@
         </div>
 
         <input type="hidden" name="mode" id="mode_input" value="PAPER">
+        
         <div class="d-flex gap-2 mb-3">
             <div class="btn btn-outline-warning w-100 fw-bold active" onclick="setMode(this, 'PAPER')">PAPER</div>
-            <button type="submit" name="mode" value="SHADOW" class="btn btn-outline-secondary w-100 fw-bold">
+            
+            <div class="btn btn-outline-secondary w-100 fw-bold" onclick="setMode(this, 'SHADOW')">
                 <i class="fas fa-ghost"></i> SHADOW
-            </button>
+            </div>
+            
             <div class="btn btn-outline-danger w-100 fw-bold" onclick="setMode(this, 'LIVE')">LIVE</div>
         </div>
         
