@@ -533,7 +533,6 @@ def place_trade():
         print(f"\n[DEBUG MAIN] Received Trade Request. RAW Mode: '{raw_mode}'")
         
         # --- FIX: Clean Mode Input ---
-        # Ensures "Shadow " (with space) or "shadow" (lowercase) becomes "SHADOW"
         mode_input = raw_mode.strip().upper()
         print(f"[DEBUG MAIN] Cleaned Mode: '{mode_input}'")
         
@@ -583,19 +582,30 @@ def place_trade():
         # Load settings to get multipliers
         app_settings = settings.load_settings()
         
-        # Helper to execute trade
-        def execute(ex_mode, ex_qty, ex_channels):
-            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}")
+        # Helper to execute trade with optional overrides
+        def execute(ex_mode, ex_qty, ex_channels, overrides=None):
+            # Default to form values
+            use_trail = trailing_sl
+            use_sl_entry = sl_to_entry
+            use_exit_mult = exit_multiplier
+            
+            # Apply Overrides if provided (from Global Settings)
+            if overrides:
+                use_trail = float(overrides.get('trailing_sl', 0))
+                use_sl_entry = int(overrides.get('sl_to_entry', 0))
+                use_exit_mult = int(overrides.get('exit_multiplier', 1))
+            
+            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
+            
             return trade_manager.create_trade_direct(
                 kite, ex_mode, final_sym, ex_qty, sl_points, custom_targets, 
-                order_type, limit_price, target_controls, trailing_sl, 
-                sl_to_entry, exit_multiplier, target_channels=ex_channels
+                order_type, limit_price, target_controls, 
+                use_trail, use_sl_entry, use_exit_mult, 
+                target_channels=ex_channels
             )
 
         if mode_input == "SHADOW":
             print("[DEBUG MAIN] Entering SHADOW Logic Block...")
-            
-            # --- SHADOW MODE: LIVE FIRST (PRIMARY), THEN PAPER (FOLLOWER) ---
             
             # 1. Check Live Feasibility
             can_live, reason = common.can_place_order("LIVE")
@@ -604,12 +614,20 @@ def place_trade():
                 return redirect('/')
 
             # 2. Execute LIVE
-            live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
+            live_conf = app_settings['modes']['LIVE']
+            live_mult = live_conf.get('qty_mult', 1)
             live_qty = input_qty * live_mult
             
-            # Live = Silent (no channels)
+            # [CRITICAL UPDATE] Fetch Global Settings for LIVE Override
+            live_overrides = {
+                'trailing_sl': live_conf.get('trailing_sl', 0),
+                'sl_to_entry': live_conf.get('sl_to_entry', 0),
+                'exit_multiplier': live_conf.get('exit_multiplier', 1)
+            }
+            
+            # Live = Silent (no channels) + Global Settings Override
             print("[DEBUG MAIN] calling execute('LIVE')...")
-            res_live = execute("LIVE", live_qty, [])
+            res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
             if res_live['status'] != 'success':
                 flash(f"❌ Shadow Failed: LIVE Execution Error ({res_live['message']})")
@@ -623,7 +641,7 @@ def place_trade():
             paper_mult = app_settings['modes']['PAPER'].get('qty_mult', 1)
             paper_qty = input_qty * paper_mult
             
-            # Paper = Notifier
+            # Paper = Notifier + Form Settings (No Override)
             print("[DEBUG MAIN] calling execute('PAPER')...")
             res_paper = execute("PAPER", paper_qty, target_channels)
             
