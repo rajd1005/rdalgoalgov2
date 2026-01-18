@@ -2,7 +2,7 @@ import json
 import threading
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
-# Global Lock for thread safety to prevent race conditions during DB saves
+# Global Lock for thread safety
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence ---
@@ -39,11 +39,11 @@ def save_risk_state(mode, state):
 def load_trades():
     """
     Loads all currently active trades from the database.
-    UPDATED: Forces a session commit/refresh to ensure we see the very latest writes,
-    preventing overwrite issues in SHADOW mode.
+    UPDATED: Forces a session commit to ensure we see the latest writes,
+    preventing the 'Shadow Mode' overwrite bug.
     """
     try:
-        # [FIX] Force refresh to avoid stale reads within the same request
+        # [CRITICAL FIX] Force refresh to avoid stale reads within the same request
         db.session.commit() 
         return [json.loads(r.data) for r in ActiveTrade.query.all()]
     except Exception as e:
@@ -53,7 +53,6 @@ def load_trades():
 def save_trades(trades):
     """
     Overwrites the ActiveTrade table with the provided list of trades.
-    Note: The caller is responsible for acquiring TRADE_LOCK if necessary.
     """
     try:
         # Clear existing active trades and replace with new list
@@ -81,7 +80,7 @@ def delete_trade(trade_id):
     Deletes a specific trade from history by ID. Thread-safe.
     Also triggers deletion of associated Telegram messages.
     """
-    # Import locally to avoid circular dependency with telegram_manager -> settings -> database
+    # Import locally to avoid circular dependency
     from managers.telegram_manager import bot as telegram_bot
     
     with TRADE_LOCK:
@@ -103,7 +102,7 @@ def save_to_history_db(trade_data):
     Saves or updates a trade record in the TradeHistory table.
     """
     try:
-        # Use merge to handle both insert and update (e.g., updating 'made_high')
+        # Use merge to handle both insert and update
         db.session.merge(TradeHistory(id=trade_data['id'], data=json.dumps(trade_data)))
         db.session.commit()
     except Exception as e:
