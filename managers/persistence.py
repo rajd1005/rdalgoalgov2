@@ -3,7 +3,6 @@ import threading
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
 # Global Lock for thread safety to prevent race conditions during DB saves
-# This lock should be acquired by other managers before performing read-modify-write operations on trades.
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence ---
@@ -40,8 +39,12 @@ def save_risk_state(mode, state):
 def load_trades():
     """
     Loads all currently active trades from the database.
+    UPDATED: Forces a session commit/refresh to ensure we see the very latest writes,
+    preventing overwrite issues in SHADOW mode.
     """
     try:
+        # [FIX] Force refresh to avoid stale reads within the same request
+        db.session.commit() 
         return [json.loads(r.data) for r in ActiveTrade.query.all()]
     except Exception as e:
         print(f"Load Trades Error: {e}")
