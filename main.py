@@ -387,7 +387,7 @@ def api_import_trade():
             data.get('exit_multiplier', 1), data.get('target_controls')
         )
         
-        # --- SEQUENTIAL TELEGRAM SENDER ---
+        # --- SEQUENTIAL TELEGRAM SENDER (UPDATED) ---
         queue = result.get('notification_queue', [])
         trade_ref = result.get('trade_ref', {})
         
@@ -395,33 +395,43 @@ def api_import_trade():
             def send_seq_notifications():
                 # Wrap thread in app_context to access DB
                 with app.app_context():
-                    # 1. Send Initial "NEW_TRADE" message to get a Thread ID
-                    msg_id = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
+                    # 1. Send Initial "NEW_TRADE" message -> Returns Dict of IDs (e.g. {'main': 1, 'vip': 2})
+                    msg_ids = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
                     
-                    if msg_id:
+                    if msg_ids:
                         from managers.persistence import load_trades, save_trades, save_to_history_db
                         
                         trade_id = trade_ref['id']
                         updated_ref = False
+                        
+                        # Handle Structure: If dict, save dict. If int (legacy), wrap it.
+                        if isinstance(msg_ids, dict):
+                            ids_dict = msg_ids
+                            main_id = msg_ids.get('main')
+                        else:
+                            ids_dict = {'main': msg_ids}
+                            main_id = msg_ids
                         
                         # Try updating Active Trades
                         trades = load_trades()
                         for t in trades:
                             # Robust comparison: Convert both to strings
                             if str(t['id']) == str(trade_id):
-                                t['telegram_msg_id'] = msg_id
+                                t['telegram_msg_ids'] = ids_dict
+                                t['telegram_msg_id'] = main_id # Legacy fallback
                                 save_trades(trades)
                                 updated_ref = True
                                 break
                         
                         # If not active (e.g., trade closed immediately), update History
                         if not updated_ref:
-                            # Add the msg_id to the trade_ref and save to DB
-                            trade_ref['telegram_msg_id'] = msg_id
+                            trade_ref['telegram_msg_ids'] = ids_dict
+                            trade_ref['telegram_msg_id'] = main_id
                             save_to_history_db(trade_ref)
                             
-                        # Update local ref for the loop
-                        trade_ref['telegram_msg_id'] = msg_id
+                        # Update local ref so subsequent events know where to reply
+                        trade_ref['telegram_msg_ids'] = ids_dict
+                        trade_ref['telegram_msg_id'] = main_id
                     
                     # 2. Process the rest of the queue
                     for item in queue:
@@ -436,11 +446,11 @@ def api_import_trade():
                         
                         # --- CRITICAL FIX: INJECT ID IF MISSING ---
                         # The replay engine often creates snapshot objects without IDs.
-                        # We must inject the original Trade ID so TelegramManager saves the msg ID to DB.
                         if 'id' not in t_obj:
                             t_obj['id'] = trade_ref['id']
                         
-                        # Ensure threading works by injecting the thread ID
+                        # Inject IDs so manager knows where to reply for all channels
+                        t_obj['telegram_msg_ids'] = trade_ref.get('telegram_msg_ids')
                         t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
                         
                         telegram_bot.notify_trade_event(t_obj, evt, dat)
