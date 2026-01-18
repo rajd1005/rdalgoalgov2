@@ -32,14 +32,16 @@ def save_risk_state(mode, state):
 def load_trades():
     """
     Loads all currently active trades from the database.
-    UPDATED: Forces a session commit to ensure we see the latest writes.
+    UPDATED: Uses session.remove() to forcefully clear the session cache.
+    This guarantees that subsequent calls (like in Shadow mode) get fresh data.
     """
     try:
-        # [CRITICAL FIX] Force refresh to avoid stale reads within the same request
-        # This line is REQUIRED for Shadow mode to work correctly.
-        db.session.commit() 
+        # [NUCLEAR FIX] Completely remove the current session.
+        # This forces a new connection/transaction for the next query.
+        db.session.remove() 
         
-        return [json.loads(r.data) for r in ActiveTrade.query.all()]
+        trades = [json.loads(r.data) for r in ActiveTrade.query.all()]
+        return trades
     except Exception as e:
         print(f"Load Trades Error: {e}")
         return []
@@ -49,6 +51,7 @@ def save_trades(trades):
     Overwrites the ActiveTrade table with the provided list of trades.
     """
     try:
+        # Clear existing active trades and replace with new list
         db.session.query(ActiveTrade).delete()
         for t in trades: 
             db.session.add(ActiveTrade(data=json.dumps(t)))
@@ -60,6 +63,8 @@ def save_trades(trades):
 # --- Trade History Persistence ---
 def load_history():
     try:
+        # Also ensure history is fresh
+        db.session.commit()
         return [json.loads(r.data) for r in TradeHistory.query.order_by(TradeHistory.id.desc()).all()]
     except Exception as e:
         print(f"Load History Error: {e}")
