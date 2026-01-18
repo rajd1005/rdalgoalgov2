@@ -2,7 +2,8 @@ import json
 import threading
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
-# Global Lock for thread safety
+# Global Lock for thread safety to prevent race conditions during DB saves
+# This lock should be acquired by other managers before performing read-modify-write operations on trades.
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence ---
@@ -44,7 +45,10 @@ def load_trades():
     """
     try:
         # [CRITICAL FIX] Force refresh to avoid stale reads within the same request
+        # Without this, the second trade in Shadow mode loads an old list 
+        # and overwrites the first trade.
         db.session.commit() 
+        
         return [json.loads(r.data) for r in ActiveTrade.query.all()]
     except Exception as e:
         print(f"Load Trades Error: {e}")
@@ -53,6 +57,7 @@ def load_trades():
 def save_trades(trades):
     """
     Overwrites the ActiveTrade table with the provided list of trades.
+    Note: The caller is responsible for acquiring TRADE_LOCK if necessary.
     """
     try:
         # Clear existing active trades and replace with new list
@@ -80,7 +85,7 @@ def delete_trade(trade_id):
     Deletes a specific trade from history by ID. Thread-safe.
     Also triggers deletion of associated Telegram messages.
     """
-    # Import locally to avoid circular dependency
+    # Import locally to avoid circular dependency with telegram_manager -> settings -> database
     from managers.telegram_manager import bot as telegram_bot
     
     with TRADE_LOCK:
@@ -102,7 +107,7 @@ def save_to_history_db(trade_data):
     Saves or updates a trade record in the TradeHistory table.
     """
     try:
-        # Use merge to handle both insert and update
+        # Use merge to handle both insert and update (e.g., updating 'made_high')
         db.session.merge(TradeHistory(id=trade_data['id'], data=json.dumps(trade_data)))
         db.session.commit()
     except Exception as e:
