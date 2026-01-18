@@ -14,7 +14,7 @@ from managers.telegram_manager import bot as telegram_bot
 # --------------------------
 import smart_trader
 import settings
-from database import db
+from database import db, AppSetting
 import auto_login 
 
 app = Flask(__name__)
@@ -530,8 +530,8 @@ def place_trade():
     try:
         sym = request.form['index']
         type_ = request.form['type']
-        mode = request.form['mode']
-        qty = int(request.form['qty'])
+        mode_input = request.form['mode'] # Can be PAPER, LIVE, or SHADOW
+        input_qty = int(request.form['qty'])
         order_type = request.form['order_type']
         
         limit_price = float(request.form.get('limit_price') or 0)
@@ -544,17 +544,15 @@ def place_trade():
         t2 = float(request.form.get('t2_price', 0))
         t3 = float(request.form.get('t3_price', 0))
 
-        # --- NEW: Capture Broadcast Selection ---
+        # --- TELEGRAM BROADCAST CHANNELS ---
         target_channels = ['main'] # Main is mandatory
         if request.form.get('pub_vip'): target_channels.append('vip')
         if request.form.get('pub_free'): target_channels.append('free')
         if request.form.get('pub_z2h'): target_channels.append('z2h')
-        # ----------------------------------------
         
-        can_trade, reason = common.can_place_order(mode)
-        if not can_trade:
-            flash(f"⛔ Trade Blocked: {reason}")
-            return redirect('/')
+        # --- PREPARE TRADE FUNCTION ARGS ---
+        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
+        # Note: Shadow mode checks both inside execution block
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
         
@@ -571,17 +569,64 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
 
-        # Pass target_channels to the manager
-        res = trade_manager.create_trade_direct(
-            kite, mode, final_sym, qty, sl_points, custom_targets, 
-            order_type, limit_price, target_controls, trailing_sl, 
-            sl_to_entry, exit_multiplier, target_channels=target_channels
-        )
+        # --- EXECUTION LOGIC (SHADOW MODE IMPLEMENTATION) ---
         
-        if res['status'] == 'success':
-            flash(f"✅ Order Placed: {final_sym}")
+        # Load settings to get multipliers
+        app_settings = settings.load_settings()
+        
+        # Helper to execute trade
+        def execute(ex_mode, ex_qty, ex_channels):
+            return trade_manager.create_trade_direct(
+                kite, ex_mode, final_sym, ex_qty, sl_points, custom_targets, 
+                order_type, limit_price, target_controls, trailing_sl, 
+                sl_to_entry, exit_multiplier, target_channels=ex_channels
+            )
+
+        if mode_input == "SHADOW":
+            # 1. Execute PAPER (Notifier)
+            paper_mult = app_settings['modes']['PAPER'].get('qty_mult', 1)
+            paper_qty = input_qty * paper_mult
+            
+            # Use gathered target_channels for PAPER so it notifies
+            res_paper = execute("PAPER", paper_qty, target_channels)
+            
+            # 2. Execute LIVE (Silent)
+            can_live, reason = common.can_place_order("LIVE")
+            if not can_live:
+                flash(f"⚠️ Shadow Mode Partial: Live Blocked ({reason})")
+            else:
+                live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
+                live_qty = input_qty * live_mult
+                
+                # Empty list = No notifications
+                res_live = execute("LIVE", live_qty, [])
+                
+                if res_live['status'] == 'success':
+                     # Optional: You could log something here
+                     pass
+            
+            if res_paper['status'] == 'success':
+                flash(f"👻 Shadow Trade Executed: {final_sym}")
+            else:
+                flash(f"❌ Error (Paper Leg): {res_paper['message']}")
+
         else:
-            flash(f"❌ Error: {res['message']}")
+            # Standard Execution (PAPER or LIVE)
+            can_trade, reason = common.can_place_order(mode_input)
+            if not can_trade:
+                flash(f"⛔ Trade Blocked: {reason}")
+                return redirect('/')
+            
+            # Calculate Qty based on mode multiplier
+            mult = app_settings['modes'][mode_input].get('qty_mult', 1)
+            final_qty = input_qty * mult
+            
+            res = execute(mode_input, final_qty, target_channels)
+            
+            if res['status'] == 'success':
+                flash(f"✅ Order Placed: {final_sym}")
+            else:
+                flash(f"❌ Error: {res['message']}")
             
     except Exception as e:
         flash(f"Error: {e}")
