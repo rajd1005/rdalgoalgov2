@@ -11,13 +11,17 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
     Creates a new trade (Live or Paper). 
     Handles initial broker orders (if Live), calculates targets, and saves the trade to the DB.
     Accepts 'target_channels' list (e.g., ['main', 'vip']) to filter notifications.
+    INCLUDES DEBUG LOGGING.
     """
+    print(f"\n[DEBUG] --- START CREATE TRADE ({mode}) ---")
+    print(f"[DEBUG] Symbol: {specific_symbol}, Qty: {quantity}")
+    
     try:
         with TRADE_LOCK:
             trades = load_trades()
             current_ts = int(time.time())
             
-            # --- FIX: ROBUST DUPLICATE CHECK ---\
+            # --- FIX: ROBUST DUPLICATE CHECK ---
             for t in trades:
                 # 1. If Modes are different (e.g. Paper vs Live), it is NOT a duplicate. Skip check.
                 if t.get('mode') != mode:
@@ -25,11 +29,11 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 
                 # 2. Check strict duplicates within the same mode
                 if t['symbol'] == specific_symbol and t['quantity'] == quantity and (current_ts - t['id']) < 5:
+                     print(f"[DEBUG] Duplicate Blocked: {specific_symbol}")
                      return {"status": "error", "message": "Duplicate Trade Blocked"}
 
-            # --- FIX: UNIQUE ID GENERATION ---\
+            # --- FIX: UNIQUE ID GENERATION ---
             # Ensure new_id is always greater than the max existing ID to prevent overwrites
-            # This is critical for Shadow mode where Paper and Live execute in the same second
             new_id = current_ts
             existing_ids = [t['id'] for t in trades]
             if existing_ids:
@@ -37,7 +41,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 if new_id <= max_id:
                     new_id = max_id + 1
             
-            # -----------------------------------------------
+            print(f"[DEBUG] Generated New ID: {new_id}")
 
             # 1. Detect Exchange (e.g., NSE, NFO)
             exchange = smart_trader.get_exchange_name(specific_symbol)
@@ -46,6 +50,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             current_ltp = smart_trader.get_ltp(kite, specific_symbol)
             
             if current_ltp == 0:
+                print(f"[DEBUG] Error: LTP 0")
                 return {"status": "error", "message": f"Could not fetch LTP for Symbol: {specific_symbol}"}
 
             # Determine Entry Status
@@ -98,6 +103,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                         logs.append(f"[{get_time_str()}] Broker SL FAILED: {sl_e}")
 
                 except Exception as e: 
+                    print(f"[DEBUG] Broker Error: {e}")
                     return {"status": "error", "message": f"Broker Rejected: {e}"}
 
             # Calculate Targets
@@ -180,7 +186,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "logs": logs
             }
             
-            # --- SEND TELEGRAM NOTIFICATION ---\
+            # --- SEND TELEGRAM NOTIFICATION ---
             msg_ids = telegram_bot.notify_trade_event(record, "NEW_TRADE")
             if msg_ids:
                 record['telegram_msg_ids'] = msg_ids
@@ -189,11 +195,15 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 else:
                     record['telegram_msg_id'] = msg_ids
             
+            print(f"[DEBUG] Appending trade to list. Previous count: {len(trades)}")
             trades.append(record)
+            print(f"[DEBUG] Saving list. New count: {len(trades)}")
             save_trades(trades)
+            print(f"[DEBUG] Trade Creation Successful.")
             return {"status": "success", "trade": record}
             
     except Exception as e:
+        print(f"[DEBUG] EXCEPTION in Create Trade: {e}")
         return {"status": "error", "message": str(e)}
 
 def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_price=None, target_controls=None, sl_to_entry=0, exit_multiplier=1):
