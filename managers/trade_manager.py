@@ -16,13 +16,21 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             trades = load_trades()
             current_ts = int(time.time())
             
-            # --- FIX: DUPLICATE CHECK UPDATED ---
+            # --- FIX 1: DUPLICATE CHECK UPDATED ---
             # Added 't['mode'] == mode' to allow Shadow Mode (Paper + Live) to exist simultaneously
             for t in trades:
                 if t['symbol'] == specific_symbol and t['quantity'] == quantity and t['mode'] == mode and (current_ts - t['id']) < 5:
                      return {"status": "error", "message": "Duplicate Trade Blocked"}
 
-            # --- FIX: ROBUST EXCHANGE & LTP DETECTION ---
+            # --- FIX 2: UNIQUE ID GENERATION ---
+            # If two trades happen in the same second (Shadow Mode), ensure distinct IDs
+            new_id = current_ts
+            existing_ids = [t['id'] for t in trades]
+            while new_id in existing_ids:
+                new_id += 1 # Increment ID slightly to avoid collision
+            
+            # -----------------------------------------------
+
             # 1. Detect Exchange (e.g., NSE, NFO)
             exchange = smart_trader.get_exchange_name(specific_symbol)
             
@@ -134,7 +142,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             logs.insert(0, f"[{get_time_str()}] Trade Added. Status: {status}")
             
             record = {
-                "id": int(time.time()), 
+                "id": new_id, # <--- USE THE UNIQUE ID
                 "entry_time": get_time_str(), 
                 "symbol": specific_symbol, 
                 "exchange": exchange,
@@ -146,7 +154,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "sl": entry_price - sl_points, 
                 "targets": targets, 
                 "target_controls": target_controls, 
-                "target_channels": target_channels, # <--- NEW: Save Broadcast Selection
+                "target_channels": target_channels, 
                 "lot_size": lot_size, 
                 "trailing_sl": final_trailing_sl, 
                 "sl_to_entry": int(sl_to_entry),
@@ -160,12 +168,10 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "logs": logs
             }
             
-            # --- SEND TELEGRAM NOTIFICATION (UPDATED) ---
-            # Now returns a DICT of IDs: {'main': 123, 'vip': 456, ...}
+            # --- SEND TELEGRAM NOTIFICATION ---
             msg_ids = telegram_bot.notify_trade_event(record, "NEW_TRADE")
             if msg_ids:
-                record['telegram_msg_ids'] = msg_ids # Save Dictionary
-                # Legacy support for older code that might just check existence of 'telegram_msg_id'
+                record['telegram_msg_ids'] = msg_ids
                 if isinstance(msg_ids, dict):
                     record['telegram_msg_id'] = msg_ids.get('main')
                 else:
