@@ -587,6 +587,7 @@ def place_trade():
             # Default to form values
             use_sl_points = sl_points
             use_target_controls = target_controls
+            use_custom_targets = custom_targets # Default to form prices
             use_ratios = None
             
             # Apply Overrides if provided (from Global Settings)
@@ -603,6 +604,9 @@ def place_trade():
                 
                 # New: Ratios Override
                 if 'ratios' in overrides: use_ratios = overrides['ratios']
+                
+                # New: Custom Targets Override (Important to clear form prices)
+                if 'custom_targets' in overrides: use_custom_targets = overrides['custom_targets']
             else:
                 use_trail = trailing_sl
                 use_sl_entry = sl_to_entry
@@ -611,7 +615,7 @@ def place_trade():
             print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
             
             return trade_manager.create_trade_direct(
-                kite, ex_mode, final_sym, ex_qty, use_sl_points, custom_targets, 
+                kite, ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, 
                 order_type, limit_price, use_target_controls, 
                 use_trail, use_sl_entry, use_exit_mult, 
                 target_channels=ex_channels,
@@ -667,7 +671,8 @@ def place_trade():
                 'exit_multiplier': live_conf.get('exit_multiplier', 1),
                 'sl_points': live_sl_points,
                 'target_controls': live_controls,
-                'ratios': live_ratios
+                'ratios': live_ratios,
+                'custom_targets': [] # <--- FORCE EMPTY TARGETS TO USE RATIOS
             }
             
             # Live = Silent (no channels) + Global Settings Override
