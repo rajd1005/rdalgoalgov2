@@ -5,10 +5,11 @@ from managers.common import get_time_str, log_event
 from managers import broker_ops
 from managers.telegram_manager import bot as telegram_bot
 
-def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1):
+def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, target_channels=None):
     """
     Creates a new trade (Live or Paper). 
     Handles initial broker orders (if Live), calculates targets, and saves the trade to the DB.
+    Accepts 'target_channels' list (e.g., ['main', 'vip']) to filter notifications.
     """
     try:
         with TRADE_LOCK:
@@ -143,7 +144,8 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "quantity": quantity,
                 "sl": entry_price - sl_points, 
                 "targets": targets, 
-                "target_controls": target_controls,
+                "target_controls": target_controls, 
+                "target_channels": target_channels, # <--- NEW: Save Broadcast Selection
                 "lot_size": lot_size, 
                 "trailing_sl": final_trailing_sl, 
                 "sl_to_entry": int(sl_to_entry),
@@ -161,7 +163,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             # Now returns a DICT of IDs: {'main': 123, 'vip': 456, ...}
             msg_ids = telegram_bot.notify_trade_event(record, "NEW_TRADE")
             if msg_ids:
-                record['telegram_msg_ids'] = msg_ids
+                record['telegram_msg_ids'] = msg_ids # Save Dictionary
                 # Legacy support for older code that might just check existence of 'telegram_msg_id'
                 if isinstance(msg_ids, dict):
                     record['telegram_msg_id'] = msg_ids.get('main')
