@@ -107,7 +107,7 @@ class TelegramManager:
             action_time = trade.get('entry_time')
 
         # --- DEFINE TARGET CHANNELS & RULES ---
-        channels = [
+        all_channels = [
             {'key': 'main', 'id': conf.get('channel_id'), 'allow_all': True},
             {'key': 'vip', 'id': conf.get('vip_channel_id'), 'allow_all': False},
             {'key': 'free', 'id': conf.get('free_channel_id'), 'allow_all': False},
@@ -116,15 +116,24 @@ class TelegramManager:
         
         # Rule: Extra channels ONLY get NEW_TRADE, ACTIVE, UPDATE
         allowed_extras = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
+        
+        # Check if trade has specific target channels defined (Broadcast Selector)
+        target_list = trade.get('target_channels') # e.g. ['main', 'vip']
 
         new_msg_ids = {} # To return
 
         # Loop through channels
-        for ch in channels:
+        for ch in all_channels:
             chat_id = ch['id']
             if not chat_id: continue # Skip if not configured
             
-            # Apply Filter Rule
+            # --- FILTER 1: User Selection ---
+            # If target_list exists, skipping channels NOT in the list
+            if target_list is not None and ch['key'] not in target_list:
+                continue
+
+            # --- FILTER 2: Event Type ---
+            # Extra channels (vip/free/z2h) only get specific events unless allow_all is True (Main)
             if not ch['allow_all'] and event_type not in allowed_extras:
                 continue
             
@@ -148,9 +157,10 @@ class TelegramManager:
                 sl = trade.get('sl', 0)
                 targets = trade.get('targets', [])
                 
-                # Custom Header for Z2H
+                # Custom Header for Z2H or other channels with custom names
                 header = f"{icon} <b>NEW TRADE: {symbol}</b>"
                 if ch.get('custom_name'):
+                    # Use the custom name (e.g. "Jackpot Calls") in the header
                     header = f"🚀 <b>[{ch['custom_name']}]</b>\n{header}"
 
                 msg = (
