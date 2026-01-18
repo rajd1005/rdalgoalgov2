@@ -8,11 +8,24 @@ function updateData() {
         ltp_req: null
     };
 
-    // Check if we need a specific symbol's LTP for the Trade Tab
-    let currentSym = $('#sym').val();
-    if(currentSym && $('#trade').is(':visible')) {
+    // Check if Import Modal is open (Priority for LTP)
+    if ($('#importModal').is(':visible')) {
+        let iSym = $('#imp_sym').val();
+        let iType = $('input[name="imp_type"]:checked').val();
+        if (iSym && iType) {
+            payload.ltp_req = {
+                symbol: iSym,
+                expiry: $('#imp_exp').val(),
+                strike: $('#imp_str').val(),
+                type: iType
+            };
+        }
+    } 
+    // Else check if Main Trade Tab is visible
+    else if ($('#trade').is(':visible')) {
+        let currentSym = $('#sym').val();
         let tVal = $('input[name="type"]:checked').val();
-        if(tVal) {
+        if(currentSym && tVal) {
             payload.ltp_req = {
                 symbol: currentSym,
                 expiry: $('#exp').val(),
@@ -59,10 +72,19 @@ function updateData() {
             // 3. Update Specific LTP (if requested)
             if (d.specific_ltp > 0) {
                 curLTP = d.specific_ltp; 
-                $('#inst_ltp').text("LTP: " + curLTP);
-                // Auto calculate SL points if user is typing
-                if (document.activeElement.id !== 'p_sl' && typeof calcSLPriceFromPts === 'function') {
-                    calcSLPriceFromPts('#sl_pts', '#p_sl');
+
+                if ($('#importModal').is(':visible')) {
+                    // Update Import Modal LTP
+                    $('#imp_ltp').text("LTP: " + curLTP);
+                    // Auto-fill price if empty
+                    if(!$('#imp_price').val()) $('#imp_price').val(curLTP);
+                } else {
+                    // Update Main Trade Tab LTP
+                    $('#inst_ltp').text("LTP: " + curLTP);
+                    // Auto calculate SL points if user is typing
+                    if (document.activeElement.id !== 'p_sl' && typeof calcSLPriceFromPts === 'function') {
+                        calcSLPriceFromPts('#sl_pts', '#p_sl');
+                    }
                 }
             }
 
