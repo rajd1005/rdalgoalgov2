@@ -13,6 +13,7 @@
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-telegram">🔔 Notifications</button></li>
                 </ul>
                 <div class="tab-content" id="settingTabsContent">
+                    
                     <div class="tab-pane fade show active" id="tab-general">
                         <h6 class="mb-2">Active Exchanges (For Search)</h6>
                         <div class="d-flex flex-wrap gap-2 mb-3">
@@ -22,6 +23,23 @@
                             <div class="form-check"><input class="form-check-input" type="checkbox" name="exch_select" value="CDS" id="exch_CDS"><label class="form-check-label" for="exch_CDS">CDS</label></div>
                             <div class="form-check"><input class="form-check-input" type="checkbox" name="exch_select" value="BSE" id="exch_BSE"><label class="form-check-label" for="exch_BSE">BSE</label></div>
                             <div class="form-check"><input class="form-check-input" type="checkbox" name="exch_select" value="BFO" id="exch_BFO"><label class="form-check-label" for="exch_BFO">BFO</label></div>
+                        </div>
+
+                        <h6 class="mb-2 text-warning border-top pt-2">Default Broadcast Channels</h6>
+                        <p class="small text-muted mb-2">Select which channels are checked by default on the Trade Panel.</p>
+                        <div class="d-flex gap-3 mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="def_vip">
+                                <label class="form-check-label fw-bold small" for="def_vip">VIP</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="def_free">
+                                <label class="form-check-label fw-bold small" for="def_free">Free</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="def_z2h">
+                                <label class="form-check-label fw-bold small" for="def_z2h">Z2H</label>
+                            </div>
                         </div>
                     </div>
 
