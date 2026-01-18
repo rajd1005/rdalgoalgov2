@@ -2,7 +2,7 @@ import json
 import threading
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
-# Global Lock for thread safety to prevent race conditions during DB saves
+# Global Lock for thread safety
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence ---
@@ -32,18 +32,22 @@ def save_risk_state(mode, state):
 def load_trades():
     """
     Loads all currently active trades from the database.
-    UPDATED: Uses session.remove() to forcefully clear the session cache.
-    This guarantees that subsequent calls (like in Shadow mode) get fresh data.
+    INCLUDES DEBUG LOGGING AND SESSION RESET.
     """
     try:
-        # [NUCLEAR FIX] Completely remove the current session.
-        # This forces a new connection/transaction for the next query.
+        # [DEBUG] Reset session to force fresh read
         db.session.remove() 
         
-        trades = [json.loads(r.data) for r in ActiveTrade.query.all()]
+        raw_rows = ActiveTrade.query.all()
+        trades = [json.loads(r.data) for r in raw_rows]
+        
+        # [DEBUG LOG]
+        ids = [t.get('id') for t in trades]
+        print(f"[DEBUG] DB LOAD: Fetched {len(trades)} trades. IDs: {ids}")
+        
         return trades
     except Exception as e:
-        print(f"Load Trades Error: {e}")
+        print(f"[DEBUG] Load Trades Error: {e}")
         return []
 
 def save_trades(trades):
@@ -51,20 +55,24 @@ def save_trades(trades):
     Overwrites the ActiveTrade table with the provided list of trades.
     """
     try:
-        # Clear existing active trades and replace with new list
+        # [DEBUG LOG]
+        ids = [t.get('id') for t in trades]
+        modes = [t.get('mode') for t in trades]
+        print(f"[DEBUG] DB SAVE: Saving {len(trades)} trades. IDs: {ids} | Modes: {modes}")
+
         db.session.query(ActiveTrade).delete()
         for t in trades: 
             db.session.add(ActiveTrade(data=json.dumps(t)))
         db.session.commit()
+        print(f"[DEBUG] DB SAVE: Commit Successful.")
     except Exception as e:
-        print(f"Save Trades Error: {e}")
+        print(f"[DEBUG] Save Trades Error: {e}")
         db.session.rollback()
 
 # --- Trade History Persistence ---
 def load_history():
     try:
-        # Also ensure history is fresh
-        db.session.commit()
+        db.session.commit() # Ensure fresh
         return [json.loads(r.data) for r in TradeHistory.query.order_by(TradeHistory.id.desc()).all()]
     except Exception as e:
         print(f"Load History Error: {e}")
