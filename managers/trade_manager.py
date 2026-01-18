@@ -6,11 +6,12 @@ from managers.common import get_time_str, log_event
 from managers import broker_ops
 from managers.telegram_manager import bot as telegram_bot
 
-def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, target_channels=None):
+def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, target_channels=None, risk_ratios=None):
     """
     Creates a new trade (Live or Paper). 
     Handles initial broker orders (if Live), calculates targets, and saves the trade to the DB.
     Accepts 'target_channels' list (e.g., ['main', 'vip']) to filter notifications.
+    Now accepts 'risk_ratios' (list of 3 floats) to override default [0.5, 1, 2] target calculation.
     INCLUDES DEBUG LOGGING.
     """
     print(f"\n[DEBUG] --- START CREATE TRADE ({mode}) ---")
@@ -108,7 +109,9 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
 
             # Calculate Targets
             # Use custom targets if provided (valid T1 > 0), else calculate ratio-based defaults
-            targets = custom_targets if len(custom_targets) == 3 and custom_targets[0] > 0 else [entry_price + (sl_points * x) for x in [0.5, 1.0, 2.0]]
+            # [UPDATED] Use dynamic risk ratios if provided, otherwise default to [0.5, 1.0, 2.0]
+            use_ratios = risk_ratios if risk_ratios else [0.5, 1.0, 2.0]
+            targets = custom_targets if len(custom_targets) == 3 and custom_targets[0] > 0 else [entry_price + (sl_points * x) for x in use_ratios]
             
             # Deep copy to prevent Shadow mode shared reference issues
             final_target_controls = []
