@@ -17,9 +17,9 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             current_ts = int(time.time())
             
             # --- FIX 1: DUPLICATE CHECK UPDATED ---
-            # Added 't['mode'] == mode' to allow Shadow Mode (Paper + Live) to exist simultaneously
+            # Added 't.get('mode') == mode' to allow Shadow Mode (Paper + Live) to exist simultaneously
             for t in trades:
-                if t['symbol'] == specific_symbol and t['quantity'] == quantity and t['mode'] == mode and (current_ts - t['id']) < 5:
+                if t['symbol'] == specific_symbol and t['quantity'] == quantity and t.get('mode') == mode and (current_ts - t['id']) < 5:
                      return {"status": "error", "message": "Duplicate Trade Blocked"}
 
             # --- FIX 2: UNIQUE ID GENERATION ---
