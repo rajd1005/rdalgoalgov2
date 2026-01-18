@@ -1,4 +1,5 @@
 import time
+import copy
 import smart_trader
 from managers.persistence import TRADE_LOCK, load_trades, save_trades
 from managers.common import get_time_str, log_event
@@ -16,18 +17,25 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             trades = load_trades()
             current_ts = int(time.time())
             
-            # --- FIX 1: DUPLICATE CHECK UPDATED ---
-            # Added 't.get('mode') == mode' to allow Shadow Mode (Paper + Live) to exist simultaneously
+            # --- FIX: ROBUST DUPLICATE CHECK ---\
             for t in trades:
-                if t['symbol'] == specific_symbol and t['quantity'] == quantity and t.get('mode') == mode and (current_ts - t['id']) < 5:
+                # 1. If Modes are different (e.g. Paper vs Live), it is NOT a duplicate. Skip check.
+                if t.get('mode') != mode:
+                    continue
+                
+                # 2. Check strict duplicates within the same mode
+                if t['symbol'] == specific_symbol and t['quantity'] == quantity and (current_ts - t['id']) < 5:
                      return {"status": "error", "message": "Duplicate Trade Blocked"}
 
-            # --- FIX 2: UNIQUE ID GENERATION ---
-            # If two trades happen in the same second (Shadow Mode), ensure distinct IDs
+            # --- FIX: UNIQUE ID GENERATION ---\
+            # Ensure new_id is always greater than the max existing ID to prevent overwrites
+            # This is critical for Shadow mode where Paper and Live execute in the same second
             new_id = current_ts
             existing_ids = [t['id'] for t in trades]
-            while new_id in existing_ids:
-                new_id += 1 # Increment ID slightly to avoid collision
+            if existing_ids:
+                max_id = max(existing_ids)
+                if new_id <= max_id:
+                    new_id = max_id + 1
             
             # -----------------------------------------------
 
@@ -96,8 +104,12 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             # Use custom targets if provided (valid T1 > 0), else calculate ratio-based defaults
             targets = custom_targets if len(custom_targets) == 3 and custom_targets[0] > 0 else [entry_price + (sl_points * x) for x in [0.5, 1.0, 2.0]]
             
-            if not target_controls: 
-                target_controls = [
+            # Deep copy to prevent Shadow mode shared reference issues
+            final_target_controls = []
+            if target_controls:
+                final_target_controls = copy.deepcopy(target_controls)
+            else:
+                final_target_controls = [
                     {'enabled': True, 'lots': 0, 'trail_to_entry': False}, 
                     {'enabled': True, 'lots': 0, 'trail_to_entry': False}, 
                     {'enabled': True, 'lots': 1000, 'trail_to_entry': False}
@@ -137,7 +149,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                     new_controls.append({'enabled': False, 'lots': 0, 'trail_to_entry': False})
                 
                 targets = new_targets
-                target_controls = new_controls
+                final_target_controls = new_controls
 
             logs.insert(0, f"[{get_time_str()}] Trade Added. Status: {status}")
             
@@ -153,7 +165,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "quantity": quantity,
                 "sl": entry_price - sl_points, 
                 "targets": targets, 
-                "target_controls": target_controls, 
+                "target_controls": final_target_controls, 
                 "target_channels": target_channels, 
                 "lot_size": lot_size, 
                 "trailing_sl": final_trailing_sl, 
@@ -168,7 +180,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "logs": logs
             }
             
-            # --- SEND TELEGRAM NOTIFICATION ---
+            # --- SEND TELEGRAM NOTIFICATION ---\
             msg_ids = telegram_bot.notify_trade_event(record, "NEW_TRADE")
             if msg_ids:
                 record['telegram_msg_ids'] = msg_ids
