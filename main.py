@@ -585,23 +585,37 @@ def place_trade():
         # Helper to execute trade with optional overrides
         def execute(ex_mode, ex_qty, ex_channels, overrides=None):
             # Default to form values
-            use_trail = trailing_sl
-            use_sl_entry = sl_to_entry
-            use_exit_mult = exit_multiplier
+            use_sl_points = sl_points
+            use_target_controls = target_controls
+            use_ratios = None
             
             # Apply Overrides if provided (from Global Settings)
             if overrides:
-                use_trail = float(overrides.get('trailing_sl', 0))
-                use_sl_entry = int(overrides.get('sl_to_entry', 0))
-                use_exit_mult = int(overrides.get('exit_multiplier', 1))
+                use_trail = float(overrides.get('trailing_sl', trailing_sl))
+                use_sl_entry = int(overrides.get('sl_to_entry', sl_to_entry))
+                use_exit_mult = int(overrides.get('exit_multiplier', exit_multiplier))
+                
+                # New: Symbol SL Override
+                if 'sl_points' in overrides: use_sl_points = float(overrides['sl_points'])
+                
+                # New: Target Controls Override
+                if 'target_controls' in overrides: use_target_controls = overrides['target_controls']
+                
+                # New: Ratios Override
+                if 'ratios' in overrides: use_ratios = overrides['ratios']
+            else:
+                use_trail = trailing_sl
+                use_sl_entry = sl_to_entry
+                use_exit_mult = exit_multiplier
             
             print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
             
             return trade_manager.create_trade_direct(
-                kite, ex_mode, final_sym, ex_qty, sl_points, custom_targets, 
-                order_type, limit_price, target_controls, 
+                kite, ex_mode, final_sym, ex_qty, use_sl_points, custom_targets, 
+                order_type, limit_price, use_target_controls, 
                 use_trail, use_sl_entry, use_exit_mult, 
-                target_channels=ex_channels
+                target_channels=ex_channels,
+                risk_ratios=use_ratios
             )
 
         if mode_input == "SHADOW":
@@ -618,11 +632,42 @@ def place_trade():
             live_mult = live_conf.get('qty_mult', 1)
             live_qty = input_qty * live_mult
             
+            # --- FETCH GLOBAL SETTINGS ---
+            
+            # A. Symbol SL Override
+            clean_sym = sym.split(':')[0].strip().upper() # e.g. NIFTY
+            live_sl_points = sl_points # Default to form
+            if 'symbol_sl' in live_conf and clean_sym in live_conf['symbol_sl']:
+                live_sl_points = float(live_conf['symbol_sl'][clean_sym])
+
+            # B. Target Controls & Ratios
+            # Construct target controls from Global Settings structure
+            live_controls = []
+            global_targets = live_conf.get('targets', []) # Assuming list of 3 dicts in settings
+            # Default fallback if settings empty
+            defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
+            
+            for i in range(3):
+                t_conf = global_targets[i] if i < len(global_targets) else defaults[i]
+                # Logic: If 'full' is true, lots=1000, else use specific lots
+                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
+                
+                live_controls.append({
+                    'enabled': t_conf.get('active', True),
+                    'lots': t_lots,
+                    'trail_to_entry': t_conf.get('trail_to_entry', False) # "Cost" logic
+                })
+
+            live_ratios = live_conf.get('ratios', [0.5, 1.0, 2.0])
+
             # [CRITICAL UPDATE] Fetch Global Settings for LIVE Override
             live_overrides = {
                 'trailing_sl': live_conf.get('trailing_sl', 0),
                 'sl_to_entry': live_conf.get('sl_to_entry', 0),
-                'exit_multiplier': live_conf.get('exit_multiplier', 1)
+                'exit_multiplier': live_conf.get('exit_multiplier', 1),
+                'sl_points': live_sl_points,
+                'target_controls': live_controls,
+                'ratios': live_ratios
             }
             
             # Live = Silent (no channels) + Global Settings Override
