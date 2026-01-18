@@ -584,30 +584,31 @@ def place_trade():
         if mode_input == "SHADOW":
             # --- SHADOW MODE: LIVE FIRST (PRIMARY), THEN PAPER (FOLLOWER) ---
             
-            # 1. Validate & Execute LIVE
+            # 1. Check Live Feasibility
             can_live, reason = common.can_place_order("LIVE")
             if not can_live:
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
                 return redirect('/')
 
+            # 2. Execute LIVE
             live_mult = app_settings['modes']['LIVE'].get('qty_mult', 1)
             live_qty = input_qty * live_mult
             
-            # Live executes silently (notifications delegated to Paper)
+            # Live = Silent (no channels)
             res_live = execute("LIVE", live_qty, [])
             
             if res_live['status'] != 'success':
-                # CRITICAL: If Live fails, do NOT proceed to Paper.
                 flash(f"❌ Shadow Failed: LIVE Execution Error ({res_live['message']})")
                 return redirect('/')
             
-            # 2. Live Success -> Wait & Execute PAPER
-            time.sleep(0.5) # Prevent timestamp collision
+            # 3. Wait for DB Safety (1s to ensure ID separation)
+            time.sleep(1)
             
+            # 4. Execute PAPER
             paper_mult = app_settings['modes']['PAPER'].get('qty_mult', 1)
             paper_qty = input_qty * paper_mult
             
-            # Paper handles the Telegram notifications
+            # Paper = Notifier
             res_paper = execute("PAPER", paper_qty, target_channels)
             
             if res_paper['status'] == 'success':
