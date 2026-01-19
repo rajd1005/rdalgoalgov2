@@ -99,7 +99,7 @@ def run_auto_login_process():
 def background_monitor():
     global bot_active, login_state
     
-    # [FIXED] Wrapped Startup Notification in App Context to fix "Outside Context" Error
+    # [FIXED] Wrapped Startup Notification in App Context
     with app.app_context():
         try:
             telegram_bot.notify_system_event("STARTUP", "Server Deployed & Monitor Started.")
@@ -115,15 +115,18 @@ def background_monitor():
                 # 1. Active Bot Check
                 if bot_active:
                     try:
-                        if not kite.access_token: 
-                            raise Exception("No Access Token Found")
+                        # [FIX] Skip Token Check if using Mock Broker
+                        if not hasattr(kite, "mock_instruments"):
+                            if not kite.access_token: 
+                                raise Exception("No Access Token Found")
 
                         # Force a simple API call to validate the token 
-                        # even if there are no trades to process.
                         try:
-                            kite.profile() 
+                            # Mock Broker might not have profile(), so we skip this check for Mock
+                            if not hasattr(kite, "mock_instruments"):
+                                kite.profile() 
                         except Exception as e:
-                            raise e # Re-raise to trigger the disconnection logic below
+                            raise e 
                         
                         # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
@@ -133,7 +136,6 @@ def background_monitor():
                         if "Token is invalid" in err or "Network" in err or "No Access Token" in err or "access_token" in err:
                             print(f"⚠️ Connection Lost: {err}")
                             
-                            # [NOTIFICATION] Offline (Only send if it was previously active)
                             if bot_active:
                                 telegram_bot.notify_system_event("OFFLINE", f"Connection Lost: {err}")
                             
@@ -143,6 +145,12 @@ def background_monitor():
 
                 # 2. Reconnection Logic (Only if Bot is NOT active)
                 if not bot_active:
+                    # [NEW] DETECT MOCK BROKER & BYPASS LOGIN
+                    if hasattr(kite, "mock_instruments"):
+                        print("⚠️ [MONITOR] Mock Broker Detected. Bypassing Auto-Login. System Online.")
+                        bot_active = True
+                        continue
+
                     if login_state == "IDLE":
                         print("🔄 Monitor: System Offline. Initiating Auto-Login...")
                         run_auto_login_process()
@@ -157,7 +165,6 @@ def background_monitor():
             finally:
                 db.session.remove()
         
-        # Reduced Sleep from 3s to 0.5s for Real-Time Updates
         time.sleep(0.5) 
 
 @app.route('/')
