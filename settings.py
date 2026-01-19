@@ -19,11 +19,12 @@ def get_defaults():
     }
     
     return {
+        # --- NEW: Default Trade Mode (Startup Config) ---
+        "default_trade_mode": "PAPER",
+        # ------------------------------------------------
         "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
         "watchlist": [],
-        # --- NEW: Default Broadcast Channels (Default: All Checked) ---
         "broadcast_defaults": ["vip", "free", "z2h"], 
-        # --------------------------------------------------------------
         "modes": {
             "LIVE": default_mode_settings.copy(),
             "PAPER": default_mode_settings.copy()
@@ -32,7 +33,6 @@ def get_defaults():
             "enable_history_check": True,
             "default_interval": "minute"
         },
-        # --- NEW TELEGRAM CONFIG (UPDATED) ---
         "telegram": {
             "bot_token": "",
             "enable_notifications": False,
@@ -51,7 +51,7 @@ def get_defaults():
             "z2h_channel_id": "",
             "z2h_channel_name": "Zero To Hero", # Default Name
 
-            # --- NEW: Event Toggles (Individual On/Off) ---
+            # --- Event Toggles (Individual On/Off) ---
             "event_toggles": {
                 "NEW_TRADE": True,
                 "ACTIVE": True,
@@ -62,7 +62,7 @@ def get_defaults():
                 "EXIT": True
             },
 
-            # --- NEW: Message Templates (With Placeholders) ---
+            # --- Message Templates (With Placeholders) ---
             "templates": {
                 "FREE_HEADER": "🔔 <b>{symbol}</b>\nAdded Time: {entry_time}\n➖➖➖➖➖➖➖➖\n",
                 "NEW_TRADE": "{icon} <b>NEW TRADE: {symbol}</b>\nMode: {mode}\nType: {order_type}\nQty: {qty}\nEntry: {entry}\nSL: {sl}\nTargets: {targets}\nTime: {time}",
@@ -104,7 +104,8 @@ def load_settings():
             if "exchanges" not in saved: saved["exchanges"] = defaults["exchanges"]
             if "watchlist" not in saved: saved["watchlist"] = []
             
-            # --- MERGE NEW KEY ---
+            # --- MERGE NEW KEYS ---
+            if "default_trade_mode" not in saved: saved["default_trade_mode"] = defaults["default_trade_mode"]
             if "broadcast_defaults" not in saved: saved["broadcast_defaults"] = defaults["broadcast_defaults"]
             
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
