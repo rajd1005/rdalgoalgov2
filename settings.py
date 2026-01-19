@@ -26,8 +26,8 @@ def get_defaults():
         # --------------------------------------------------------------
         "modes": {
             "LIVE": default_mode_settings.copy(),
-            "PAPER": default_mode_settings.copy(),
-            "SHADOW": default_mode_settings.copy()  # <--- ADDED SHADOW MODE HERE
+            "PAPER": default_mode_settings.copy()
+            # NOTE: SHADOW mode is a macro in main.py, it does not need a separate config key here.
         },
         "import_config": {
             "enable_history_check": True,
@@ -71,14 +71,13 @@ def load_settings():
                     "PAPER": {"qty_mult": old_mult, "ratios": old_ratios, "symbol_sl": old_sl.copy()}
                 }
 
-            # Merge Defaults - NOW INCLUDES SHADOW
-            for m in ["LIVE", "PAPER", "SHADOW"]: # <--- UPDATED LOOP
+            # Merge Defaults (Only LIVE and PAPER)
+            for m in ["LIVE", "PAPER"]:
                 if m in saved["modes"]:
                     for key, val in defaults["modes"][m].items():
                         if key not in saved["modes"][m]: saved["modes"][m][key] = val
                     if "symbol_sl" not in saved["modes"][m]: saved["modes"][m]["symbol_sl"] = {}
-                else: 
-                    saved["modes"][m] = defaults["modes"][m].copy()
+                else: saved["modes"][m] = defaults["modes"][m].copy()
 
             if "exchanges" not in saved: saved["exchanges"] = defaults["exchanges"]
             if "watchlist" not in saved: saved["watchlist"] = []
