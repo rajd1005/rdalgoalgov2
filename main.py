@@ -633,8 +633,7 @@ def place_trade():
 
             # 2. Execute LIVE
             live_conf = app_settings['modes']['LIVE']
-            live_mult = live_conf.get('qty_mult', 1)
-            live_qty = input_qty * live_mult
+            live_qty = input_qty
             
             # --- FETCH GLOBAL SETTINGS ---
             
@@ -688,8 +687,7 @@ def place_trade():
             time.sleep(1)
             
             # 4. Execute PAPER
-            paper_mult = app_settings['modes']['PAPER'].get('qty_mult', 1)
-            paper_qty = input_qty * paper_mult
+            paper_qty = input_qty
             
             # Paper = Notifier + Form Settings (No Override)
             print("[DEBUG MAIN] calling execute('PAPER')...")
@@ -710,8 +708,7 @@ def place_trade():
                 return redirect('/')
             
             # Calculate Qty based on mode multiplier
-            mult = app_settings['modes'][mode_input].get('qty_mult', 1)
-            final_qty = input_qty * mult
+            final_qty = input_qty
             
             res = execute(mode_input, final_qty, target_channels)
             
