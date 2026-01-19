@@ -78,12 +78,14 @@ class TelegramManager:
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends notifications to ALL configured channels based on rules.
-        UPDATED LOGIC:
-          - VIP/Z2H: Receive everything (Safe default).
-          - FREE: Receive NEW_TRADE, ACTIVE, UPDATE, TARGET_HIT, HIGH_MADE, SL_HIT.
-          - Threading: 
-             1. If NEW_TRADE sent -> It is the Parent.
-             2. If NEW_TRADE skipped -> First message (e.g. ACTIVE or TARGET) gets Header Injection.
+        
+        UPDATED LOGIC (Premium Spillover):
+          1. VIP/Z2H: Receive Entry/Update/Active.
+          2. FREE: 
+             - Explicitly Selected: Receives Entry + Results.
+             - NOT Selected but VIP/Z2H IS: Automatically receives RESULTS (Targets/High/SL).
+          3. Threading:
+             - If Entry was skipped (Spillover mode), the First Result (T1) gets the Header.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -96,10 +98,9 @@ class TelegramManager:
         qty = trade.get('quantity', 0)
         entry_price = trade.get('entry_price', 0)
         
-        # --- THREAD IDS: Handle Backward Compatibility & Initialization ---
+        # --- THREAD IDS ---
         if 'telegram_msg_ids' not in trade or not isinstance(trade['telegram_msg_ids'], dict):
             trade['telegram_msg_ids'] = {}
-            # Migrate legacy string ID to main if exists
             legacy_id = trade.get('telegram_msg_id')
             if legacy_id:
                 trade['telegram_msg_ids']['main'] = legacy_id
@@ -116,7 +117,7 @@ class TelegramManager:
         # Entry time for Header
         entry_time_str = trade.get('entry_time', action_time)
 
-        # --- DEFINE TARGET CHANNELS & RULES ---
+        # --- DEFINE CHANNELS ---
         all_channels = [
             {'key': 'main', 'id': conf.get('channel_id'), 'allow_all': True},
             {'key': 'vip', 'id': conf.get('vip_channel_id'), 'allow_all': False},
@@ -124,35 +125,58 @@ class TelegramManager:
             {'key': 'z2h', 'id': conf.get('z2h_channel_id'), 'allow_all': False, 'custom_name': conf.get('z2h_channel_name')}
         ]
         
-        # Check Broadcast Selector (if trade has specific target list)
-        target_list = trade.get('target_channels') # e.g. ['main', 'vip']
+        # Event Categories
+        early_events = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
+        result_events = ['TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
+        
+        # User Selection (e.g., ['vip'])
+        target_list = trade.get('target_channels') 
 
-        new_msg_ids = {} # To return for NEW_TRADE
+        new_msg_ids = {} 
 
         # Loop through channels
         for ch in all_channels:
             key = ch['key']
             chat_id = ch['id']
-            if not chat_id: continue # Skip if not configured
+            if not chat_id: continue 
             
-            # --- FILTER 1: User Selection ---
-            if target_list is not None and key not in target_list:
+            # --- FILTER 1: User Selection & Premium Spillover ---
+            is_allowed = True
+            if target_list is not None:
+                if key in target_list:
+                    # User explicitly selected this channel
+                    is_allowed = True
+                else:
+                    # User did NOT select this channel.
+                    # CHECK SPILLOVER: If this is 'free' channel, and the trade is VIP/Z2H,
+                    # we ALLOW Result Events.
+                    is_premium_trade = any(x in target_list for x in ['vip', 'z2h'])
+                    if key == 'free' and is_premium_trade and event_type in result_events:
+                        is_allowed = True
+                    else:
+                        is_allowed = False
+            
+            if not is_allowed:
                 continue
 
             # --- FILTER 2: Event Type Segmentation ---
             
-            # VIP & Z2H: Allow All Events
+            # VIP & Z2H: Keep receiving strictly relevant info (or everything if preferred)
             if key in ['vip', 'z2h']:
+                # Ensure they get Entry, Active, Updates. 
+                # Results are also usually fine, but strictly required for Free.
                 pass 
             
-            # Free: Allow Results + Entry + Updates (Requested Update)
+            # Free: Only allow Results (unless it was explicitly selected for Entry)
             elif key == 'free':
+                # If explicit selection: Get everything relevant (Entry + Results)
+                # If spillover (implied): We only get here if event_type is in result_events (checked above).
+                
+                # Double check specific allowed events to avoid noise
                 allowed_free = ['NEW_TRADE', 'ACTIVE', 'UPDATE', 'TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
                 if event_type not in allowed_free:
                     continue
             
-            # (Main channel allows all)
-
             # --- THREAD MANAGEMENT ---
             reply_to = stored_ids.get(key)
             is_new_thread_start = False
@@ -162,8 +186,9 @@ class TelegramManager:
                 reply_to = None 
 
             # Special Logic for FREE Channel (Lazy Threading):
-            # If we are sending a message (e.g. ACTIVE) but have no Thread ID yet,
-            # this message becomes the Header/Parent.
+            # If we are sending a message (e.g. TARGET_HIT) but have no Thread ID yet,
+            # this means we skipped the Entry (Spillover Mode).
+            # So this message becomes the Header/Parent.
             if key == 'free' and not reply_to:
                 is_new_thread_start = True
 
@@ -241,8 +266,7 @@ class TelegramManager:
                 )
 
             # --- FREE CHANNEL HEADER INJECTION ---
-            # ONLY Inject Header if this is the start of a thread AND it is NOT a New Trade.
-            # (Because NEW_TRADE already contains the full info).
+            # If this is the start of a thread (e.g. T1 hit in Spillover mode), inject Header.
             if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE" and msg:
                 header_prefix = (
                     f"🔔 <b>{symbol}</b>\n"
@@ -260,7 +284,7 @@ class TelegramManager:
                     # If NEW_TRADE or First Free Msg, update stored IDs
                     if event_type == "NEW_TRADE" or is_new_thread_start:
                         new_msg_ids[key] = sent_id
-                        # CRITICAL: Update the trade object in-place so Risk Engine saves it
+                        # Update trade object for persistence
                         trade['telegram_msg_ids'][key] = sent_id
 
         return new_msg_ids
@@ -280,33 +304,22 @@ class TelegramManager:
             except: pass
 
     def delete_trade_messages(self, trade_id):
-        """
-        Deletes all Telegram messages (Thread & Replies) associated with a Trade ID.
-        Iterates through the DB records, so it handles ALL channels automatically.
-        """
         try:
-            # 1. Fetch all message records for this trade (includes Main, VIP, Free, Z2H)
             messages = TelegramMessage.query.filter_by(trade_id=str(trade_id)).all()
-            
-            if not messages:
-                return
+            if not messages: return
 
             conf = self._get_config()
             token = conf.get('bot_token')
-            if not token: 
-                return
+            if not token: return
 
             delete_url = f"{self.base_url}{token}/deleteMessage"
 
-            # 2. Loop and Delete from Telegram
             for msg in messages:
                 try:
                     payload = {"chat_id": msg.chat_id, "message_id": msg.message_id}
                     requests.post(delete_url, json=payload, timeout=2)
                 except Exception as req_err:
                     print(f"TG Delete Request Error: {req_err}")
-
-                # 3. Remove from Local DB
                 db.session.delete(msg)
             
             db.session.commit()
