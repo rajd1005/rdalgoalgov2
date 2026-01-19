@@ -86,6 +86,24 @@ function loadSettings() {
                 $('#tg_free_channel_id').val(settings.telegram.free_channel_id || '');
                 $('#tg_z2h_channel_id').val(settings.telegram.z2h_channel_id || '');
                 $('#tg_z2h_channel_name').val(settings.telegram.z2h_channel_name || 'Zero To Hero');
+
+                // --- NEW: Load Toggles ---
+                let toggles = settings.telegram.event_toggles || {};
+                $('#tg_evt_new').prop('checked', toggles.NEW_TRADE !== false);
+                $('#tg_evt_active').prop('checked', toggles.ACTIVE !== false);
+                $('#tg_evt_update').prop('checked', toggles.UPDATE !== false);
+                $('#tg_evt_sl').prop('checked', toggles.SL_HIT !== false);
+                $('#tg_evt_tgt').prop('checked', toggles.TARGET_HIT !== false);
+                $('#tg_evt_high').prop('checked', toggles.HIGH_MADE !== false);
+
+                // --- NEW: Load Templates ---
+                let tpls = settings.telegram.templates || {};
+                $('#tpl_new').val(tpls.NEW_TRADE || "");
+                $('#tpl_active').val(tpls.ACTIVE || "");
+                $('#tpl_update').val(tpls.UPDATE || "");
+                $('#tpl_sl').val(tpls.SL_HIT || "");
+                $('#tpl_tgt').val(tpls.TARGET_HIT || "");
+                $('#tpl_high').val(tpls.HIGH_MADE || "");
             }
 
             if (typeof updateDisplayValues === "function") updateDisplayValues(); 
@@ -161,7 +179,27 @@ function saveSettings() {
         vip_channel_id: $('#tg_vip_channel_id').val().trim(),
         free_channel_id: $('#tg_free_channel_id').val().trim(),
         z2h_channel_id: $('#tg_z2h_channel_id').val().trim(),
-        z2h_channel_name: $('#tg_z2h_channel_name').val().trim() || 'Zero To Hero'
+        z2h_channel_name: $('#tg_z2h_channel_name').val().trim() || 'Zero To Hero',
+
+        // --- NEW: Save Toggles ---
+        event_toggles: {
+            NEW_TRADE: $('#tg_evt_new').is(':checked'),
+            ACTIVE: $('#tg_evt_active').is(':checked'),
+            UPDATE: $('#tg_evt_update').is(':checked'),
+            SL_HIT: $('#tg_evt_sl').is(':checked'),
+            TARGET_HIT: $('#tg_evt_tgt').is(':checked'),
+            HIGH_MADE: $('#tg_evt_high').is(':checked')
+        },
+
+        // --- NEW: Save Templates ---
+        templates: {
+            NEW_TRADE: $('#tpl_new').val(),
+            ACTIVE: $('#tpl_active').val(),
+            UPDATE: $('#tpl_update').val(),
+            SL_HIT: $('#tpl_sl').val(),
+            TARGET_HIT: $('#tpl_tgt').val(),
+            HIGH_MADE: $('#tpl_high').val()
+        }
     };
 
     $.ajax({ 
