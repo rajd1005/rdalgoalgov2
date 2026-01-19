@@ -1,5 +1,7 @@
 import json
-from database import db, AppSetting
+import time
+from datetime import datetime
+from database import db, AppSetting, ActiveTrade, TradeHistory
 
 def get_defaults():
     # Define default settings for a mode
@@ -19,6 +21,7 @@ def get_defaults():
     }
     
     return {
+        "first_trade_logic": False, # New Feature Key
         "default_trade_mode": "PAPER",
         "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
         "watchlist": [],
@@ -105,6 +108,7 @@ def load_settings():
             if "watchlist" not in saved: saved["watchlist"] = []
             
             # --- MERGE NEW KEYS ---
+            if "first_trade_logic" not in saved: saved["first_trade_logic"] = defaults["first_trade_logic"]
             if "default_trade_mode" not in saved: saved["default_trade_mode"] = defaults["default_trade_mode"]
             if "broadcast_defaults" not in saved: saved["broadcast_defaults"] = defaults["broadcast_defaults"]
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
@@ -122,8 +126,30 @@ def load_settings():
                             if sub_k not in saved["telegram"][k]:
                                 saved["telegram"][k][sub_k] = sub_v
 
+            # --- DYNAMIC STATUS INJECTION: First Trade Check ---
+            try:
+                # Calculate start of today (local time based on server)
+                start_of_day = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                start_ts = int(start_of_day.timestamp())
+
+                # Count Active Trades created today
+                active_count = ActiveTrade.query.filter(ActiveTrade.id >= start_ts).count()
+                
+                # Count History Trades created today
+                history_count = TradeHistory.query.filter(TradeHistory.id >= start_ts).count()
+                
+                # If sum is 0, it's the first trade (or no trades yet)
+                saved['is_first_trade'] = (active_count + history_count) == 0
+                
+            except Exception as e:
+                print(f"Error checking first trade status: {e}")
+                saved['is_first_trade'] = False
+
             return saved
     except Exception as e: print(f"Error loading settings: {e}")
+    
+    # Inject default dynamic status if DB fails
+    defaults['is_first_trade'] = True
     return defaults
 
 def save_settings_file(data):
