@@ -661,6 +661,39 @@ def place_trade():
                 target_channels=ex_channels,
                 risk_ratios=use_ratios
             )
+        
+        # --- PREPARE OVERRIDES (Check for Symbol Specific Settings) ---
+        # Determine which mode config to check for symbol settings
+        # Shadow uses LIVE settings. Standard modes use their own.
+        target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
+        mode_conf = app_settings['modes'].get(target_mode_conf, {})
+        
+        clean_sym = sym.split(':')[0].strip().upper()
+        symbol_override = {}
+        
+        if 'symbol_sl' in mode_conf and clean_sym in mode_conf['symbol_sl']:
+            s_data = mode_conf['symbol_sl'][clean_sym]
+            
+            # Handle Legacy (int/float) vs New (dict)
+            if isinstance(s_data, (int, float)):
+                symbol_override['sl_points'] = float(s_data)
+            elif isinstance(s_data, dict):
+                # Extract SL
+                s_sl = float(s_data.get('sl', 0))
+                if s_sl > 0:
+                    symbol_override['sl_points'] = s_sl
+                    
+                    # Extract Targets (Points) -> Convert to Ratios
+                    t_points = s_data.get('targets', [])
+                    if len(t_points) == 3:
+                        # Ratios = TargetPoint / SLPoint
+                        new_ratios = [t / s_sl for t in t_points]
+                        symbol_override['ratios'] = new_ratios
+                        
+                        # Force empty custom targets so ratios are used
+                        symbol_override['custom_targets'] = []
+                        
+                        print(f"[DEBUG] Symbol Override for {clean_sym}: SL={s_sl}, Ratios={new_ratios}")
 
         if mode_input == "SHADOW":
             print("[DEBUG MAIN] Entering SHADOW Logic Block...")
@@ -675,46 +708,38 @@ def place_trade():
             live_conf = app_settings['modes']['LIVE']
             live_qty = input_qty
             
-            # --- FETCH GLOBAL SETTINGS ---
-            
-            # A. Symbol SL Override
-            clean_sym = sym.split(':')[0].strip().upper() # e.g. NIFTY
-            live_sl_points = sl_points # Default to form
-            if 'symbol_sl' in live_conf and clean_sym in live_conf['symbol_sl']:
-                live_sl_points = float(live_conf['symbol_sl'][clean_sym])
-
-            # B. Target Controls & Ratios
             # Construct target controls from Global Settings structure
             live_controls = []
-            global_targets = live_conf.get('targets', []) # Assuming list of 3 dicts in settings
-            # Default fallback if settings empty
+            global_targets = live_conf.get('targets', []) 
             defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
             
             for i in range(3):
                 t_conf = global_targets[i] if i < len(global_targets) else defaults[i]
-                # Logic: If 'full' is true, lots=1000, else use specific lots
                 t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
-                
                 live_controls.append({
                     'enabled': t_conf.get('active', True),
                     'lots': t_lots,
-                    'trail_to_entry': t_conf.get('trail_to_entry', False) # "Cost" logic
+                    'trail_to_entry': t_conf.get('trail_to_entry', False)
                 })
 
             live_ratios = live_conf.get('ratios', [0.5, 1.0, 2.0])
 
-            # [CRITICAL UPDATE] Fetch Global Settings for LIVE Override
+            # Global Settings Override
             live_overrides = {
                 'trailing_sl': live_conf.get('trailing_sl', 0),
                 'sl_to_entry': live_conf.get('sl_to_entry', 0),
                 'exit_multiplier': live_conf.get('exit_multiplier', 1),
-                'sl_points': live_sl_points,
+                'sl_points': sl_points, # fallback
                 'target_controls': live_controls,
                 'ratios': live_ratios,
-                'custom_targets': [] # <--- FORCE EMPTY TARGETS TO USE RATIOS
+                'custom_targets': [] 
             }
             
-            # Live = Silent (no channels) + Global Settings Override
+            # MERGE SYMBOL SPECIFIC OVERRIDES (Higher Priority)
+            if symbol_override:
+                live_overrides.update(symbol_override)
+            
+            # Live = Silent (no channels) + Overrides
             print("[DEBUG MAIN] calling execute('LIVE')...")
             res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
@@ -750,7 +775,12 @@ def place_trade():
             # Calculate Qty based on mode multiplier
             final_qty = input_qty
             
-            res = execute(mode_input, final_qty, target_channels)
+            # Use Symbol Overrides if available
+            std_overrides = None
+            if symbol_override:
+                std_overrides = symbol_override.copy()
+            
+            res = execute(mode_input, final_qty, target_channels, overrides=std_overrides)
             
             if res['status'] == 'success':
                 flash(f"✅ Order Placed: {final_sym}")
