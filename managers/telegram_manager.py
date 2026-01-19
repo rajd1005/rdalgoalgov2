@@ -79,11 +79,11 @@ class TelegramManager:
         """
         Constructs and sends notifications to ALL configured channels based on rules.
         UPDATED LOGIC:
-          - VIP/Z2H: Receive everything (Safe default) or specific subset.
-          - FREE: Receives NEW_TRADE (if selected) OR Result Events.
+          - VIP/Z2H: Receive everything (Safe default).
+          - FREE: Receive NEW_TRADE, ACTIVE, UPDATE, TARGET_HIT, HIGH_MADE, SL_HIT.
           - Threading: 
              1. If NEW_TRADE sent -> It is the Parent.
-             2. If NEW_TRADE skipped -> First Target gets Header Injection and becomes Parent.
+             2. If NEW_TRADE skipped -> First message (e.g. ACTIVE or TARGET) gets Header Injection.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -124,10 +124,6 @@ class TelegramManager:
             {'key': 'z2h', 'id': conf.get('z2h_channel_id'), 'allow_all': False, 'custom_name': conf.get('z2h_channel_name')}
         ]
         
-        # Define Event Groups
-        early_events = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
-        result_events = ['TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
-        
         # Check Broadcast Selector (if trade has specific target list)
         target_list = trade.get('target_channels') # e.g. ['main', 'vip']
 
@@ -145,16 +141,13 @@ class TelegramManager:
 
             # --- FILTER 2: Event Type Segmentation ---
             
-            # VIP & Z2H: Allow Early Events AND Results (To ensure exits are signaled)
+            # VIP & Z2H: Allow All Events
             if key in ['vip', 'z2h']:
-                # If you strictly want ONLY Early events for VIP, uncomment below:
-                # if event_type not in early_events: continue
                 pass 
             
-            # Free: Allow Results AND NEW_TRADE (Fixed User Issue)
+            # Free: Allow Results + Entry + Updates (Requested Update)
             elif key == 'free':
-                # Block 'Active' and 'Update' to reduce noise, but allow Entry + Exits
-                allowed_free = ['NEW_TRADE', 'TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
+                allowed_free = ['NEW_TRADE', 'ACTIVE', 'UPDATE', 'TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
                 if event_type not in allowed_free:
                     continue
             
@@ -169,7 +162,7 @@ class TelegramManager:
                 reply_to = None 
 
             # Special Logic for FREE Channel (Lazy Threading):
-            # If we are sending a message (e.g. T1) but have no Thread ID yet,
+            # If we are sending a message (e.g. ACTIVE) but have no Thread ID yet,
             # this message becomes the Header/Parent.
             if key == 'free' and not reply_to:
                 is_new_thread_start = True
@@ -250,7 +243,6 @@ class TelegramManager:
             # --- FREE CHANNEL HEADER INJECTION ---
             # ONLY Inject Header if this is the start of a thread AND it is NOT a New Trade.
             # (Because NEW_TRADE already contains the full info).
-            # This handles the "Results Only" case where Entry was skipped.
             if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE" and msg:
                 header_prefix = (
                     f"🔔 <b>{symbol}</b>\n"
