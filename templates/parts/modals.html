@@ -131,6 +131,19 @@
                 </ul>
                 <div class="tab-content" id="settingTabsContent">
                     <div class="tab-pane fade show active" id="tab-general">
+                        
+                        <h6 class="text-primary">Watchlist</h6>
+                        <div class="input-group mb-3">
+                            <input type="text" id="new_watch_sym" class="form-control" placeholder="Symbol (e.g. RELIANCE)">
+                            <button class="btn btn-outline-secondary" type="button" onclick="addToWatchlist('#new_watch_sym')">Add</button>
+                        </div>
+                        <div class="mb-3">
+                            <select id="remove_watch_sym" class="form-select" onchange="removeFromWatchlist('remove_watch_sym')">
+                                <option value="">Select to Remove...</option>
+                            </select>
+                        </div>
+                        <hr>
+
                         <h6 class="mb-2">Active Exchanges (For Search)</h6>
                         <div class="d-flex flex-wrap gap-2 mb-3">
                             <div class="form-check"><input class="form-check-input" type="checkbox" name="exch_select" value="NSE" id="exch_NSE"><label class="form-check-label" for="exch_NSE">NSE</label></div>
@@ -156,6 +169,16 @@
                                 <input class="form-check-input" type="checkbox" id="def_z2h">
                                 <label class="form-check-label fw-bold small" for="def_z2h">Z2H</label>
                             </div>
+                        </div>
+
+                        <h6 class="mb-2 text-primary border-top pt-2">Startup Configuration</h6>
+                        <div class="mb-3">
+                            <label class="form-label">Default Trade Mode</label>
+                            <select id="def_trade_mode" class="form-select">
+                                <option value="PAPER">Paper Trading</option>
+                                <option value="LIVE">Live Trading</option>
+                            </select>
+                            <div class="form-text">This mode will be auto-selected when you open the dashboard.</div>
                         </div>
                     </div>
 
