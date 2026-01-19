@@ -226,7 +226,38 @@ def callback():
 
 @app.route('/api/settings/load')
 def api_settings_load():
-    return jsonify(settings.load_settings())
+    # Load base settings
+    s = settings.load_settings()
+    
+    # --- NEW FEATURE: 1st Trade Logic Injection ---
+    # Calculates if there are ZERO trades for the current day
+    try:
+        today_str = time.strftime("%Y-%m-%d")
+        
+        # Load Trades & History to count today's trades
+        trades = persistence.load_trades()
+        history = persistence.load_history()
+        
+        count = 0
+        # Check Active Trades
+        if trades:
+            for t in trades:
+                if t.get('entry_time', '').startswith(today_str): 
+                    count += 1
+        
+        # Check History
+        if history:
+            for t in history:
+                if t.get('entry_time', '').startswith(today_str): 
+                    count += 1
+            
+        s['is_first_trade'] = (count == 0)
+    except Exception as e:
+        print(f"Error checking first trade: {e}")
+        # Default to False on error to prevent unwanted mode switching
+        s['is_first_trade'] = False
+        
+    return jsonify(s)
 
 @app.route('/api/settings/save', methods=['POST'])
 def api_settings_save():
