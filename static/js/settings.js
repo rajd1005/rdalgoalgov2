@@ -13,26 +13,29 @@ function loadSettings() {
             $('#first_trade_toggle').prop('checked', settings.first_trade_logic || false);
             
             // --- DETERMINE EFFECTIVE DEFAULTS (Logic Injection) ---
-            // 1. Get Stored User Preferences
+            // 1. Get Stored User Preferences (Single Channel now)
             let storedMode = settings.default_trade_mode || 'PAPER';
-            let storedChannels = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
+            let storedChannel = settings.default_broadcast_channel || 'vip'; // Default to VIP if missing
 
             // 2. Define Variables for Dashboard Application
             let applyMode = storedMode;
-            let applyChannels = storedChannels;
+            let applyChannel = storedChannel;
 
             // 3. CHECK 1st TRADE LOGIC
             if (settings.first_trade_logic && settings.is_first_trade) {
                 console.log("ℹ️ First Trade of Day Detected: Enforcing Shadow & Free Only");
                 applyMode = 'SHADOW';
-                applyChannels = ['free'];
+                applyChannel = 'free'; // Force single channel
             }
 
             // --- UPDATE UI: SETTINGS MODAL (Show Stored Preferences) ---
             $('#def_trade_mode').val(storedMode);
-            $('#def_vip').prop('checked', storedChannels.includes('vip'));
-            $('#def_free').prop('checked', storedChannels.includes('free'));
-            $('#def_z2h').prop('checked', storedChannels.includes('z2h'));
+            
+            // Set Default Broadcast (Ensure only one is checked in Modal)
+            // Assumes Modal inputs are checkboxes/radios with these IDs
+            $('#def_vip').prop('checked', storedChannel === 'vip');
+            $('#def_free').prop('checked', storedChannel === 'free');
+            $('#def_z2h').prop('checked', storedChannel === 'z2h');
 
             // --- UPDATE UI: DASHBOARD PANEL (Apply Calculated/Overridden Values) ---
             // Auto-Click the Mode Button
@@ -43,10 +46,13 @@ function loadSettings() {
                 }
             }, 200); 
 
-            // Apply to Dashboard Checkboxes
-            if($('#chk_vip').length) $('#chk_vip').prop('checked', applyChannels.includes('vip'));
-            if($('#chk_free').length) $('#chk_free').prop('checked', applyChannels.includes('free'));
-            if($('#chk_z2h').length) $('#chk_z2h').prop('checked', applyChannels.includes('z2h'));
+            // Apply to Dashboard Radio Buttons (Targeting IDs from tab_trade.html)
+            // We uncheck all first, then check the specific one
+            $('input[name="target_channel"]').prop('checked', false);
+            
+            if(applyChannel === 'vip') $('#rad_vip').prop('checked', true);
+            else if(applyChannel === 'free') $('#rad_free').prop('checked', true);
+            else if(applyChannel === 'z2h') $('#rad_z2h').prop('checked', true);
 
             renderWatchlist();
 
@@ -156,12 +162,14 @@ function saveSettings() {
     // --- NEW: Save Default Trade Mode ---
     settings.default_trade_mode = $('#def_trade_mode').val(); 
 
-    // --- NEW: Save Broadcast Defaults ---
-    let b_defs = [];
-    if($('#def_vip').is(':checked')) b_defs.push('vip');
-    if($('#def_free').is(':checked')) b_defs.push('free');
-    if($('#def_z2h').is(':checked')) b_defs.push('z2h');
-    settings.broadcast_defaults = b_defs;
+    // --- NEW: Save Default Broadcast Channel (Single Selection) ---
+    // Check which input is selected in the Settings Modal
+    let def_channel = 'vip'; // Fallback
+    if($('#def_vip').is(':checked')) def_channel = 'vip';
+    else if($('#def_free').is(':checked')) def_channel = 'free';
+    else if($('#def_z2h').is(':checked')) def_channel = 'z2h';
+    
+    settings.default_broadcast_channel = def_channel;
     // ------------------------------------
 
     ['PAPER', 'LIVE', 'SHADOW'].forEach(m => {
