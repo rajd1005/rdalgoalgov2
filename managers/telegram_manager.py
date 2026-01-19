@@ -16,7 +16,8 @@ class TelegramManager:
 
     def _format_msg(self, template_key, trade, extra_data=None, action_time=None):
         """
-        Helper: Formats message strings based on settings.py templates
+        Helper: Formats message strings based on settings.py templates.
+        Supports GLOBAL Placeholders for all messages.
         """
         conf = self._get_config()
         templates = conf.get('templates', {})
@@ -24,24 +25,35 @@ class TelegramManager:
         
         if not raw_tpl: return None
 
-        # Prepare Data Dict for Placeholders
+        # --- GLOBAL PLACEHOLDERS (Available in ALL templates) ---
         raw_symbol = trade.get('symbol', 'Unknown')
         entry_price = float(trade.get('entry_price', 0) or 0)
         qty = float(trade.get('quantity', 0) or 0)
+        curr_time = action_time or get_time_str()
         
+        # Determine Entry Time (Use trade entry time if avail, else current)
+        entry_time_str = trade.get('entry_time', curr_time)
+
         data = {
+            # Basic Trade Info
             "symbol": smart_trader.get_telegram_symbol(raw_symbol),
+            "raw_symbol": raw_symbol,
             "mode": trade.get('mode', 'PAPER'),
             "order_type": trade.get('order_type', 'MARKET'),
             "qty": qty,
             "entry": entry_price,
             "sl": trade.get('sl', 0),
             "targets": str(trade.get('targets', [])),
-            "time": action_time or get_time_str(),
+            
+            # Time Info
+            "time": curr_time,
+            "entry_time": entry_time_str,
+            
+            # Aesthetics
             "icon": "🔴" if trade.get('mode') == "LIVE" else "🟡"
         }
 
-        # Add Context Specific Data
+        # --- CONTEXT SPECIFIC DATA ---
         if template_key == "ACTIVE":
             data["price"] = extra_data['price'] if isinstance(extra_data, dict) else extra_data
         
@@ -271,15 +283,12 @@ class TelegramManager:
             if event_type == "NEW_TRADE" and ch.get('custom_name'):
                 msg = f"🚀 <b>[{ch['custom_name']}]</b>\n" + msg
 
-            # --- FREE CHANNEL HEADER INJECTION ---
+            # --- FREE CHANNEL HEADER INJECTION (TEMPLATE BASED) ---
             # If this is the start of a thread (e.g. T1 hit in Spillover mode), inject Header.
             if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE":
-                header_prefix = (
-                    f"🔔 <b>{symbol}</b>\n"
-                    f"Added Time: {entry_time_str}\n"
-                    f"➖➖➖➖➖➖➖➖\n"
-                )
-                msg = header_prefix + msg
+                header = self._format_msg("FREE_HEADER", trade, extra_data, action_time)
+                if header:
+                    msg = header + msg
 
             # --- SEND & SAVE ---
             if msg:
