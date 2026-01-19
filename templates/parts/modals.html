@@ -116,7 +116,7 @@
 </div>
 
 <div class="modal fade" id="settingsModal" tabindex="-1">
-    <div class="modal-dialog">
+    <div class="modal-dialog modal-dialog-scrollable modal-lg">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title">⚙️ Global Settings</h5>
@@ -349,6 +349,122 @@
                             </div>
                         </div>
 
+                        <hr>
+                        <h6 class="text-primary mb-3">📝 Message Customization</h6>
+
+                        <div class="accordion mb-3" id="tgTemplatesAccordion">
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseNew">
+                                        New Trade Alert
+                                    </button>
+                                </h2>
+                                <div id="collapseNew" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                        <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_new" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_new" class="form-control" rows="6" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">
+                                            Placeholders: {symbol}, {mode}, {order_type}, {qty}, {entry}, {sl}, {targets}, {time}, {icon}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseAct">
+                                        Order Activated
+                                    </button>
+                                </h2>
+                                <div id="collapseAct" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                         <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_active" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_active" class="form-control" rows="4" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">Placeholders: {price}, {time}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTgt">
+                                        Target Hit
+                                    </button>
+                                </h2>
+                                <div id="collapseTgt" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                         <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_tgt" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_tgt" class="form-control" rows="4" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">Placeholders: {t_num}, {price}, {pot_pnl}, {time}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseSL">
+                                        Stop Loss Hit
+                                    </button>
+                                </h2>
+                                <div id="collapseSL" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                         <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_sl" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_sl" class="form-control" rows="4" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">Placeholders: {exit_price}, {pnl}, {time}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                             <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseHigh">
+                                        New High Made
+                                    </button>
+                                </h2>
+                                <div id="collapseHigh" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                         <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_high" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_high" class="form-control" rows="4" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">Placeholders: {price}, {pot_pnl}, {time}</div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                             <div class="accordion-item">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUpd">
+                                        Trade Update
+                                    </button>
+                                </h2>
+                                <div id="collapseUpd" class="accordion-collapse collapse" data-bs-parent="#tgTemplatesAccordion">
+                                    <div class="accordion-body p-2">
+                                         <div class="form-check form-switch mb-2">
+                                            <input class="form-check-input" type="checkbox" id="tg_evt_update" checked>
+                                            <label class="form-check-label fw-bold">Enable this Alert</label>
+                                        </div>
+                                        <textarea id="tpl_update" class="form-control" rows="4" style="font-family: monospace; font-size: 0.8rem;"></textarea>
+                                        <div class="form-text small">Placeholders: {update_text}, {time}</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                        
                         <hr>
                         <button class="btn btn-outline-primary w-100" onclick="testTelegram()">📩 Send Test Message (To Main)</button>
                     </div>
