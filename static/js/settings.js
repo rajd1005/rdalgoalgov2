@@ -2,28 +2,31 @@ function loadSettings() {
     $.get('/api/settings/load', function(data) {
         if(data) {
             settings = data;
+            
+            // --- Exchanges ---
             if(settings.exchanges) {
                 $('input[name="exch_select"]').prop('checked', false);
                 settings.exchanges.forEach(e => $(`#exch_${e}`).prop('checked', true));
             }
             
-            // --- NEW: Load Broadcast Defaults ---
-            // 1. Set values in Settings Modal (General Tab)
+            // --- Broadcast Defaults ---
             let defaults = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
             $('#def_vip').prop('checked', defaults.includes('vip'));
             $('#def_free').prop('checked', defaults.includes('free'));
             $('#def_z2h').prop('checked', defaults.includes('z2h'));
 
-            // 2. APPLY Defaults to Dashboard Trade Panel (if elements exist)
+            // Apply to Dashboard Panel if present
             if($('#chk_vip').length) $('#chk_vip').prop('checked', defaults.includes('vip'));
             if($('#chk_free').length) $('#chk_free').prop('checked', defaults.includes('free'));
             if($('#chk_z2h').length) $('#chk_z2h').prop('checked', defaults.includes('z2h'));
-            // ------------------------------------
 
             renderWatchlist();
+
+            // --- Modes (PAPER / LIVE) ---
             ['PAPER', 'LIVE'].forEach(m => {
                 let k = m.toLowerCase();
                 let s = settings.modes[m];
+                
                 $(`#${k}_qty_mult`).val(s.qty_mult);
                 
                 // Ratios
@@ -31,20 +34,19 @@ function loadSettings() {
                 $(`#${k}_r2`).val(s.ratios[1]);
                 $(`#${k}_r3`).val(s.ratios[2]);
                 
-                // Trailing SL & Defaults
+                // Risk & Order Settings
                 $(`#${k}_def_trail`).val(s.trailing_sl || 0);
                 $(`#${k}_order_type`).val(s.order_type || 'MARKET');
                 $(`#${k}_trail_limit`).val(s.sl_to_entry || 0);
                 $(`#${k}_exit_mult`).val(s.exit_multiplier || 1);
                 
-                // --- NEW RISK SETTINGS ---
                 $(`#${k}_time`).val(s.universal_exit_time || "15:25");
                 $(`#${k}_max_loss`).val(s.max_loss || 0);
                 $(`#${k}_pl_start`).val(s.profit_lock || 0);
                 $(`#${k}_pl_min`).val(s.profit_min || 0);
                 $(`#${k}_pl_trail`).val(s.profit_trail || 0);
 
-                // Target Config
+                // Targets
                 let tgts = s.targets || [
                     {active: true, lots: 0, full: false, trail_to_entry: false},
                     {active: true, lots: 0, full: false, trail_to_entry: false},
@@ -72,22 +74,20 @@ function loadSettings() {
                 renderSLTable(m);
             });
 
-            // --- LOAD TELEGRAM SETTINGS (UPDATED) ---
+            // --- Telegram Settings ---
             if(settings.telegram) {
                 $('#tg_bot_token').val(settings.telegram.bot_token || '');
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
                 
-                // Main & System
+                // Channels
                 $('#tg_channel_id').val(settings.telegram.channel_id || '');
                 $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); 
-                
-                // Extra Channels
                 $('#tg_vip_channel_id').val(settings.telegram.vip_channel_id || '');
                 $('#tg_free_channel_id').val(settings.telegram.free_channel_id || '');
                 $('#tg_z2h_channel_id').val(settings.telegram.z2h_channel_id || '');
                 $('#tg_z2h_channel_name').val(settings.telegram.z2h_channel_name || 'Zero To Hero');
 
-                // --- NEW: Load Toggles ---
+                // Toggles
                 let toggles = settings.telegram.event_toggles || {};
                 $('#tg_evt_new').prop('checked', toggles.NEW_TRADE !== false);
                 $('#tg_evt_active').prop('checked', toggles.ACTIVE !== false);
@@ -96,7 +96,7 @@ function loadSettings() {
                 $('#tg_evt_tgt').prop('checked', toggles.TARGET_HIT !== false);
                 $('#tg_evt_high').prop('checked', toggles.HIGH_MADE !== false);
 
-                // --- NEW: Load Templates ---
+                // Templates
                 let tpls = settings.telegram.templates || {};
                 $('#tpl_new').val(tpls.NEW_TRADE || "");
                 $('#tpl_active').val(tpls.ACTIVE || "");
@@ -104,6 +104,7 @@ function loadSettings() {
                 $('#tpl_sl').val(tpls.SL_HIT || "");
                 $('#tpl_tgt').val(tpls.TARGET_HIT || "");
                 $('#tpl_high').val(tpls.HIGH_MADE || "");
+                $('#tpl_free_header').val(tpls.FREE_HEADER || ""); 
             }
 
             if (typeof updateDisplayValues === "function") updateDisplayValues(); 
@@ -112,18 +113,19 @@ function loadSettings() {
 }
 
 function saveSettings() {
+    // Exchanges
     let selectedExchanges = [];
     $('input[name="exch_select"]:checked').each(function() { selectedExchanges.push($(this).val()); });
     settings.exchanges = selectedExchanges;
 
-    // --- NEW: Save Broadcast Defaults ---
+    // Broadcast Defaults
     let b_defs = [];
     if($('#def_vip').is(':checked')) b_defs.push('vip');
     if($('#def_free').is(':checked')) b_defs.push('free');
     if($('#def_z2h').is(':checked')) b_defs.push('z2h');
     settings.broadcast_defaults = b_defs;
-    // ------------------------------------
 
+    // Modes
     ['PAPER', 'LIVE'].forEach(m => {
         let k = m.toLowerCase();
         let s = settings.modes[m];
@@ -132,19 +134,16 @@ function saveSettings() {
         s.ratios = [parseFloat($(`#${k}_r1`).val()), parseFloat($(`#${k}_r2`).val()), parseFloat($(`#${k}_r3`).val())];
         s.trailing_sl = parseFloat($(`#${k}_def_trail`).val()) || 0;
         
-        // Save Defaults
         s.order_type = $(`#${k}_order_type`).val();
         s.sl_to_entry = parseInt($(`#${k}_trail_limit`).val()) || 0;
         s.exit_multiplier = parseInt($(`#${k}_exit_mult`).val()) || 1;
         
-        // --- SAVE NEW RISK SETTINGS ---
         s.universal_exit_time = $(`#${k}_time`).val();
         s.max_loss = parseFloat($(`#${k}_max_loss`).val()) || 0;
         s.profit_lock = parseFloat($(`#${k}_pl_start`).val()) || 0;
         s.profit_min = parseFloat($(`#${k}_pl_min`).val()) || 0;
         s.profit_trail = parseFloat($(`#${k}_pl_trail`).val()) || 0;
         
-        // Save Target Configs
         s.targets = [
             {
                 active: $(`#${k}_a1`).is(':checked'),
@@ -167,21 +166,18 @@ function saveSettings() {
         ];
     });
 
-    // --- SAVE TELEGRAM SETTINGS (UPDATED) ---
+    // Telegram
     settings.telegram = {
         bot_token: $('#tg_bot_token').val().trim(),
         enable_notifications: $('#tg_enable').is(':checked'),
         
         channel_id: $('#tg_channel_id').val().trim(),
         system_channel_id: $('#tg_system_channel_id').val().trim(),
-        
-        // Save Extra Channels
         vip_channel_id: $('#tg_vip_channel_id').val().trim(),
         free_channel_id: $('#tg_free_channel_id').val().trim(),
         z2h_channel_id: $('#tg_z2h_channel_id').val().trim(),
         z2h_channel_name: $('#tg_z2h_channel_name').val().trim() || 'Zero To Hero',
 
-        // --- NEW: Save Toggles ---
         event_toggles: {
             NEW_TRADE: $('#tg_evt_new').is(':checked'),
             ACTIVE: $('#tg_evt_active').is(':checked'),
@@ -191,14 +187,14 @@ function saveSettings() {
             HIGH_MADE: $('#tg_evt_high').is(':checked')
         },
 
-        // --- NEW: Save Templates ---
         templates: {
             NEW_TRADE: $('#tpl_new').val(),
             ACTIVE: $('#tpl_active').val(),
             UPDATE: $('#tpl_update').val(),
             SL_HIT: $('#tpl_sl').val(),
             TARGET_HIT: $('#tpl_tgt').val(),
-            HIGH_MADE: $('#tpl_high').val()
+            HIGH_MADE: $('#tpl_high').val(),
+            FREE_HEADER: $('#tpl_free_header').val()
         }
     };
 
@@ -209,7 +205,7 @@ function saveSettings() {
         contentType: "application/json", 
         success: () => { 
             $('#settingsModal').modal('hide'); 
-            loadSettings(); // Reload to apply new defaults to dashboard immediately
+            loadSettings(); 
         } 
     });
 }
@@ -312,5 +308,14 @@ function saveSymSL(mode) {
         $(`#${k}_set_sym`).val(''); $(`#${k}_set_sl`).val('');
     }
 }
-function editSymSL(mode, sym) { let k = mode.toLowerCase(); $(`#${k}_set_sym`).val(sym); $(`#${k}_set_sl`).val(settings.modes[mode].symbol_sl[sym]); }
-function deleteSymSL(mode, sym) { delete settings.modes[mode].symbol_sl[sym]; renderSLTable(mode); }
+
+function editSymSL(mode, sym) { 
+    let k = mode.toLowerCase(); 
+    $(`#${k}_set_sym`).val(sym); 
+    $(`#${k}_set_sl`).val(settings.modes[mode].symbol_sl[sym]); 
+}
+
+function deleteSymSL(mode, sym) { 
+    delete settings.modes[mode].symbol_sl[sym]; 
+    renderSLTable(mode); 
+}
