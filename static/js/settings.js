@@ -283,14 +283,32 @@ function loadWatchlist(selectId, inputId) {
 function applyBulkSL(mode) {
     let k = mode.toLowerCase();
     let text = $(`#${k}_bulk_sl`).val();
-    if(!text) { alert("Please enter SYMBOL|SL"); return; }
+    if(!text) { alert("Please enter SYMBOL|SL or SYMBOL|SL|T1|T2|T3"); return; }
     let lines = text.split('\n'); let count = 0;
+    
     if(!settings.modes[mode].symbol_sl) settings.modes[mode].symbol_sl = {};
+    
     lines.forEach(l => {
         let parts = l.split('|');
-        if(parts.length === 2) {
-            let s = normalizeSymbol(parts[0]); let v = parseInt(parts[1].trim());
-            if(s && v > 0) { settings.modes[mode].symbol_sl[s] = v; count++; }
+        if(parts.length >= 2) {
+            let s = normalizeSymbol(parts[0]); 
+            let sl = parseFloat(parts[1]);
+            
+            if(s && sl > 0) { 
+                let entry = { sl: sl, targets: [] };
+                
+                // Parse optional targets (T1, T2, T3)
+                if(parts.length >= 5) {
+                    entry.targets = [
+                        parseFloat(parts[2]) || 0,
+                        parseFloat(parts[3]) || 0,
+                        parseFloat(parts[4]) || 0
+                    ];
+                }
+                
+                settings.modes[mode].symbol_sl[s] = entry; 
+                count++; 
+            }
         }
     });
     renderSLTable(mode); $(`#${k}_bulk_sl`).val('');
@@ -301,27 +319,81 @@ function renderSLTable(mode) {
     let k = mode.toLowerCase();
     let tbody = $(`#${k}_sl_table_body`).empty();
     let slMap = settings.modes[mode].symbol_sl || {};
+    
     Object.keys(slMap).forEach(sym => {
-        tbody.append(`<tr><td class="fw-bold">${sym}</td><td>${slMap[sym]}</td><td><button class="btn btn-sm btn-outline-secondary py-0" onclick="editSymSL('${mode}', '${sym}')">✏️</button> <button class="btn btn-sm btn-outline-danger py-0" onclick="deleteSymSL('${mode}', '${sym}')">🗑️</button></td></tr>`);
+        let val = slMap[sym];
+        let displaySL = 0;
+        let t = ['-', '-', '-'];
+        
+        // Handle New Object Format vs Legacy Int Format
+        if (typeof val === 'object') {
+            displaySL = val.sl;
+            if(val.targets && val.targets.length === 3) {
+                t = val.targets;
+            }
+        } else {
+            displaySL = val;
+        }
+
+        tbody.append(`<tr>
+            <td class="fw-bold">${sym}</td>
+            <td>${displaySL}</td>
+            <td>${t[0]}</td>
+            <td>${t[1]}</td>
+            <td>${t[2]}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-secondary py-0" onclick="editSymSL('${mode}', '${sym}')">✏️</button> 
+                <button class="btn btn-sm btn-outline-danger py-0" onclick="deleteSymSL('${mode}', '${sym}')">🗑️</button>
+            </td>
+        </tr>`);
     });
 }
 
 function saveSymSL(mode) {
     let k = mode.toLowerCase();
     let s = normalizeSymbol($(`#${k}_set_sym`).val());
-    let p = parseInt($(`#${k}_set_sl`).val());
-    if(s && p) {
+    let sl = parseFloat($(`#${k}_set_sl`).val());
+    let t1 = parseFloat($(`#${k}_set_t1`).val()) || 0;
+    let t2 = parseFloat($(`#${k}_set_t2`).val()) || 0;
+    let t3 = parseFloat($(`#${k}_set_t3`).val()) || 0;
+
+    if(s && sl) {
         if(!settings.modes[mode].symbol_sl) settings.modes[mode].symbol_sl = {};
-        settings.modes[mode].symbol_sl[s] = p;
+        
+        let entry = { sl: sl, targets: [] };
+        // Only add targets if at least one is specified
+        if(t1 > 0 || t2 > 0 || t3 > 0) {
+            entry.targets = [t1, t2, t3];
+        }
+        
+        settings.modes[mode].symbol_sl[s] = entry;
         renderSLTable(mode);
+        
+        // Clear inputs
         $(`#${k}_set_sym`).val(''); $(`#${k}_set_sl`).val('');
+        $(`#${k}_set_t1`).val(''); $(`#${k}_set_t2`).val(''); $(`#${k}_set_t3`).val('');
     }
 }
 
 function editSymSL(mode, sym) { 
     let k = mode.toLowerCase(); 
+    let data = settings.modes[mode].symbol_sl[sym];
     $(`#${k}_set_sym`).val(sym); 
-    $(`#${k}_set_sl`).val(settings.modes[mode].symbol_sl[sym]); 
+    
+    if (typeof data === 'object') {
+        $(`#${k}_set_sl`).val(data.sl);
+        if(data.targets && data.targets.length === 3) {
+            $(`#${k}_set_t1`).val(data.targets[0]);
+            $(`#${k}_set_t2`).val(data.targets[1]);
+            $(`#${k}_set_t3`).val(data.targets[2]);
+        } else {
+            $(`#${k}_set_t1`).val(''); $(`#${k}_set_t2`).val(''); $(`#${k}_set_t3`).val('');
+        }
+    } else {
+        // Legacy Support
+        $(`#${k}_set_sl`).val(data); 
+        $(`#${k}_set_t1`).val(''); $(`#${k}_set_t2`).val(''); $(`#${k}_set_t3`).val('');
+    }
 }
 
 function deleteSymSL(mode, sym) { 
