@@ -88,41 +88,19 @@ def get_exchange_name(symbol):
 def get_ltp(kite, symbol):
     """
     Fetches the Last Traded Price (LTP) with automatic exchange detection.
-    Updated to handle Indices (NIFTY 50) and force fetch instruments if cache missing.
     """
     try:
-        # Ensure instruments are loaded
-        if not symbol_map:
-            fetch_instruments(kite)
-
-        if not symbol:
-            return 0
-
-        # Clean symbol
-        symbol = symbol.strip().upper()
-
         # 1. If symbol already has exchange (e.g., NSE:RELIANCE), try directly
         if ":" in symbol:
             quote = kite.quote(symbol)
             if quote and symbol in quote:
                 return quote[symbol]['last_price']
 
-        # 2. Clean and Resolve Symbol
-        clean_sym = get_zerodha_symbol(symbol)
+        # 2. Determine Exchange
+        exch = get_exchange_name(symbol)
         
-        # 3. Handle Indices Special Case
-        if clean_sym == "NIFTY":
-            full_sym = "NSE:NIFTY 50"
-        elif clean_sym == "BANKNIFTY":
-            full_sym = "NSE:NIFTY BANK"
-        elif clean_sym == "SENSEX":
-            full_sym = "BSE:SENSEX"
-        else:
-            # Determine Exchange dynamically
-            exch = get_exchange_name(clean_sym)
-            full_sym = f"{exch}:{clean_sym}"
-        
-        # 4. Fetch Quote
+        # 3. Fetch Quote with constructed format
+        full_sym = f"{exch}:{symbol}"
         quote = kite.quote(full_sym)
         
         if quote and full_sym in quote:

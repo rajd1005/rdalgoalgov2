@@ -19,9 +19,6 @@ def get_defaults():
     }
     
     return {
-        # --- NEW: 1st Trade Critical Setting ---
-        "first_trade_critical": False,
-        # ---------------------------------------
         "default_trade_mode": "PAPER",
         "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
         "watchlist": [],
@@ -51,7 +48,7 @@ def get_defaults():
             
             # 4. ZeroToHero Channel (New/Active/Update Only + Custom Name)
             "z2h_channel_id": "",
-            "z2h_channel_name": "Zero To Hero", # Default Name
+            "z2h_channel_name": "Zero To Hero", 
 
             # --- Event Toggles (Individual On/Off) ---
             "event_toggles": {
@@ -85,7 +82,7 @@ def load_settings():
         if setting:
             saved = json.loads(setting.data)
             
-            # Integrity Check
+            # Integrity Check for Modes
             if "modes" not in saved:
                 old_mult = saved.get("qty_mult", 1)
                 old_ratios = saved.get("ratios", [0.5, 1.0, 1.5])
@@ -109,9 +106,7 @@ def load_settings():
             
             # --- MERGE NEW KEYS ---
             if "default_trade_mode" not in saved: saved["default_trade_mode"] = defaults["default_trade_mode"]
-            if "first_trade_critical" not in saved: saved["first_trade_critical"] = defaults["first_trade_critical"]
             if "broadcast_defaults" not in saved: saved["broadcast_defaults"] = defaults["broadcast_defaults"]
-            
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
 
             # Merge Telegram (Recursive merge for new keys & templates)
@@ -122,7 +117,7 @@ def load_settings():
                     if k not in saved["telegram"]:
                         saved["telegram"][k] = v
                     elif isinstance(v, dict) and isinstance(saved["telegram"][k], dict):
-                        # Deep merge for templates and toggles
+                        # Deep merge for templates and toggles to ensure new keys appear
                         for sub_k, sub_v in v.items():
                             if sub_k not in saved["telegram"][k]:
                                 saved["telegram"][k][sub_k] = sub_v

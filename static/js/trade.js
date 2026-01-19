@@ -4,13 +4,11 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     let settingsKey = normalizeSymbol(s);
     let mode = 'PAPER'; 
     
-    // Determine Mode
     if (symId === '#h_sym' || $('#history').is(':visible')) mode = 'SIMULATOR'; 
     else if (symId === '#imp_sym') mode = 'PAPER'; 
-    else mode = $('#mode_input').val(); // LIVE / PAPER / SHADOW
+    else mode = $('#mode_input').val();
     
-    // Safe Settings Retrieval
-    let modeSettings = (settings.modes && settings.modes[mode]) ? settings.modes[mode] : settings.modes.PAPER;
+    let modeSettings = settings.modes[mode] || settings.modes.PAPER;
     
     // Auto-fill SL
     if(slId) {
@@ -24,7 +22,6 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
         let trailVal = modeSettings.trailing_sl || 0;
         
         if(prefix === '#imp_') {
-             // Import Modal Fields
              $('#imp_trail_sl').val(trailVal);
              $('#imp_trail_limit').val(modeSettings.sl_to_entry || 0);
              $('#imp_exit_mult').val(modeSettings.exit_multiplier || 1);
@@ -40,13 +37,9 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
                 });
              }
         } else {
-             // Main Trade Panel Fields
              $('#trail_sl').val(trailVal);
              $('#ord').val(modeSettings.order_type || 'MARKET').trigger('change');
-             // Try ID first, then name selector
-             let trailLimitEl = $('#sl_to_entry').length ? $('#sl_to_entry') : $('select[name="sl_to_entry"]');
-             trailLimitEl.val(modeSettings.sl_to_entry || 0);
-             
+             $('select[name="sl_to_entry"]').val(modeSettings.sl_to_entry || 0);
              $('#exit_mult').val(modeSettings.exit_multiplier || 1);
              
              if(modeSettings.targets) {
@@ -68,11 +61,6 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
 
     $.get('/api/details', {symbol: s}, function(d) { 
         symLTP[symId] = d.ltp; 
-        
-        // [FIX] Immediately Update Main Badge with Underlying LTP
-        if(symId === '#sym') {
-            $('#inst_ltp').text("LTP: " + d.ltp);
-        }
         
         // Update Import Modal
         if(symId === '#imp_sym') {
@@ -141,38 +129,31 @@ function fillChain(sym, exp, typeSelector, str) {
             let mark = r.label.includes('ATM') ? '🔴' : '';
             $s.append(`<option value="${r.strike}" ${selected} ${style}>${mark} ${r.strike} ${r.label}</option>`); 
         });
-        
-        // Auto-fetch option price if we just filled the chain
-        if(sym === '#sym') fetchLTP(); 
         if(sym === '#imp_sym') fetchLTP();
     });
 }
 
 function fetchLTP() {
-    // 1. Handle Main Panel
     let sVal = $('#sym').val(); 
-    if(sVal) {
-        if(sVal.includes(':')) sVal = sVal.split(':')[0].trim();
-        
-        // Only fetch specific if we have all params
-        if($('#exp').val() && $('#str').val()) {
-            $.get('/api/specific_ltp', {
-                symbol: sVal, 
-                expiry: $('#exp').val(), 
-                strike: $('#str').val(), 
-                type: $('input[name="type"]:checked').val()
-            }, function(d) {
-                if(d.ltp) {
-                    curLTP = d.ltp; 
-                    $('#inst_ltp').text("LTP: " + curLTP); 
-                    if ($('#ord').val() === 'LIMIT' && !$('#lim_pr').val()) $('#lim_pr').val(curLTP);
-                    calcRisk();
-                }
-            });
+    if(!sVal) return;
+    if(sVal.includes(':')) sVal = sVal.split(':')[0].trim();
+    
+    // Main Tab Fetch
+    $.get('/api/specific_ltp', {
+        symbol: sVal, 
+        expiry: $('#exp').val(), 
+        strike: $('#str').val(), 
+        type: $('input[name="type"]:checked').val()
+    }, function(d) {
+        if(d.ltp) {
+            curLTP = d.ltp; 
+            $('#inst_ltp').text("LTP: " + curLTP); 
+            if ($('#ord').val() === 'LIMIT' && !$('#lim_pr').val()) $('#lim_pr').val(curLTP);
+            calcRisk();
         }
-    }
+    });
 
-    // 2. Handle Import Modal (Independent)
+    // Import Modal Fetch
     if($('#importModal').is(':visible')) {
         let iSym = $('#imp_sym').val();
         if(iSym && $('#imp_exp').val() && $('#imp_str').val()) {
@@ -225,7 +206,7 @@ function calcRisk() {
 
     // Safely get ratios
     let mode = $('#mode_input').val(); 
-    let modeObj = (settings.modes && settings.modes[mode]) ? settings.modes[mode] : settings.modes.PAPER;
+    let modeObj = settings.modes[mode] || settings.modes.PAPER;
     let ratios = modeObj.ratios || [0.5, 1.0, 1.5];
 
     let sl = basePrice - p;
@@ -254,17 +235,16 @@ function calcRisk() {
     });
 }
 
-// --- Order Type Toggle Logic ---
+// --- NEW: Toggle Limit Price Requirement on Order Type Change ---
 $(function() {
     $('#ord').change(function() {
         if($(this).val() === 'LIMIT') {
             $('#lim_box').show();
-            $('#lim_pr').prop('required', true); 
+            $('#lim_pr').prop('required', true); // Make Mandatory
         } else {
             $('#lim_box').hide();
-            $('#lim_pr').prop('required', false);
+            $('#lim_pr').prop('required', false); // Not Mandatory for Market
         }
-        calcRisk(); // Recalculate based on new order type
     });
     
     // Initialize on load

@@ -33,53 +33,6 @@ bot_active = False
 login_state = "IDLE" 
 login_error_msg = None 
 
-# --- TOKEN PERSISTENCE HELPERS ---
-def save_token_to_db(access_token):
-    """Saves the active access token to the database to survive restarts."""
-    try:
-        with app.app_context():
-            setting_rec = AppSetting.query.first()
-            if not setting_rec:
-                data = {"access_token": access_token}
-                setting_rec = AppSetting(data=json.dumps(data))
-                db.session.add(setting_rec)
-            else:
-                data = json.loads(setting_rec.data)
-                data["access_token"] = access_token
-                setting_rec.data = json.dumps(data)
-            db.session.commit()
-            print("💾 Access Token persisted to DB.")
-    except Exception as e:
-        print(f"❌ Failed to save token: {e}")
-
-def load_token_from_db():
-    """Restores session from DB if memory is empty."""
-    global bot_active
-    try:
-        if not kite.access_token:
-            with app.app_context():
-                setting_rec = AppSetting.query.first()
-                if setting_rec:
-                    data = json.loads(setting_rec.data)
-                    token = data.get("access_token")
-                    if token:
-                        print("♻️ Restoring Session from Database...")
-                        kite.set_access_token(token)
-                        bot_active = True
-                        # Async fetch instruments if missing
-                        if not smart_trader.symbol_map:
-                            threading.Thread(target=smart_trader.fetch_instruments, args=(kite,)).start()
-    except Exception as e:
-        print(f"⚠️ Token Restore Warning: {e}")
-
-# Ensure token is loaded before processing requests
-@app.before_request
-def ensure_token_state():
-    if not bot_active:
-        load_token_from_db()
-
-# --- LOGIN & MONITORING ---
-
 def run_auto_login_process():
     global bot_active, login_state, login_error_msg
     
@@ -92,44 +45,53 @@ def run_auto_login_process():
     login_error_msg = None
     
     try:
+        # Pass the kite instance to get the login URL
         token, error = auto_login.perform_auto_login(kite)
-        gc.collect() 
+        gc.collect() # Cleanup memory after selenium usage
         
         if token:
             try:
                 data = kite.generate_session(token, api_secret=config.API_SECRET)
-                access_token = data["access_token"]
+                kite.set_access_token(data["access_token"])
                 
-                kite.set_access_token(access_token)
-                save_token_to_db(access_token) # Persist
-                
+                # Fetch instruments immediately after login
                 smart_trader.fetch_instruments(kite)
                 
                 bot_active = True
                 login_state = "IDLE"
                 gc.collect()
                 
-                telegram_bot.notify_system_event("LOGIN_SUCCESS", "Auto-Login Successful. Session Saved.")
-                print("✅ Session Generated & Saved")
+                # [NOTIFICATION] Success
+                telegram_bot.notify_system_event("LOGIN_SUCCESS", "Auto-Login Successful. Session Renewed.")
+                print("✅ Session Generated Successfully & Instruments Fetched")
                 
             except Exception as e:
+                # [NOTIFICATION] Session Gen Failure
                 telegram_bot.notify_system_event("LOGIN_FAIL", f"Session Gen Failed: {str(e)}")
-                print(f"❌ Session Generation Error: {e}")
-                login_state = "FAILED"
-                login_error_msg = str(e)
+                
+                if "Token is invalid" in str(e):
+                    print("⚠️ Generated Token Expired or Invalid. Retrying...")
+                    login_state = "FAILED" 
+                else:
+                    print(f"❌ Session Generation Error: {e}")
+                    login_state = "FAILED"
+                    login_error_msg = str(e)
         else:
-            # Check if callback handled it in parallel
             if bot_active:
-                print("✅ Auto-Login: Handled via Callback Route.")
+                print("✅ Auto-Login: Handled via Callback Route. System Online.")
                 login_state = "IDLE"
             else:
+                # [NOTIFICATION] Auto-Login Failure
                 telegram_bot.notify_system_event("LOGIN_FAIL", f"Auto-Login Failed: {error}")
+                
                 print(f"❌ Auto-Login Failed: {error}")
                 login_state = "FAILED"
                 login_error_msg = error
             
     except Exception as e:
+        # [NOTIFICATION] Critical Error
         telegram_bot.notify_system_event("LOGIN_FAIL", f"Critical Login Error: {str(e)}")
+        
         print(f"❌ Critical Session Error: {e}")
         login_state = "FAILED"
         login_error_msg = str(e)
@@ -137,42 +99,55 @@ def run_auto_login_process():
 def background_monitor():
     global bot_active, login_state
     
+    # [FIXED] Wrapped Startup Notification in App Context
     with app.app_context():
         try:
             telegram_bot.notify_system_event("STARTUP", "Server Deployed & Monitor Started.")
             print("🖥️ Background Monitor Started")
-        except: pass
+        except Exception as e:
+            print(f"❌ Startup Notification Failed: {e}")
     
-    time.sleep(5)
+    time.sleep(5) # Allow Flask to start up
     
     while True:
         with app.app_context():
             try:
-                # Attempt Restore if offline
-                if not bot_active:
-                    load_token_from_db()
-
+                # 1. Active Bot Check
                 if bot_active:
                     try:
-                        # Validate Token (Skip if Mock)
+                        # [FIX] Skip Token Check if using Mock Broker
                         if not hasattr(kite, "mock_instruments"):
-                            if not kite.access_token: raise Exception("No Access Token")
-                            # Lightweight check
-                            # kite.profile() 
+                            if not kite.access_token: 
+                                raise Exception("No Access Token Found")
+
+                        # Force a simple API call to validate the token 
+                        try:
+                            # Mock Broker might not have profile(), so we skip this check for Mock
+                            if not hasattr(kite, "mock_instruments"):
+                                kite.profile() 
+                        except Exception as e:
+                            raise e 
                         
+                        # Run Strategy Logic (Risk Engine)
                         risk_engine.update_risk_engine(kite)
                         
                     except Exception as e:
                         err = str(e)
-                        if "Token" in err or "Network" in err or "Access Token" in err:
+                        if "Token is invalid" in err or "Network" in err or "No Access Token" in err or "access_token" in err:
                             print(f"⚠️ Connection Lost: {err}")
-                            if bot_active: telegram_bot.notify_system_event("OFFLINE", f"Connection Lost: {err}")
+                            
+                            if bot_active:
+                                telegram_bot.notify_system_event("OFFLINE", f"Connection Lost: {err}")
+                            
                             bot_active = False 
                         else:
                             print(f"⚠️ Risk Loop Warning: {err}")
 
+                # 2. Reconnection Logic (Only if Bot is NOT active)
                 if not bot_active:
+                    # [NEW] DETECT MOCK BROKER & BYPASS LOGIN
                     if hasattr(kite, "mock_instruments"):
+                        print("⚠️ [MONITOR] Mock Broker Detected. Bypassing Auto-Login. System Online.")
                         bot_active = True
                         continue
 
@@ -192,15 +167,16 @@ def background_monitor():
         
         time.sleep(0.5) 
 
-# --- ROUTES ---
-
 @app.route('/')
 def home():
+    global bot_active, login_state
     if bot_active:
         trades = persistence.load_trades()
-        for t in trades: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+        for t in trades: 
+            t['symbol'] = smart_trader.get_display_name(t['symbol'])
         active = [t for t in trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
         return render_template('dashboard.html', is_active=True, trades=active)
+    
     return render_template('dashboard.html', is_active=False, state=login_state, error=login_error_msg, login_url=kite.login_url())
 
 @app.route('/secure', methods=['GET', 'POST'])
@@ -219,22 +195,13 @@ def api_status():
 @app.route('/reset_connection')
 def reset_connection():
     global bot_active, login_state
-    telegram_bot.notify_system_event("RESET", "Manual Connection Reset.")
     
-    # Clear DB Token
-    try:
-        with app.app_context():
-            setting = AppSetting.query.first()
-            if setting:
-                d = json.loads(setting.data)
-                if "access_token" in d: del d["access_token"]
-                setting.data = json.dumps(d)
-                db.session.commit()
-    except: pass
-
+    # [NOTIFICATION] Manual Reset
+    telegram_bot.notify_system_event("RESET", "Manual Connection Reset Initiated.")
+    
     bot_active = False
     login_state = "IDLE"
-    flash("🔄 Connection Reset.")
+    flash("🔄 Connection Reset. Login Monitor will retry.")
     return redirect('/')
 
 @app.route('/callback')
@@ -244,27 +211,27 @@ def callback():
     if t:
         try:
             data = kite.generate_session(t, api_secret=config.API_SECRET)
-            access_token = data["access_token"]
-            kite.set_access_token(access_token)
-            save_token_to_db(access_token)
-            
+            kite.set_access_token(data["access_token"])
             bot_active = True
             smart_trader.fetch_instruments(kite)
             gc.collect()
+            
+            # [NOTIFICATION] Manual Login Success
             telegram_bot.notify_system_event("LOGIN_SUCCESS", "Manual Login (Callback) Successful.")
+            
             flash("✅ System Online")
         except Exception as e:
             flash(f"Login Error: {e}")
     return redirect('/')
 
-# --- DATA & SETTINGS API ---
-
 @app.route('/api/settings/load')
-def api_settings_load(): return jsonify(settings.load_settings())
+def api_settings_load():
+    return jsonify(settings.load_settings())
 
 @app.route('/api/settings/save', methods=['POST'])
 def api_settings_save():
-    if settings.save_settings_file(request.json): return jsonify({"status": "success"})
+    if settings.save_settings_file(request.json):
+        return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
 @app.route('/api/positions')
@@ -278,12 +245,14 @@ def api_positions():
 @app.route('/api/closed_trades')
 def api_closed_trades():
     trades = persistence.load_history()
-    for t in trades: t['symbol'] = smart_trader.get_display_name(t['symbol'])
+    for t in trades:
+        t['symbol'] = smart_trader.get_display_name(t['symbol'])
     return jsonify(trades)
 
 @app.route('/api/delete_trade/<trade_id>', methods=['POST'])
 def api_delete_trade(trade_id):
-    if persistence.delete_trade(trade_id): return jsonify({"status": "success"})
+    if persistence.delete_trade(trade_id):
+        return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
 @app.route('/api/update_trade', methods=['POST'])
@@ -292,27 +261,37 @@ def api_update_trade():
     try:
         if trade_manager.update_trade_protection(kite, data['id'], data['sl'], data['targets'], data.get('trailing_sl', 0), data.get('entry_price'), data.get('target_controls'), data.get('sl_to_entry', 0), data.get('exit_multiplier', 1)):
             return jsonify({"status": "success"})
-        return jsonify({"status": "error", "message": "Trade not found"})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)})
+        else:
+            return jsonify({"status": "error", "message": "Trade not found"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/manage_trade', methods=['POST'])
 def api_manage_trade():
     data = request.json
-    trade_id, action, lots = data.get('id'), data.get('action'), int(data.get('lots', 0))
-    t = next((x for x in persistence.load_trades() if str(x['id']) == str(trade_id)), None)
+    trade_id = data.get('id')
+    action = data.get('action')
+    lots = int(data.get('lots', 0))
+    
+    trades = persistence.load_trades()
+    t = next((x for x in trades if str(x['id']) == str(trade_id)), None)
     if t and lots > 0:
-        if trade_manager.manage_trade_position(kite, trade_id, action, smart_trader.get_lot_size(t['symbol']), lots):
+        lot_size = smart_trader.get_lot_size(t['symbol'])
+        if trade_manager.manage_trade_position(kite, trade_id, action, lot_size, lots):
             return jsonify({"status": "success"})
     return jsonify({"status": "error", "message": "Action Failed"})
 
 @app.route('/api/indices')
 def api_indices():
-    if not bot_active: return jsonify({"NIFTY":0, "BANKNIFTY":0, "SENSEX":0})
+    if not bot_active:
+        return jsonify({"NIFTY":0, "BANKNIFTY":0, "SENSEX":0})
     return jsonify(smart_trader.get_indices_ltp(kite))
 
 @app.route('/api/search')
 def api_search():
-    return jsonify(smart_trader.search_symbols(kite, request.args.get('q', ''), settings.load_settings().get('exchanges', None)))
+    current_settings = settings.load_settings()
+    allowed = current_settings.get('exchanges', None)
+    return jsonify(smart_trader.search_symbols(kite, request.args.get('q', ''), allowed))
 
 @app.route('/api/details')
 def api_details():
@@ -328,66 +307,75 @@ def api_s_ltp():
 
 @app.route('/api/panic_exit', methods=['POST'])
 def api_panic_exit():
-    if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
+    if not bot_active:
+        return jsonify({"status": "error", "message": "Bot not connected"})
     if broker_ops.panic_exit_all(kite):
-        flash("🚨 PANIC MODE EXECUTED.")
+        flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
-    return jsonify({"status": "error", "message": "Failed"})
+    return jsonify({"status": "error", "message": "Failed to execute panic mode"})
 
-@app.route('/get_ltp')
-def route_get_ltp():
-    sym = request.args.get('symbol')
-    if not sym: return jsonify({'ltp': 0})
-    return jsonify({'ltp': smart_trader.get_ltp(kite, sym)})
-
-# --- CORE UPDATE ROUTE (Corrected for LTP) ---
-@app.route('/update_data')
-def update_data():
-    try:
-        active_trades = persistence.load_trades()
-        active_trades = [t for t in active_trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
-        
-        for t in active_trades:
-            t['symbol'] = smart_trader.get_display_name(t['symbol'])
-            
-        # Get LTP for requested symbol
-        symbol_to_track = request.args.get('symbol')
-        
-        # Fallback to first trade if none selected
-        if not symbol_to_track and active_trades:
-            symbol_to_track = active_trades[0]['symbol']
-            
-        ltp = 0.0
-        if symbol_to_track:
-            ltp = smart_trader.get_ltp(kite, symbol_to_track)
-            
-        return jsonify({'trades': active_trades, 'ltp': ltp, 'status': 'success'})
-    except Exception as e:
-        print(f"Update Data Error: {e}")
-        return jsonify({'trades': [], 'ltp': 0, 'status': 'error'})
-
-# --- TELEGRAM & IMPORT ---
-
-@app.route('/api/test_telegram', methods=['POST'])
-def test_telegram():
-    token, chat = request.form.get('token'), request.form.get('chat_id')
-    if not token or not chat: return jsonify({"status": "error"})
-    try:
-        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": chat, "text": "✅ Test Success", "parse_mode": "HTML"}, timeout=5)
-        return jsonify({"status": "success" if r.status_code == 200 else "error", "message": r.text})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)})
+# --- ROUTES FOR TELEGRAM REPORTS ---
 
 @app.route('/api/manual_trade_report', methods=['POST'])
 def api_manual_trade_report():
-    return jsonify(risk_engine.send_manual_trade_report(request.json.get('trade_id')))
+    """
+    Triggered by the 'Speaker' icon on a closed trade card.
+    Sends detailed stats of that specific trade to Telegram.
+    """
+    trade_id = request.json.get('trade_id')
+    if not trade_id:
+        return jsonify({"status": "error", "message": "Trade ID missing"})
+    
+    # Calls the function in risk_engine.py
+    result = risk_engine.send_manual_trade_report(trade_id)
+    return jsonify(result)
 
 @app.route('/api/manual_summary', methods=['POST'])
 def api_manual_summary():
-    return jsonify(risk_engine.send_manual_summary(request.json.get('mode', 'PAPER')))
+    """
+    Triggered by the 'Send Daily Summary' button in History tab.
+    Sends the aggregate P/L, Wins/Loss report to Telegram.
+    """
+    mode = request.json.get('mode', 'PAPER')
+    # Calls the function in risk_engine.py
+    result = risk_engine.send_manual_summary(mode)
+    return jsonify(result)
 
 @app.route('/api/manual_trade_status', methods=['POST'])
 def api_manual_trade_status():
-    return jsonify(risk_engine.send_manual_trade_status(request.json.get('mode', 'PAPER')))
+    """
+    Triggered by the 'Final Trade Status' button.
+    Sends the detailed status list of all trades to Telegram.
+    """
+    mode = request.json.get('mode', 'PAPER')
+    # Calls the function in risk_engine.py
+    result = risk_engine.send_manual_trade_status(mode)
+    return jsonify(result)
+
+# -------------------------------------------------------------
+
+# --- NEW TELEGRAM TEST ROUTE ---
+@app.route('/api/test_telegram', methods=['POST'])
+def test_telegram():
+    token = request.form.get('token')
+    chat = request.form.get('chat_id')
+    if not token or not chat:
+        return jsonify({"status": "error", "message": "Missing credentials"})
+    
+    # Direct test via Requests (bypassing stored settings to test new input)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat,
+        "text": "✅ <b>RD Algo Terminal:</b> Test Message Received!\nConfiguration is valid.",
+        "parse_mode": "HTML"
+    }
+    try:
+        r = requests.post(url, json=payload, timeout=5)
+        if r.status_code == 200:
+            return jsonify({"status": "success"})
+        return jsonify({"status": "error", "message": f"Telegram API Error: {r.text}"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/import_trade', methods=['POST'])
 def api_import_trade():
@@ -395,129 +383,366 @@ def api_import_trade():
     data = request.json
     try:
         final_sym = smart_trader.get_exact_symbol(data['symbol'], data['expiry'], data['strike'], data['type'])
-        if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol"})
+        if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
+        # Call Replay Engine
         result = replay_engine.import_past_trade(
-            kite, final_sym, data['entry_time'], int(data['qty']), float(data['price']), float(data['sl']), 
-            [float(t) for t in data['targets']], data.get('trailing_sl', 0), data.get('sl_to_entry', 0),
+            kite, final_sym, data['entry_time'], 
+            int(data['qty']), float(data['price']), 
+            float(data['sl']), [float(t) for t in data['targets']],
+            data.get('trailing_sl', 0), data.get('sl_to_entry', 0),
             data.get('exit_multiplier', 1), data.get('target_controls')
         )
         
+        # --- SEQUENTIAL TELEGRAM SENDER (UPDATED) ---
         queue = result.get('notification_queue', [])
         trade_ref = result.get('trade_ref', {})
+        
         if queue and trade_ref:
-            def send_seq():
+            def send_seq_notifications():
+                # Wrap thread in app_context to access DB
                 with app.app_context():
+                    # 1. Send Initial "NEW_TRADE" message -> Returns Dict of IDs (e.g. {'main': 1, 'vip': 2})
                     msg_ids = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
-                    if msg_ids:
-                        trade_ref['telegram_msg_ids'] = msg_ids if isinstance(msg_ids, dict) else {'main': msg_ids}
-                        persistence.save_to_history_db(trade_ref) 
                     
+                    if msg_ids:
+                        from managers.persistence import load_trades, save_trades, save_to_history_db
+                        
+                        trade_id = trade_ref['id']
+                        updated_ref = False
+                        
+                        # Handle Structure: If dict, save dict. If int (legacy), wrap it.
+                        if isinstance(msg_ids, dict):
+                            ids_dict = msg_ids
+                            main_id = msg_ids.get('main')
+                        else:
+                            ids_dict = {'main': msg_ids}
+                            main_id = msg_ids
+                        
+                        # Try updating Active Trades
+                        trades = load_trades()
+                        for t in trades:
+                            # Robust comparison: Convert both to strings
+                            if str(t['id']) == str(trade_id):
+                                t['telegram_msg_ids'] = ids_dict
+                                t['telegram_msg_id'] = main_id # Legacy fallback
+                                save_trades(trades)
+                                updated_ref = True
+                                break
+                        
+                        # If not active (e.g., trade closed immediately), update History
+                        if not updated_ref:
+                            trade_ref['telegram_msg_ids'] = ids_dict
+                            trade_ref['telegram_msg_id'] = main_id
+                            save_to_history_db(trade_ref)
+                            
+                        # Update local ref so subsequent events know where to reply
+                        trade_ref['telegram_msg_ids'] = ids_dict
+                        trade_ref['telegram_msg_id'] = main_id
+                    
+                    # 2. Process the rest of the queue
                     for item in queue:
-                        if item['event'] == 'NEW_TRADE': continue
+                        evt = item['event']
+                        if evt == 'NEW_TRADE': continue # Already sent
+                        
+                        # Small delay to ensure sequence order in Telegram
                         time.sleep(1.0)
-                        t_obj = item.get('trade', trade_ref).copy()
-                        if 'id' not in t_obj: t_obj['id'] = trade_ref['id']
+                        
+                        dat = item.get('data')
+                        t_obj = item.get('trade', trade_ref).copy() 
+                        
+                        # --- CRITICAL FIX: INJECT ID IF MISSING ---
+                        # The replay engine often creates snapshot objects without IDs.
+                        if 'id' not in t_obj:
+                            t_obj['id'] = trade_ref['id']
+                        
+                        # Inject IDs so manager knows where to reply for all channels
                         t_obj['telegram_msg_ids'] = trade_ref.get('telegram_msg_ids')
-                        telegram_bot.notify_trade_event(t_obj, item['event'], item.get('data'))
-            threading.Thread(target=send_seq).start()
+                        t_obj['telegram_msg_id'] = trade_ref.get('telegram_msg_id')
+                        
+                        telegram_bot.notify_trade_event(t_obj, evt, dat)
+
+            # Start thread
+            t = threading.Thread(target=send_seq_notifications)
+            t.start()
         
         return jsonify(result)
-    except Exception as e: return jsonify({"status": "error", "message": str(e)})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/api/simulate_scenario', methods=['POST'])
 def api_simulate_scenario():
-    if not bot_active: return jsonify({"status": "error"})
-    return jsonify(replay_engine.simulate_trade_scenario(kite, request.json.get('trade_id'), request.json.get('config')))
+    if not bot_active: return jsonify({"status": "error", "message": "Bot offline"})
+    data = request.json
+    trade_id = data.get('trade_id')
+    config = data.get('config')
+    
+    result = replay_engine.simulate_trade_scenario(kite, trade_id, config)
+    return jsonify(result)
 
+# --- Aggregated Sync Route for High Performance ---
 @app.route('/api/sync', methods=['POST'])
 def api_sync():
-    res = { "status": {"active": bot_active, "state": login_state}, "indices": {}, "positions": [] }
+    # 1. Base Data (Status & Indices)
+    response = {
+        "status": {
+            "active": bot_active, 
+            "state": login_state, 
+            "login_url": kite.login_url()
+        },
+        "indices": {"NIFTY": 0, "BANKNIFTY": 0, "SENSEX": 0},
+        "positions": [],
+        "closed_trades": [],
+        "specific_ltp": 0
+    }
+
+    # 2. Fetch Indices (Only if active)
     if bot_active:
-        res["indices"] = smart_trader.get_indices_ltp(kite)
-        trades = persistence.load_trades()
-        for t in trades:
-            t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
+        try:
+            response["indices"] = smart_trader.get_indices_ltp(kite)
+        except: pass
+
+    # 3. Active Positions
+    trades = persistence.load_trades()
+    for t in trades:
+        t['lot_size'] = smart_trader.get_lot_size(t['symbol'])
+        t['symbol'] = smart_trader.get_display_name(t['symbol'])
+    response["positions"] = trades
+
+    # 4. Closed Trades (Only if requested to save bandwidth)
+    if request.json.get('include_closed'):
+        history = persistence.load_history()
+        for t in history:
             t['symbol'] = smart_trader.get_display_name(t['symbol'])
-        res["positions"] = trades
-    return jsonify(res)
+        response["closed_trades"] = history
+
+    # 5. Specific LTP (For Trade Panel)
+    req_ltp = request.json.get('ltp_req')
+    if bot_active and req_ltp and req_ltp.get('symbol'):
+        try:
+            response["specific_ltp"] = smart_trader.get_specific_ltp(
+                kite, 
+                req_ltp['symbol'], 
+                req_ltp['expiry'], 
+                req_ltp['strike'], 
+                req_ltp['type']
+            )
+        except: pass
+
+    return jsonify(response)
 
 @app.route('/trade', methods=['POST'])
 def place_trade():
     if not bot_active: return redirect('/')
     try:
-        mode_input = request.form['mode'].strip().upper()
+        # --- DEBUG LOG: INCOMING REQUEST ---
+        raw_mode = request.form['mode']
+        print(f"\n[DEBUG MAIN] Received Trade Request. RAW Mode: '{raw_mode}'")
+        
+        # --- FIX: Clean Mode Input ---
+        mode_input = raw_mode.strip().upper()
+        print(f"[DEBUG MAIN] Cleaned Mode: '{mode_input}'")
+        
         sym = request.form['index']
         type_ = request.form['type']
+        # mode_input defined above
         input_qty = int(request.form['qty'])
         order_type = request.form['order_type']
+        
         limit_price = float(request.form.get('limit_price') or 0)
+        sl_points = float(request.form.get('sl_points', 0))
+        trailing_sl = float(request.form.get('trailing_sl') or 0)
+        sl_to_entry = int(request.form.get('sl_to_entry', 0))
+        exit_multiplier = int(request.form.get('exit_multiplier', 1))
+        
+        t1 = float(request.form.get('t1_price', 0))
+        t2 = float(request.form.get('t2_price', 0))
+        t3 = float(request.form.get('t3_price', 0))
+
+        # --- TELEGRAM BROADCAST CHANNELS ---
+        target_channels = ['main'] # Main is mandatory
+        if request.form.get('pub_vip'): target_channels.append('vip')
+        if request.form.get('pub_free'): target_channels.append('free')
+        if request.form.get('pub_z2h'): target_channels.append('z2h')
+        
+        # --- PREPARE TRADE FUNCTION ARGS ---
+        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
+        # Note: Shadow mode checks both inside execution block
+        
+        custom_targets = [t1, t2, t3] if t1 > 0 else []
+        
+        target_controls = []
+        for i in range(1, 4):
+            enabled = request.form.get(f't{i}_active') == 'on'
+            lots = int(request.form.get(f't{i}_lots') or 0)
+            trail_cost = request.form.get(f't{i}_cost') == 'on'
+            if i == 3 and lots == 0: lots = 1000 
+            target_controls.append({'enabled': enabled, 'lots': lots, 'trail_to_entry': trail_cost})
         
         final_sym = smart_trader.get_exact_symbol(sym, request.form.get('expiry'), request.form.get('strike', 0), type_)
         if not final_sym:
-            flash("❌ Symbol Generation Failed"); return redirect('/')
+            flash("❌ Symbol Generation Failed")
+            return redirect('/')
 
-        tc = []
-        for i in range(1, 4):
-            l = int(request.form.get(f't{i}_lots') or 0)
-            if i == 3 and l == 0: l = 1000
-            tc.append({'enabled': request.form.get(f't{i}_active')=='on', 'lots': l, 'trail_to_entry': request.form.get(f't{i}_cost')=='on'})
+        # --- EXECUTION LOGIC (SHADOW MODE IMPLEMENTATION) ---
         
-        channels = ['main']
-        for k in ['vip', 'free', 'z2h']: 
-            if request.form.get(f'pub_{k}'): channels.append(k)
-
-        # Shadow Logic (Overrides)
-        if mode_input == "SHADOW":
-            if not common.can_place_order("LIVE")[0]:
-                flash("❌ Shadow Blocked: LIVE Mode Disabled"); return redirect('/')
+        # Load settings to get multipliers
+        app_settings = settings.load_settings()
+        
+        # Helper to execute trade with optional overrides
+        def execute(ex_mode, ex_qty, ex_channels, overrides=None):
+            # Default to form values
+            use_sl_points = sl_points
+            use_target_controls = target_controls
+            use_custom_targets = custom_targets # Default to form prices
+            use_ratios = None
             
-            s = settings.load_settings()['modes']['LIVE']
-            overrides = {
-                'trailing_sl': s.get('trailing_sl', 0), 'sl_to_entry': s.get('sl_to_entry', 0),
-                'exit_multiplier': s.get('exit_multiplier', 1), 'target_controls': tc, 
-                'ratios': s.get('ratios', [0.5,1,1.5]), 'custom_targets': [],
-                'sl_points': float(request.form.get('sl_points', 0))
+            # Apply Overrides if provided (from Global Settings)
+            if overrides:
+                use_trail = float(overrides.get('trailing_sl', trailing_sl))
+                use_sl_entry = int(overrides.get('sl_to_entry', sl_to_entry))
+                use_exit_mult = int(overrides.get('exit_multiplier', exit_multiplier))
+                
+                # New: Symbol SL Override
+                if 'sl_points' in overrides: use_sl_points = float(overrides['sl_points'])
+                
+                # New: Target Controls Override
+                if 'target_controls' in overrides: use_target_controls = overrides['target_controls']
+                
+                # New: Ratios Override
+                if 'ratios' in overrides: use_ratios = overrides['ratios']
+                
+                # New: Custom Targets Override (Important to clear form prices)
+                if 'custom_targets' in overrides: use_custom_targets = overrides['custom_targets']
+            else:
+                use_trail = trailing_sl
+                use_sl_entry = sl_to_entry
+                use_exit_mult = exit_multiplier
+            
+            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
+            
+            return trade_manager.create_trade_direct(
+                kite, ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, 
+                order_type, limit_price, use_target_controls, 
+                use_trail, use_sl_entry, use_exit_mult, 
+                target_channels=ex_channels,
+                risk_ratios=use_ratios
+            )
+
+        if mode_input == "SHADOW":
+            print("[DEBUG MAIN] Entering SHADOW Logic Block...")
+            
+            # 1. Check Live Feasibility
+            can_live, reason = common.can_place_order("LIVE")
+            if not can_live:
+                flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
+                return redirect('/')
+
+            # 2. Execute LIVE
+            live_conf = app_settings['modes']['LIVE']
+            live_qty = input_qty
+            
+            # --- FETCH GLOBAL SETTINGS ---
+            
+            # A. Symbol SL Override
+            clean_sym = sym.split(':')[0].strip().upper() # e.g. NIFTY
+            live_sl_points = sl_points # Default to form
+            if 'symbol_sl' in live_conf and clean_sym in live_conf['symbol_sl']:
+                live_sl_points = float(live_conf['symbol_sl'][clean_sym])
+
+            # B. Target Controls & Ratios
+            # Construct target controls from Global Settings structure
+            live_controls = []
+            global_targets = live_conf.get('targets', []) # Assuming list of 3 dicts in settings
+            # Default fallback if settings empty
+            defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
+            
+            for i in range(3):
+                t_conf = global_targets[i] if i < len(global_targets) else defaults[i]
+                # Logic: If 'full' is true, lots=1000, else use specific lots
+                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
+                
+                live_controls.append({
+                    'enabled': t_conf.get('active', True),
+                    'lots': t_lots,
+                    'trail_to_entry': t_conf.get('trail_to_entry', False) # "Cost" logic
+                })
+
+            live_ratios = live_conf.get('ratios', [0.5, 1.0, 2.0])
+
+            # [CRITICAL UPDATE] Fetch Global Settings for LIVE Override
+            live_overrides = {
+                'trailing_sl': live_conf.get('trailing_sl', 0),
+                'sl_to_entry': live_conf.get('sl_to_entry', 0),
+                'exit_multiplier': live_conf.get('exit_multiplier', 1),
+                'sl_points': live_sl_points,
+                'target_controls': live_controls,
+                'ratios': live_ratios,
+                'custom_targets': [] # <--- FORCE EMPTY TARGETS TO USE RATIOS
             }
             
-            r1 = trade_manager.create_trade_direct(kite, "LIVE", final_sym, input_qty, float(request.form.get('sl_points',0)), [], order_type, limit_price, tc, 0, 0, 1, [], overrides=overrides)
-            if r1['status'] != 'success':
-                flash(f"❌ Shadow Live Failed: {r1['message']}"); return redirect('/')
+            # Live = Silent (no channels) + Global Settings Override
+            print("[DEBUG MAIN] calling execute('LIVE')...")
+            res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
+            if res_live['status'] != 'success':
+                flash(f"❌ Shadow Failed: LIVE Execution Error ({res_live['message']})")
+                return redirect('/')
+            
+            # 3. Wait for DB Safety (1s to ensure ID separation)
+            print("[DEBUG MAIN] LIVE Success. Waiting 1s...")
             time.sleep(1)
-            r2 = trade_manager.create_trade_direct(kite, "PAPER", final_sym, input_qty, float(request.form.get('sl_points',0)), [float(request.form.get(f't{i}_price',0)) for i in range(1,4)], order_type, limit_price, tc, float(request.form.get('trailing_sl',0)), int(request.form.get('sl_to_entry',0)), int(request.form.get('exit_multiplier',1)), target_channels=channels)
             
-            flash(f"👻 Shadow: LIVE {r1['status']} | PAPER {r2['status']}")
-        else:
-            if not common.can_place_order(mode_input)[0]:
-                flash(f"⛔ Blocked: {mode_input} disabled"); return redirect('/')
+            # 4. Execute PAPER
+            paper_qty = input_qty
             
-            r = trade_manager.create_trade_direct(
-                kite, mode_input, final_sym, input_qty, 
-                float(request.form.get('sl_points', 0)), 
-                [float(request.form.get(f't{i}_price', 0)) for i in range(1,4)],
-                order_type, limit_price, tc,
-                float(request.form.get('trailing_sl') or 0),
-                int(request.form.get('sl_to_entry', 0)),
-                int(request.form.get('exit_multiplier', 1)),
-                target_channels=channels
-            )
-            flash(f"✅ {r['status']}: {r.get('message', 'Done')}")
+            # Paper = Notifier + Form Settings (No Override)
+            print("[DEBUG MAIN] calling execute('PAPER')...")
+            res_paper = execute("PAPER", paper_qty, target_channels)
+            
+            if res_paper['status'] == 'success':
+                flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
+            else:
+                flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
 
+        else:
+            # Standard Execution (PAPER or LIVE)
+            print(f"[DEBUG MAIN] Entering STANDARD Logic Block (Mode: {mode_input})...")
+            
+            can_trade, reason = common.can_place_order(mode_input)
+            if not can_trade:
+                flash(f"⛔ Trade Blocked: {reason}")
+                return redirect('/')
+            
+            # Calculate Qty based on mode multiplier
+            final_qty = input_qty
+            
+            res = execute(mode_input, final_qty, target_channels)
+            
+            if res['status'] == 'success':
+                flash(f"✅ Order Placed: {final_sym}")
+            else:
+                flash(f"❌ Error: {res['message']}")
+            
     except Exception as e:
+        print(f"[DEBUG MAIN] Exception: {e}")
         flash(f"Error: {e}")
     return redirect('/')
 
 @app.route('/promote/<trade_id>')
 def promote(trade_id):
-    if trade_manager.promote_to_live(kite, trade_id): flash("✅ Promoted!"); 
-    else: flash("❌ Error")
+    if trade_manager.promote_to_live(kite, trade_id):
+        flash("✅ Promoted!")
+    else:
+        flash("❌ Error")
     return redirect('/')
 
 @app.route('/close_trade/<trade_id>')
 def close_trade(trade_id):
-    if trade_manager.close_trade_manual(kite, trade_id): flash("✅ Closed"); 
-    else: flash("❌ Error")
+    if trade_manager.close_trade_manual(kite, trade_id):
+        flash("✅ Closed")
+    else:
+        flash("❌ Error")
     return redirect('/')
 
 if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
