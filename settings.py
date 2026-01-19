@@ -36,6 +36,7 @@ def get_defaults():
         "telegram": {
             "bot_token": "",
             "enable_notifications": False,
+            "edit_mode": False, # <--- NEW: Toggle for Message Editing (Live Dashboard)
             
             # 1. Main Channel (Receives ALL updates)
             "channel_id": "", 
