@@ -14,6 +14,74 @@ class TelegramManager:
         s = settings.load_settings()
         return s.get('telegram', {})
 
+    def _format_msg(self, template_key, trade, extra_data=None, action_time=None):
+        """
+        Helper: Formats message strings based on settings.py templates
+        """
+        conf = self._get_config()
+        templates = conf.get('templates', {})
+        raw_tpl = templates.get(template_key, "")
+        
+        if not raw_tpl: return None
+
+        # Prepare Data Dict for Placeholders
+        raw_symbol = trade.get('symbol', 'Unknown')
+        entry_price = float(trade.get('entry_price', 0) or 0)
+        qty = float(trade.get('quantity', 0) or 0)
+        
+        data = {
+            "symbol": smart_trader.get_telegram_symbol(raw_symbol),
+            "mode": trade.get('mode', 'PAPER'),
+            "order_type": trade.get('order_type', 'MARKET'),
+            "qty": qty,
+            "entry": entry_price,
+            "sl": trade.get('sl', 0),
+            "targets": str(trade.get('targets', [])),
+            "time": action_time or get_time_str(),
+            "icon": "🔴" if trade.get('mode') == "LIVE" else "🟡"
+        }
+
+        # Add Context Specific Data
+        if template_key == "ACTIVE":
+            data["price"] = extra_data['price'] if isinstance(extra_data, dict) else extra_data
+        
+        elif template_key == "UPDATE":
+            data["update_text"] = extra_data if extra_data else f"SL: {trade.get('sl')}, Trail: {trade.get('trailing_sl')}"
+
+        elif template_key == "SL_HIT":
+            val = extra_data.get('pnl') if isinstance(extra_data, dict) else extra_data
+            data["pnl"] = f"{float(val or 0):.2f}"
+            data["exit_price"] = trade.get('exit_price', 0)
+
+        elif template_key == "TARGET_HIT":
+            t_data = extra_data if isinstance(extra_data, dict) else {}
+            data["t_num"] = t_data.get('t_num', '?')
+            data["price"] = t_data.get('price', 0)
+            try:
+                data["pot_pnl"] = f"{(float(data['price']) - entry_price) * qty:.2f}"
+            except: 
+                data["pot_pnl"] = "0.00"
+
+        elif template_key == "HIGH_MADE":
+            h_price = extra_data.get('price') if isinstance(extra_data, dict) else extra_data
+            data["price"] = h_price
+            try:
+                data["pot_pnl"] = f"{(float(h_price) - entry_price) * qty:.2f}"
+            except:
+                data["pot_pnl"] = "0.00"
+            
+        elif template_key == "EXIT":
+             data["reason"] = extra_data.get('reason', 'Manual') if isinstance(extra_data, dict) else 'Manual'
+             data["exit_price"] = extra_data.get('exit_price', 0) if isinstance(extra_data, dict) else 0
+             data["pnl"] = f"{extra_data.get('pnl', 0):.2f}" if isinstance(extra_data, dict) else "0.00"
+
+        # Perform Replacement safely
+        try:
+            return raw_tpl.format(**data)
+        except Exception as e:
+            print(f"Template Error ({template_key}): {e}")
+            return f"Template Error: {template_key}"
+
     def send_message(self, text, reply_to_id=None, override_chat_id=None):
         """
         Sends a message to the configured Telegram Channel.
@@ -80,23 +148,23 @@ class TelegramManager:
         Constructs and sends notifications to ALL configured channels based on rules.
         
         UPDATED LOGIC:
-          1. VIP/Z2H: STRICTLY Only NEW_TRADE, ACTIVE, UPDATE. (No SL_HIT).
-          2. FREE: 
-             - Allowed: NEW_TRADE, ACTIVE, UPDATE, TARGET_HIT, HIGH_MADE.
-             - BANNED: SL_HIT.
-          3. Threading:
-             - If Entry was skipped (Spillover mode), the First Result (T1) gets the Header.
+          1. Checks 'event_toggles' to see if this specific event is enabled.
+          2. Uses templates for message content.
+          3. Maintains filtering (VIP/Z2H/FREE) and Spillover logic.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
             return {}
 
+        # --- NEW: Check Individual Event Toggle ---
+        toggles = conf.get('event_toggles', {})
+        # If key is missing, default to True (Safe Default)
+        if not toggles.get(event_type, True): 
+            return {}
+        # ------------------------------------------
+
         raw_symbol = trade.get('symbol', 'Unknown')
         symbol = smart_trader.get_telegram_symbol(raw_symbol)
-        
-        mode = trade.get('mode', 'PAPER')
-        qty = trade.get('quantity', 0)
-        entry_price = trade.get('entry_price', 0)
         
         # --- THREAD IDS ---
         if 'telegram_msg_ids' not in trade or not isinstance(trade['telegram_msg_ids'], dict):
@@ -170,7 +238,6 @@ class TelegramManager:
             # Free: Only allow Results (unless it was explicitly selected for Entry)
             elif key == 'free':
                 # Double check specific allowed events to avoid noise
-                # [UPDATED] REMOVED 'SL_HIT' from this list
                 allowed_free = ['NEW_TRADE', 'ACTIVE', 'UPDATE', 'TARGET_HIT', 'HIGH_MADE']
                 if event_type not in allowed_free:
                     continue
@@ -185,7 +252,7 @@ class TelegramManager:
 
             # Special Logic for FREE Channel (Lazy Threading):
             # If we are sending a message (e.g. TARGET_HIT) but have no Thread ID yet,
-            # this means we skipped the Entry (Spillover Mode).
+            # this means we skipped the Entry (Spillover mode).
             # So this message becomes the Header/Parent.
             if key == 'free' and not reply_to:
                 is_new_thread_start = True
@@ -195,77 +262,18 @@ class TelegramManager:
             if event_type != "NEW_TRADE" and not reply_to and not is_new_thread_start:
                 continue
 
-            # --- BUILD MESSAGE CONTENT ---
-            msg = ""
+            # --- BUILD MESSAGE CONTENT (UPDATED: USES TEMPLATE) ---
+            msg = self._format_msg(event_type, trade, extra_data, action_time)
             
-            if event_type == "NEW_TRADE":
-                icon = "🔴" if mode == "LIVE" else "🟡"
-                order_type = trade.get('order_type', 'MARKET')
-                sl = trade.get('sl', 0)
-                targets = trade.get('targets', [])
-                
-                header = f"{icon} <b>NEW TRADE: {symbol}</b>"
-                if ch.get('custom_name'):
-                    header = f"🚀 <b>[{ch['custom_name']}]</b>\n{header}"
+            if not msg: continue # Skip if template failed or empty
 
-                msg = (
-                    f"{header}\n"
-                    f"Mode: {mode}\n"
-                    f"Type: {order_type}\n"
-                    f"Qty: {qty}\n"
-                    f"Entry: {entry_price}\n"
-                    f"SL: {sl}\n"
-                    f"Targets: {targets}\n"
-                    f"Time: {action_time}"
-                )
-
-            elif event_type == "ACTIVE":
-                fill_price = extra_data['price'] if isinstance(extra_data, dict) else extra_data
-                msg = f"🚀 <b>Order ACTIVATED</b>\nPrice: {fill_price}\nTime: {action_time}"
-                
-            elif event_type == "UPDATE":
-                update_text = extra_data if extra_data else ""
-                if update_text:
-                    msg = f"✏️ <b>Trade Update</b>\n{update_text}\nTime: {action_time}"
-                else:
-                    msg = (
-                        f"✏️ <b>Protection Updated</b>\n"
-                        f"New SL: {trade.get('sl')}\n"
-                        f"Trailing: {trade.get('trailing_sl')}\n"
-                        f"Targets: {trade.get('targets')}\n"
-                        f"Time: {action_time}"
-                    )
-
-            elif event_type == "SL_HIT":
-                pnl = extra_data.get('pnl') if isinstance(extra_data, dict) else (extra_data if extra_data else 0)
-                exit_price = trade.get('exit_price', 0)
-                msg = f"🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl:.2f}\nTime: {action_time}"
-
-            elif event_type == "TARGET_HIT":
-                t_data = extra_data if isinstance(extra_data, dict) else {}
-                t_num = t_data.get('t_num', '?')
-                t_price = t_data.get('price', 0)
-                pot_pnl = (t_price - entry_price) * qty
-                msg = (
-                    f"🎯 <b>Target {t_num} HIT</b>\n"
-                    f"Price: {t_price}\n"
-                    f"Max Potential: {pot_pnl:.2f}\n"
-                    f"Time: {action_time}"
-                )
-                
-            elif event_type == "HIGH_MADE":
-                if isinstance(extra_data, dict): h_price = extra_data.get('price')
-                else: h_price = extra_data
-                pot_pnl = (h_price - entry_price) * qty
-                msg = (
-                    f"📈 <b>New High Made: {h_price}</b>\n"
-                    f"Max Potential: {pot_pnl:.2f}\n"
-                    f"Time: {action_time}"
-                )
+            # Add Channel Name prefix for NEW_TRADE if configured
+            if event_type == "NEW_TRADE" and ch.get('custom_name'):
+                msg = f"🚀 <b>[{ch['custom_name']}]</b>\n" + msg
 
             # --- FREE CHANNEL HEADER INJECTION ---
             # If this is the start of a thread (e.g. T1 hit in Spillover mode), inject Header.
-            if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE" and msg:
+            if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE":
                 header_prefix = (
                     f"🔔 <b>{symbol}</b>\n"
                     f"Added Time: {entry_time_str}\n"
