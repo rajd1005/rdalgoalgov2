@@ -227,11 +227,22 @@
                             <div class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="paper_f3"></div>
                             <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" id="paper_c3"><span style="font-size:0.6rem;">C</span></div>
                         </div>
-                        <label class="pos-grid-label">Bulk Update (SYMBOL|SL)</label> <textarea id="paper_bulk_sl" class="form-control mb-2" rows="2" placeholder="ACC|8&#10;RELIANCE|20"></textarea> <button class="btn btn-sm btn-outline-secondary mb-3 w-100" onclick="applyBulkSL('PAPER')">Apply Bulk SL</button>
-                        <div class="input-group mb-2"><input type="text" id="paper_set_sym" class="form-control" placeholder="Symbol"><input type="number" id="paper_set_sl" class="form-control" placeholder="SL Pts"><button class="btn btn-primary" onclick="saveSymSL('PAPER')">Add</button></div>
+                        
+                        <label class="pos-grid-label">Bulk Update (SYMBOL|SL|T1|T2|T3)</label> 
+                        <textarea id="paper_bulk_sl" class="form-control mb-2" rows="2" placeholder="ACC|8|4|8|16&#10;RELIANCE|20|10|20|40"></textarea> 
+                        <button class="btn btn-sm btn-outline-secondary mb-3 w-100" onclick="applyBulkSL('PAPER')">Apply Bulk Data</button>
+                        
+                        <div class="input-group mb-2">
+                            <input type="text" id="paper_set_sym" class="form-control" placeholder="Sym" style="max-width: 90px;">
+                            <input type="number" id="paper_set_sl" class="form-control" placeholder="SL">
+                            <input type="number" id="paper_set_t1" class="form-control" placeholder="T1">
+                            <input type="number" id="paper_set_t2" class="form-control" placeholder="T2">
+                            <input type="number" id="paper_set_t3" class="form-control" placeholder="T3">
+                            <button class="btn btn-primary" onclick="saveSymSL('PAPER')">Add</button>
+                        </div>
                         <div class="table-responsive mb-3" style="max-height: 150px; overflow-y: auto;">
                             <table class="table table-bordered table-sm mt-2 sl-table">
-                                <thead class="table-light"><tr><th>Symbol</th><th>SL</th><th>Action</th></tr></thead>
+                                <thead class="table-light"><tr><th>Sym</th><th>SL</th><th>T1</th><th>T2</th><th>T3</th><th>Act</th></tr></thead>
                                 <tbody id="paper_sl_table_body"></tbody>
                             </table>
                         </div>
@@ -276,11 +287,22 @@
                             <div class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="live_f3"></div>
                             <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" id="live_c3"><span style="font-size:0.6rem;">C</span></div>
                         </div>
-                        <label class="pos-grid-label">Bulk Update (SYMBOL|SL)</label> <textarea id="live_bulk_sl" class="form-control mb-2" rows="2" placeholder="ACC|8&#10;RELIANCE|20"></textarea> <button class="btn btn-sm btn-outline-secondary mb-3 w-100" onclick="applyBulkSL('LIVE')">Apply Bulk SL</button>
-                        <div class="input-group mb-2"><input type="text" id="live_set_sym" class="form-control" placeholder="Symbol"><input type="number" id="live_set_sl" class="form-control" placeholder="SL Pts"><button class="btn btn-primary" onclick="saveSymSL('LIVE')">Add</button></div>
+                        
+                        <label class="pos-grid-label">Bulk Update (SYMBOL|SL|T1|T2|T3)</label> 
+                        <textarea id="live_bulk_sl" class="form-control mb-2" rows="2" placeholder="ACC|8|4|8|16&#10;RELIANCE|20|10|20|40"></textarea> 
+                        <button class="btn btn-sm btn-outline-secondary mb-3 w-100" onclick="applyBulkSL('LIVE')">Apply Bulk Data</button>
+                        
+                        <div class="input-group mb-2">
+                            <input type="text" id="live_set_sym" class="form-control" placeholder="Sym" style="max-width: 90px;">
+                            <input type="number" id="live_set_sl" class="form-control" placeholder="SL">
+                            <input type="number" id="live_set_t1" class="form-control" placeholder="T1">
+                            <input type="number" id="live_set_t2" class="form-control" placeholder="T2">
+                            <input type="number" id="live_set_t3" class="form-control" placeholder="T3">
+                            <button class="btn btn-primary" onclick="saveSymSL('LIVE')">Add</button>
+                        </div>
                         <div class="table-responsive mb-3" style="max-height: 150px; overflow-y: auto;">
                             <table class="table table-bordered table-sm mt-2 sl-table">
-                                <thead class="table-light"><tr><th>Symbol</th><th>SL</th><th>Action</th></tr></thead>
+                                <thead class="table-light"><tr><th>Sym</th><th>SL</th><th>T1</th><th>T2</th><th>T3</th><th>Act</th></tr></thead>
                                 <tbody id="live_sl_table_body"></tbody>
                             </table>
                         </div>
