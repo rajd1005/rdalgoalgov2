@@ -79,11 +79,11 @@ class TelegramManager:
         """
         Constructs and sends notifications to ALL configured channels based on rules.
         
-        UPDATED LOGIC (Premium Spillover):
-          1. VIP/Z2H: Receive Entry/Update/Active.
+        UPDATED LOGIC:
+          1. VIP/Z2H: STRICTLY Only NEW_TRADE, ACTIVE, UPDATE. (No Results/Exits).
           2. FREE: 
              - Explicitly Selected: Receives Entry + Results.
-             - NOT Selected but VIP/Z2H IS: Automatically receives RESULTS (Targets/High/SL).
+             - Spillover (VIP Selected): Automatically receives RESULTS (Targets/High/SL).
           3. Threading:
              - If Entry was skipped (Spillover mode), the First Result (T1) gets the Header.
         """
@@ -161,17 +161,14 @@ class TelegramManager:
 
             # --- FILTER 2: Event Type Segmentation ---
             
-            # VIP & Z2H: Keep receiving strictly relevant info (or everything if preferred)
+            # VIP & Z2H: STRICTLY Only Early Events
             if key in ['vip', 'z2h']:
-                # Ensure they get Entry, Active, Updates. 
-                # Results are also usually fine, but strictly required for Free.
-                pass 
+                allowed_vip = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
+                if event_type not in allowed_vip:
+                    continue
             
             # Free: Only allow Results (unless it was explicitly selected for Entry)
             elif key == 'free':
-                # If explicit selection: Get everything relevant (Entry + Results)
-                # If spillover (implied): We only get here if event_type is in result_events (checked above).
-                
                 # Double check specific allowed events to avoid noise
                 allowed_free = ['NEW_TRADE', 'ACTIVE', 'UPDATE', 'TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
                 if event_type not in allowed_free:
