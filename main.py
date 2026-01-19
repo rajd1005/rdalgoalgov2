@@ -377,54 +377,6 @@ def test_telegram():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
 
-# --- MISSING ROUTES (FIXED) ---
-
-@app.route('/get_ltp')
-def route_get_ltp():
-    """
-    Route for manual LTP fetch from dashboard.
-    """
-    sym = request.args.get('symbol')
-    if not sym: return jsonify({'ltp': 0})
-    val = smart_trader.get_ltp(kite, sym)
-    return jsonify({'ltp': val})
-
-@app.route('/update_data')
-def update_data():
-    """
-    Core route for dashboard live updates.
-    Returns active trades list + LTP of the currently watched symbol.
-    """
-    try:
-        # 1. Get active trades
-        active_trades = persistence.load_trades()
-        active_trades = [t for t in active_trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
-        
-        for t in active_trades:
-            t['symbol'] = smart_trader.get_display_name(t['symbol'])
-            
-        # 2. Get LTP for the symbol requested by frontend (Input Box or Import Box)
-        symbol_to_track = request.args.get('symbol')
-        
-        # Fallback: if no symbol requested, use first active trade
-        if not symbol_to_track and active_trades:
-            symbol_to_track = active_trades[0]['symbol']
-            
-        ltp = 0.0
-        if symbol_to_track:
-            ltp = smart_trader.get_ltp(kite, symbol_to_track)
-        
-        return jsonify({
-            'trades': active_trades,
-            'ltp': ltp, 
-            'status': 'success'
-        })
-    except Exception as e:
-        print(f"Update Data Error: {e}")
-        return jsonify({'trades': [], 'ltp': 0, 'status': 'error'})
-
-# ------------------------------
-
 @app.route('/api/import_trade', methods=['POST'])
 def api_import_trade():
     if not bot_active: return jsonify({"status": "error", "message": "Bot not connected"})
