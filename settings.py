@@ -49,7 +49,29 @@ def get_defaults():
             
             # 4. ZeroToHero Channel (New/Active/Update Only + Custom Name)
             "z2h_channel_id": "",
-            "z2h_channel_name": "Zero To Hero" # Default Name
+            "z2h_channel_name": "Zero To Hero", # Default Name
+
+            # --- NEW: Event Toggles (Individual On/Off) ---
+            "event_toggles": {
+                "NEW_TRADE": True,
+                "ACTIVE": True,
+                "UPDATE": True,
+                "SL_HIT": True,
+                "TARGET_HIT": True,
+                "HIGH_MADE": True,
+                "EXIT": True
+            },
+
+            # --- NEW: Message Templates (With Placeholders) ---
+            "templates": {
+                "NEW_TRADE": "{icon} <b>NEW TRADE: {symbol}</b>\nMode: {mode}\nType: {order_type}\nQty: {qty}\nEntry: {entry}\nSL: {sl}\nTargets: {targets}\nTime: {time}",
+                "ACTIVE": "🚀 <b>Order ACTIVATED</b>\nPrice: {price}\nTime: {time}",
+                "UPDATE": "✏️ <b>Trade Update</b>\n{update_text}\nTime: {time}",
+                "SL_HIT": "🛑 <b>Stop Loss Hit</b>\nExit Price: {exit_price}\nP/L: {pnl}\nTime: {time}",
+                "TARGET_HIT": "🎯 <b>Target {t_num} HIT</b>\nPrice: {price}\nMax Potential: {pot_pnl}\nTime: {time}",
+                "HIGH_MADE": "📈 <b>New High Made: {price}</b>\nMax Potential: {pot_pnl}\nTime: {time}",
+                "EXIT": "🚪 <b>Trade Closed</b>\nReason: {reason}\nPrice: {exit_price}\nP/L: {pnl}\nTime: {time}"
+            }
         }
     }
 
