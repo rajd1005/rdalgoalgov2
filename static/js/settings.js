@@ -8,32 +8,45 @@ function loadSettings() {
                 $('input[name="exch_select"]').prop('checked', false);
                 settings.exchanges.forEach(e => $(`#exch_${e}`).prop('checked', true));
             }
-            
-            // --- NEW: Default Trade Mode ---
-            // 1. Set Value in Settings Modal
-            let defMode = settings.default_trade_mode || 'PAPER';
-            $('#def_trade_mode').val(defMode);
 
-            // 2. Apply to Dashboard (Auto-Click the Mode Button)
-            // UPDATED SELECTOR: Looks for any element with class .btn (divs in your case)
+            // --- NEW: 1st Trade Logic Toggle ---
+            $('#first_trade_toggle').prop('checked', settings.first_trade_logic || false);
+            
+            // --- DETERMINE EFFECTIVE DEFAULTS (Logic Injection) ---
+            // 1. Get Stored User Preferences
+            let storedMode = settings.default_trade_mode || 'PAPER';
+            let storedChannels = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
+
+            // 2. Define Variables for Dashboard Application
+            let applyMode = storedMode;
+            let applyChannels = storedChannels;
+
+            // 3. CHECK 1st TRADE LOGIC
+            if (settings.first_trade_logic && settings.is_first_trade) {
+                console.log("ℹ️ First Trade of Day Detected: Enforcing Shadow & Free Only");
+                applyMode = 'SHADOW';
+                applyChannels = ['free'];
+            }
+
+            // --- UPDATE UI: SETTINGS MODAL (Show Stored Preferences) ---
+            $('#def_trade_mode').val(storedMode);
+            $('#def_vip').prop('checked', storedChannels.includes('vip'));
+            $('#def_free').prop('checked', storedChannels.includes('free'));
+            $('#def_z2h').prop('checked', storedChannels.includes('z2h'));
+
+            // --- UPDATE UI: DASHBOARD PANEL (Apply Calculated/Overridden Values) ---
+            // Auto-Click the Mode Button
             setTimeout(() => {
-                let btn = $(`.btn[onclick*="setMode"][onclick*="'${defMode}'"]`);
+                let btn = $(`.btn[onclick*="setMode"][onclick*="'${applyMode}'"]`);
                 if(btn.length && !btn.hasClass('active')) {
                     btn.click();
                 }
-            }, 200); // Small delay to ensure DOM is ready
-            // -------------------------------
+            }, 200); 
 
-            // --- Broadcast Defaults ---
-            let defaults = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
-            $('#def_vip').prop('checked', defaults.includes('vip'));
-            $('#def_free').prop('checked', defaults.includes('free'));
-            $('#def_z2h').prop('checked', defaults.includes('z2h'));
-
-            // Apply to Dashboard Panel if present
-            if($('#chk_vip').length) $('#chk_vip').prop('checked', defaults.includes('vip'));
-            if($('#chk_free').length) $('#chk_free').prop('checked', defaults.includes('free'));
-            if($('#chk_z2h').length) $('#chk_z2h').prop('checked', defaults.includes('z2h'));
+            // Apply to Dashboard Checkboxes
+            if($('#chk_vip').length) $('#chk_vip').prop('checked', applyChannels.includes('vip'));
+            if($('#chk_free').length) $('#chk_free').prop('checked', applyChannels.includes('free'));
+            if($('#chk_z2h').length) $('#chk_z2h').prop('checked', applyChannels.includes('z2h'));
 
             renderWatchlist();
 
@@ -136,6 +149,9 @@ function saveSettings() {
     let selectedExchanges = [];
     $('input[name="exch_select"]:checked').each(function() { selectedExchanges.push($(this).val()); });
     settings.exchanges = selectedExchanges;
+
+    // --- NEW: Save 1st Trade Logic Toggle ---
+    settings.first_trade_logic = $('#first_trade_toggle').is(':checked'); 
 
     // --- NEW: Save Default Trade Mode ---
     settings.default_trade_mode = $('#def_trade_mode').val(); 
