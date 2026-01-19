@@ -15,14 +15,16 @@ function loadSettings() {
             $('#def_trade_mode').val(defMode);
 
             // 2. Apply to Dashboard (Auto-Click the Mode Button)
-            // UPDATED SELECTOR: Looks for any element with class .btn (divs in your case)
+            // Fix: Use .btn class selector since they are DIVs, not BUTTON tags
             setTimeout(() => {
                 let btn = $(`.btn[onclick*="setMode"][onclick*="'${defMode}'"]`);
                 if(btn.length && !btn.hasClass('active')) {
                     btn.click();
                 }
-            }, 200); // Small delay to ensure DOM is ready
-            // -------------------------------
+            }, 200); 
+            
+            // --- NEW: 1st Trade Critical Toggle ---
+            $('#first_trade_critical').prop('checked', settings.first_trade_critical === true);
 
             // --- Broadcast Defaults ---
             let defaults = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
@@ -137,8 +139,9 @@ function saveSettings() {
     $('input[name="exch_select"]:checked').each(function() { selectedExchanges.push($(this).val()); });
     settings.exchanges = selectedExchanges;
 
-    // --- NEW: Save Default Trade Mode ---
+    // --- NEW: Save Default Trade Mode & Critical Toggle ---
     settings.default_trade_mode = $('#def_trade_mode').val(); 
+    settings.first_trade_critical = $('#first_trade_critical').is(':checked');
 
     // --- NEW: Save Broadcast Defaults ---
     let b_defs = [];
@@ -146,7 +149,6 @@ function saveSettings() {
     if($('#def_free').is(':checked')) b_defs.push('free');
     if($('#def_z2h').is(':checked')) b_defs.push('z2h');
     settings.broadcast_defaults = b_defs;
-    // ------------------------------------
 
     ['PAPER', 'LIVE', 'SHADOW'].forEach(m => {
         let k = m.toLowerCase();
