@@ -56,8 +56,8 @@ function loadSettings() {
 
             renderWatchlist();
 
-            // --- Modes (PAPER / LIVE / SHADOW) ---
-            ['PAPER', 'LIVE', 'SHADOW'].forEach(m => {
+            // --- Modes (PAPER / LIVE - SHADOW removed from settings UI) ---
+            ['PAPER', 'LIVE'].forEach(m => {
                 let k = m.toLowerCase();
                 let s = settings.modes[m];
                 
@@ -172,7 +172,7 @@ function saveSettings() {
     settings.default_broadcast_channel = def_channel;
     // ------------------------------------
 
-    ['PAPER', 'LIVE', 'SHADOW'].forEach(m => {
+    ['PAPER', 'LIVE'].forEach(m => {
         let k = m.toLowerCase();
         let s = settings.modes[m];
         
