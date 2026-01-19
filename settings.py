@@ -64,6 +64,7 @@ def get_defaults():
 
             # --- NEW: Message Templates (With Placeholders) ---
             "templates": {
+                "FREE_HEADER": "🔔 <b>{symbol}</b>\nAdded Time: {entry_time}\n➖➖➖➖➖➖➖➖\n",
                 "NEW_TRADE": "{icon} <b>NEW TRADE: {symbol}</b>\nMode: {mode}\nType: {order_type}\nQty: {qty}\nEntry: {entry}\nSL: {sl}\nTargets: {targets}\nTime: {time}",
                 "ACTIVE": "🚀 <b>Order ACTIVATED</b>\nPrice: {price}\nTime: {time}",
                 "UPDATE": "✏️ <b>Trade Update</b>\n{update_text}\nTime: {time}",
