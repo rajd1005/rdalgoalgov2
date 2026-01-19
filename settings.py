@@ -21,11 +21,15 @@ def get_defaults():
     }
     
     return {
-        "first_trade_logic": False, # New Feature Key
+        "first_trade_logic": False, 
         "default_trade_mode": "PAPER",
         "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
         "watchlist": [],
-        "broadcast_defaults": ["vip", "free", "z2h"], 
+        
+        # --- CHANGED: Single Default Channel ---
+        "default_broadcast_channel": "vip", 
+        # -------------------------------------
+        
         "modes": {
             "LIVE": default_mode_settings.copy(),
             "PAPER": default_mode_settings.copy(),
@@ -110,7 +114,10 @@ def load_settings():
             # --- MERGE NEW KEYS ---
             if "first_trade_logic" not in saved: saved["first_trade_logic"] = defaults["first_trade_logic"]
             if "default_trade_mode" not in saved: saved["default_trade_mode"] = defaults["default_trade_mode"]
-            if "broadcast_defaults" not in saved: saved["broadcast_defaults"] = defaults["broadcast_defaults"]
+            
+            # Updated Key Merge
+            if "default_broadcast_channel" not in saved: saved["default_broadcast_channel"] = defaults["default_broadcast_channel"]
+            
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
 
             # Merge Telegram (Recursive merge for new keys & templates)
