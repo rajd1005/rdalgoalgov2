@@ -592,9 +592,11 @@ def place_trade():
 
         # --- TELEGRAM BROADCAST CHANNELS ---
         target_channels = ['main'] # Main is mandatory
-        if request.form.get('pub_vip'): target_channels.append('vip')
-        if request.form.get('pub_free'): target_channels.append('free')
-        if request.form.get('pub_z2h'): target_channels.append('z2h')
+        
+        # [UPDATED] Single Selector Logic (Radio Buttons)
+        selected_channel = request.form.get('target_channel')
+        if selected_channel in ['vip', 'free', 'z2h']:
+            target_channels.append(selected_channel)
         
         # --- PREPARE TRADE FUNCTION ARGS ---
         can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
