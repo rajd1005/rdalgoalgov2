@@ -78,7 +78,10 @@ class TelegramManager:
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends notifications to ALL configured channels based on rules.
-        Returns a DICT of Message IDs: {'main': 123, 'vip': 456, ...}
+        UPDATED FEATURES:
+          - VIP/Z2H: Only NEW_TRADE, ACTIVE, UPDATE.
+          - FREE: Only TARGET_HIT, HIGH_MADE, SL_HIT.
+          - FREE Logic: First message (e.g. T1) gets Header (Symbol+Time). Subsequent are replies.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -91,13 +94,15 @@ class TelegramManager:
         qty = trade.get('quantity', 0)
         entry_price = trade.get('entry_price', 0)
         
-        # --- THREAD IDS: Handle Backward Compatibility ---
-        # Old trades might have a string ID. New trades use a dict.
-        stored_ids = trade.get('telegram_msg_ids', {})
-        if not isinstance(stored_ids, dict):
-            # If it's a string or legacy 'telegram_msg_id', assume it's for the MAIN channel
+        # --- THREAD IDS: Handle Backward Compatibility & Initialization ---
+        if 'telegram_msg_ids' not in trade or not isinstance(trade['telegram_msg_ids'], dict):
+            trade['telegram_msg_ids'] = {}
+            # Migrate legacy string ID to main if exists
             legacy_id = trade.get('telegram_msg_id')
-            stored_ids = {'main': legacy_id} if legacy_id else {}
+            if legacy_id:
+                trade['telegram_msg_ids']['main'] = legacy_id
+        
+        stored_ids = trade['telegram_msg_ids']
 
         # --- DETERMINE ACTION TIME ---
         action_time = get_time_str() 
@@ -105,6 +110,9 @@ class TelegramManager:
             action_time = extra_data['time']
         elif event_type == "NEW_TRADE" and trade.get('entry_time'):
             action_time = trade.get('entry_time')
+            
+        # Entry time for Header
+        entry_time_str = trade.get('entry_time', action_time)
 
         # --- DEFINE TARGET CHANNELS & RULES ---
         all_channels = [
@@ -114,38 +122,55 @@ class TelegramManager:
             {'key': 'z2h', 'id': conf.get('z2h_channel_id'), 'allow_all': False, 'custom_name': conf.get('z2h_channel_name')}
         ]
         
-        # Rule: Extra channels ONLY get NEW_TRADE, ACTIVE, UPDATE
-        allowed_extras = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
+        # Define Allowed Events per Group
+        early_events = ['NEW_TRADE', 'ACTIVE', 'UPDATE']
+        result_events = ['TARGET_HIT', 'HIGH_MADE', 'SL_HIT']
         
-        # Check if trade has specific target channels defined (Broadcast Selector)
+        # Check Broadcast Selector (if trade has specific target list)
         target_list = trade.get('target_channels') # e.g. ['main', 'vip']
 
-        new_msg_ids = {} # To return
+        new_msg_ids = {} # To return for NEW_TRADE
 
         # Loop through channels
         for ch in all_channels:
+            key = ch['key']
             chat_id = ch['id']
             if not chat_id: continue # Skip if not configured
             
             # --- FILTER 1: User Selection ---
-            # If target_list exists, skipping channels NOT in the list
-            if target_list is not None and ch['key'] not in target_list:
+            if target_list is not None and key not in target_list:
                 continue
 
-            # --- FILTER 2: Event Type ---
-            # Extra channels (vip/free/z2h) only get specific events unless allow_all is True (Main)
-            if not ch['allow_all'] and event_type not in allowed_extras:
-                continue
+            # --- FILTER 2: Event Type Segmentation ---
+            # VIP & Z2H: Only Early Events
+            if key in ['vip', 'z2h']:
+                if event_type not in early_events:
+                    continue
             
-            # Get Reply-To ID for this specific channel
-            reply_to = stored_ids.get(ch['key'])
+            # Free: Only Result Events
+            elif key == 'free':
+                if event_type not in result_events:
+                    continue
+            
+            # (Main channel allows all, so no 'continue' here)
 
-            # Logic for NEW_TRADE (Start new thread) vs REPLIES
+            # --- THREAD MANAGEMENT ---
+            reply_to = stored_ids.get(key)
+            is_new_thread_start = False
+
+            # NEW_TRADE always starts a new thread
             if event_type == "NEW_TRADE":
-                reply_to = None # Reset for new thread
+                reply_to = None 
 
-            # If it's a reply event (not NEW_TRADE) but we don't have a thread ID for this channel, SKIP
-            if event_type != "NEW_TRADE" and not reply_to:
+            # Special Logic for FREE Channel:
+            # If we are sending a Result (e.g. T1) but have no Thread ID yet,
+            # this message becomes the Header/Parent.
+            if key == 'free' and not reply_to:
+                is_new_thread_start = True
+
+            # If it's a reply event (not NEW_TRADE) but we don't have a thread ID 
+            # AND it's not the start of the Free Channel thread -> SKIP
+            if event_type != "NEW_TRADE" and not reply_to and not is_new_thread_start:
                 continue
 
             # --- BUILD MESSAGE CONTENT ---
@@ -157,10 +182,8 @@ class TelegramManager:
                 sl = trade.get('sl', 0)
                 targets = trade.get('targets', [])
                 
-                # Custom Header for Z2H or other channels with custom names
                 header = f"{icon} <b>NEW TRADE: {symbol}</b>"
                 if ch.get('custom_name'):
-                    # Use the custom name (e.g. "Jackpot Calls") in the header
                     header = f"🚀 <b>[{ch['custom_name']}]</b>\n{header}"
 
                 msg = (
@@ -218,17 +241,28 @@ class TelegramManager:
                     f"Time: {action_time}"
                 )
 
+            # --- FREE CHANNEL HEADER INJECTION ---
+            # If this is the start of the Free Channel Thread, prepend the Header info.
+            if is_new_thread_start and key == 'free' and msg:
+                header_prefix = (
+                    f"🔔 <b>{symbol}</b>\n"
+                    f"Added Time: {entry_time_str}\n"
+                    f"➖➖➖➖➖➖➖➖\n"
+                )
+                msg = header_prefix + msg
+
             # --- SEND & SAVE ---
             if msg:
                 sent_id = self.send_message(msg, reply_to_id=reply_to, override_chat_id=chat_id)
                 if sent_id:
                     self._save_msg_to_db(trade.get('id'), sent_id, chat_id)
                     
-                    # If this was a new trade, record the thread ID for this channel
-                    if event_type == "NEW_TRADE":
-                        new_msg_ids[ch['key']] = sent_id
+                    # If NEW_TRADE or First Free Msg, update stored IDs
+                    if event_type == "NEW_TRADE" or is_new_thread_start:
+                        new_msg_ids[key] = sent_id
+                        # CRITICAL: Update the trade object in-place so Risk Engine saves it
+                        trade['telegram_msg_ids'][key] = sent_id
 
-        # Return the collected IDs (only useful for NEW_TRADE to update the Trade Record)
         return new_msg_ids
 
     def _save_msg_to_db(self, trade_id, msg_id, chat_id):
