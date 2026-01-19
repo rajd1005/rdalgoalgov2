@@ -71,7 +71,7 @@ function checkCriticalTradeLogic() {
             // Programmatically click the SHADOW button to switch mode and update UI
             let btn = $(`.btn[onclick*="setMode"][onclick*="'SHADOW'"]`);
             if(btn.length) {
-                console.log("1st Trade Critical: Forcing SHADOW Mode");
+                // console.log("1st Trade Critical: Forcing SHADOW Mode");
                 btn.click();
             }
         }
@@ -84,7 +84,7 @@ function checkCriticalTradeLogic() {
 
             // Apply override if current state matches "Normal" defaults (VIP/Z2H enabled or Free disabled)
             if (!isFree || isVip || isZ2h) {
-                console.log("1st Trade Critical: Forcing FREE Channel Only");
+                // console.log("1st Trade Critical: Forcing FREE Channel Only");
                 $('#chk_free').prop('checked', true);
                 $('#chk_vip').prop('checked', false);
                 $('#chk_z2h').prop('checked', false);
@@ -93,13 +93,23 @@ function checkCriticalTradeLogic() {
     }
 }
 
-// Update Data (Active Trades) -> Updates g_activeTrades
+// Update Data (Active Trades) -> Updates g_activeTrades & LTP
 function updateData() {
-    $.get('/update_data', function(res) {
+    // [FIX] Send the current symbol to backend to get the correct LTP
+    let currentSym = $('#sym').val(); 
+    if(!currentSym) currentSym = $('#imp_sym').val(); // fallback to import field if active
+
+    $.get('/update_data', { symbol: currentSym }, function(res) {
         if(res.redirect) window.location.href = res.redirect;
         
-        $('#inst_ltp').text("LTP: " + (res.ltp || 0));
-        $('#imp_ltp').text("LTP: " + (res.ltp || 0));
+        // Update Headers (LTP)
+        let ltpVal = res.ltp || 0;
+        $('#inst_ltp').text("LTP: " + ltpVal);
+        
+        // Also update the badge inside the Import Modal if open
+        if($('#importModal').hasClass('show')) {
+             $('#imp_ltp').text("LTP: " + ltpVal);
+        }
         
         // Count Active Trades
         let trades = res.trades || [];
