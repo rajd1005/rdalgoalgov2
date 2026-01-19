@@ -19,15 +19,14 @@ def get_defaults():
     }
     
     return {
-        # --- NEW: Default Trade Mode (Startup Config) ---
         "default_trade_mode": "PAPER",
-        # ------------------------------------------------
         "exchanges": ["NSE", "NFO", "MCX", "CDS", "BSE", "BFO"],
         "watchlist": [],
         "broadcast_defaults": ["vip", "free", "z2h"], 
         "modes": {
             "LIVE": default_mode_settings.copy(),
-            "PAPER": default_mode_settings.copy()
+            "PAPER": default_mode_settings.copy(),
+            "SHADOW": default_mode_settings.copy()
         },
         "import_config": {
             "enable_history_check": True,
@@ -49,7 +48,7 @@ def get_defaults():
             
             # 4. ZeroToHero Channel (New/Active/Update Only + Custom Name)
             "z2h_channel_id": "",
-            "z2h_channel_name": "Zero To Hero", # Default Name
+            "z2h_channel_name": "Zero To Hero", 
 
             # --- Event Toggles (Individual On/Off) ---
             "event_toggles": {
@@ -83,7 +82,7 @@ def load_settings():
         if setting:
             saved = json.loads(setting.data)
             
-            # Integrity Check
+            # Integrity Check for Modes
             if "modes" not in saved:
                 old_mult = saved.get("qty_mult", 1)
                 old_ratios = saved.get("ratios", [0.5, 1.0, 1.5])
@@ -93,13 +92,14 @@ def load_settings():
                     "PAPER": {"qty_mult": old_mult, "ratios": old_ratios, "symbol_sl": old_sl.copy()}
                 }
 
-            # Merge Defaults
-            for m in ["LIVE", "PAPER"]:
+            # Merge Modes (Ensure LIVE, PAPER, SHADOW exist)
+            for m in ["LIVE", "PAPER", "SHADOW"]:
                 if m in saved["modes"]:
                     for key, val in defaults["modes"][m].items():
                         if key not in saved["modes"][m]: saved["modes"][m][key] = val
                     if "symbol_sl" not in saved["modes"][m]: saved["modes"][m]["symbol_sl"] = {}
-                else: saved["modes"][m] = defaults["modes"][m].copy()
+                else: 
+                    saved["modes"][m] = defaults["modes"][m].copy()
 
             if "exchanges" not in saved: saved["exchanges"] = defaults["exchanges"]
             if "watchlist" not in saved: saved["watchlist"] = []
@@ -107,16 +107,20 @@ def load_settings():
             # --- MERGE NEW KEYS ---
             if "default_trade_mode" not in saved: saved["default_trade_mode"] = defaults["default_trade_mode"]
             if "broadcast_defaults" not in saved: saved["broadcast_defaults"] = defaults["broadcast_defaults"]
-            
             if "import_config" not in saved: saved["import_config"] = defaults["import_config"]
 
-            # Merge Telegram (Recursive merge for new keys)
+            # Merge Telegram (Recursive merge for new keys & templates)
             if "telegram" not in saved: 
                 saved["telegram"] = defaults["telegram"]
             else:
                 for k, v in defaults["telegram"].items():
                     if k not in saved["telegram"]:
                         saved["telegram"][k] = v
+                    elif isinstance(v, dict) and isinstance(saved["telegram"][k], dict):
+                        # Deep merge for templates and toggles to ensure new keys appear
+                        for sub_k, sub_v in v.items():
+                            if sub_k not in saved["telegram"][k]:
+                                saved["telegram"][k][sub_k] = sub_v
 
             return saved
     except Exception as e: print(f"Error loading settings: {e}")
