@@ -95,6 +95,12 @@ def get_ltp(kite, symbol):
         if not symbol_map:
             fetch_instruments(kite)
 
+        if not symbol:
+            return 0
+
+        # Clean symbol
+        symbol = symbol.strip().upper()
+
         # 1. If symbol already has exchange (e.g., NSE:RELIANCE), try directly
         if ":" in symbol:
             quote = kite.quote(symbol)
