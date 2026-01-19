@@ -126,12 +126,12 @@
                 <ul class="nav nav-tabs mb-3" id="settingTabs" role="tablist">
                     <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-general">General</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-paper">Paper</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-shadow">Shadow</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-live">Live</button></li>
                     <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-telegram">🔔 Notifications</button></li>
                 </ul>
                 <div class="tab-content" id="settingTabsContent">
                     <div class="tab-pane fade show active" id="tab-general">
-                        
                         <h6 class="text-primary">Watchlist</h6>
                         <div class="input-group mb-3">
                             <input type="text" id="new_watch_sym" class="form-control" placeholder="Symbol (e.g. RELIANCE)">
@@ -176,6 +176,7 @@
                             <label class="form-label">Default Trade Mode</label>
                             <select id="def_trade_mode" class="form-select">
                                 <option value="PAPER">Paper Trading</option>
+                                <option value="SHADOW">Shadow Trading</option>
                                 <option value="LIVE">Live Trading</option>
                             </select>
                             <div class="form-text">This mode will be auto-selected when you open the dashboard.</div>
@@ -185,23 +186,8 @@
                     <div class="tab-pane fade" id="tab-paper">
                         <h6 class="mb-2 text-warning">Paper Trade Config</h6>
                         <div class="row g-2 mb-2">
-                            <div class="col-6">
-                                <label class="pos-grid-label">Default Order Type</label>
-                                <select id="paper_order_type" class="form-select">
-                                    <option value="MARKET">MARKET</option>
-                                    <option value="LIMIT">LIMIT</option>
-                                </select>
-                            </div>
-                            <div class="col-6">
-                                <label class="pos-grid-label">Trail Limit Default</label>
-                                <select id="paper_trail_limit" class="form-select">
-                                    <option value="0">Unlimited</option>
-                                    <option value="1">Up-to Entry</option>
-                                    <option value="2">Up-to T1</option>
-                                    <option value="3">Up-to T2</option>
-                                    <option value="4">Up-to T3</option>
-                                </select>
-                            </div>
+                            <div class="col-6"><label class="pos-grid-label">Default Order Type</label><select id="paper_order_type" class="form-select"><option value="MARKET">MARKET</option><option value="LIMIT">LIMIT</option></select></div>
+                            <div class="col-6"><label class="pos-grid-label">Trail Limit Default</label><select id="paper_trail_limit" class="form-select"><option value="0">Unlimited</option><option value="1">Up-to Entry</option><option value="2">Up-to T1</option><option value="3">Up-to T2</option><option value="4">Up-to T3</option></select></div>
                         </div>
                         <div class="row g-2 mb-2">
                             <div class="col-6"><label class="pos-grid-label">Default Trailing (Pts)</label><input type="number" step="0.5" id="paper_def_trail" class="form-control" placeholder="0"></div>
@@ -219,7 +205,6 @@
                             <span class="input-group-text">Lock</span><input type="number" id="paper_pl_min" class="form-control" placeholder="1000">
                             <span class="input-group-text">Trail</span><input type="number" id="paper_pl_trail" class="form-control" placeholder="500">
                         </div>
-
                         <label class="pos-grid-label">Quantity Multiplier</label><input type="number" id="paper_qty_mult" class="form-control mb-2" value="1" min="1">
                         <label class="pos-grid-label">Target Config (Ratio | Active | Lots | Full | Cost)</label>
                         <div class="input-group mb-1"> <span class="input-group-text">T1</span><input type="number" step="0.1" id="paper_r1" class="form-control">
@@ -241,14 +226,57 @@
                         <div class="input-group mb-2"><input type="text" id="paper_set_sym" class="form-control" placeholder="Symbol"><input type="number" id="paper_set_sl" class="form-control" placeholder="SL Pts"><button class="btn btn-primary" onclick="saveSymSL('PAPER')">Add</button></div>
                         <div class="table-responsive mb-3" style="max-height: 150px; overflow-y: auto;">
                             <table class="table table-bordered table-sm mt-2 sl-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>Symbol</th>
-                                        <th>SL</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
+                                <thead class="table-light"><tr><th>Symbol</th><th>SL</th><th>Action</th></tr></thead>
                                 <tbody id="paper_sl_table_body"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-shadow">
+                        <h6 class="mb-2 text-info">Shadow Trade Config</h6>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6"><label class="pos-grid-label">Default Order Type</label><select id="shadow_order_type" class="form-select"><option value="MARKET">MARKET</option><option value="LIMIT">LIMIT</option></select></div>
+                            <div class="col-6"><label class="pos-grid-label">Trail Limit Default</label><select id="shadow_trail_limit" class="form-select"><option value="0">Unlimited</option><option value="1">Up-to Entry</option><option value="2">Up-to T1</option><option value="3">Up-to T2</option><option value="4">Up-to T3</option></select></div>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6"><label class="pos-grid-label">Default Trailing (Pts)</label><input type="number" step="0.5" id="shadow_def_trail" class="form-control" placeholder="0"></div>
+                            <div class="col-6"><label class="pos-grid-label">Exit Multiplier</label><input type="number" id="shadow_exit_mult" class="form-control" value="1" min="1" max="10"></div>
+                        </div>
+                        <hr class="my-2">
+                        <h6 class="pos-grid-label text-danger">⚠️ Risk Management (Global)</h6>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6"><label class="pos-grid-label">Universal Sq.Off Time</label><input type="time" id="shadow_time" class="form-control"></div>
+                            <div class="col-6"><label class="pos-grid-label">Max Daily Loss (Rs)</label><input type="number" id="shadow_max_loss" class="form-control" placeholder="0 to Disable"></div>
+                        </div>
+                        <label class="pos-grid-label text-success">Profit Locking (Global Trailing)</label>
+                        <div class="input-group mb-3">
+                            <span class="input-group-text">Reach</span><input type="number" id="shadow_pl_start" class="form-control" placeholder="2000">
+                            <span class="input-group-text">Lock</span><input type="number" id="shadow_pl_min" class="form-control" placeholder="1000">
+                            <span class="input-group-text">Trail</span><input type="number" id="shadow_pl_trail" class="form-control" placeholder="500">
+                        </div>
+                        <label class="pos-grid-label">Quantity Multiplier</label><input type="number" id="shadow_qty_mult" class="form-control mb-2" value="1" min="1">
+                        <label class="pos-grid-label">Target Config (Ratio | Active | Lots | Full | Cost)</label>
+                        <div class="input-group mb-1"> <span class="input-group-text">T1</span><input type="number" step="0.1" id="shadow_r1" class="form-control">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" id="shadow_a1"></div> <input type="number" id="shadow_l1" class="form-control" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="shadow_f1"></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" id="shadow_c1"><span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <div class="input-group mb-1"> <span class="input-group-text">T2</span><input type="number" step="0.1" id="shadow_r2" class="form-control">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" id="shadow_a2"></div> <input type="number" id="shadow_l2" class="form-control" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="shadow_f2"></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" id="shadow_c2"><span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <div class="input-group mb-2"> <span class="input-group-text">T3</span><input type="number" step="0.1" id="shadow_r3" class="form-control">
+                            <div class="input-group-text px-1"><input class="form-check-input mt-0" type="checkbox" id="shadow_a3"></div> <input type="number" id="shadow_l3" class="form-control" placeholder="Lots">
+                            <div class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="shadow_f3"></div>
+                            <div class="input-group-text px-1" title="Trail to Cost"><input class="form-check-input mt-0" type="checkbox" id="shadow_c3"><span style="font-size:0.6rem;">C</span></div>
+                        </div>
+                        <label class="pos-grid-label">Bulk Update (SYMBOL|SL)</label> <textarea id="shadow_bulk_sl" class="form-control mb-2" rows="2" placeholder="ACC|8&#10;RELIANCE|20"></textarea> <button class="btn btn-sm btn-outline-secondary mb-3 w-100" onclick="applyBulkSL('SHADOW')">Apply Bulk SL</button>
+                        <div class="input-group mb-2"><input type="text" id="shadow_set_sym" class="form-control" placeholder="Symbol"><input type="number" id="shadow_set_sl" class="form-control" placeholder="SL Pts"><button class="btn btn-primary" onclick="saveSymSL('SHADOW')">Add</button></div>
+                        <div class="table-responsive mb-3" style="max-height: 150px; overflow-y: auto;">
+                            <table class="table table-bordered table-sm mt-2 sl-table">
+                                <thead class="table-light"><tr><th>Symbol</th><th>SL</th><th>Action</th></tr></thead>
+                                <tbody id="shadow_sl_table_body"></tbody>
                             </table>
                         </div>
                     </div>
@@ -256,23 +284,8 @@
                     <div class="tab-pane fade" id="tab-live">
                         <h6 class="mb-2 text-danger">Live Trade Config</h6>
                         <div class="row g-2 mb-2">
-                            <div class="col-6">
-                                <label class="pos-grid-label">Default Order Type</label>
-                                <select id="live_order_type" class="form-select">
-                                    <option value="MARKET">MARKET</option>
-                                    <option value="LIMIT">LIMIT</option>
-                                </select>
-                            </div>
-                            <div class="col-6">
-                                <label class="pos-grid-label">Trail Limit Default</label>
-                                <select id="live_trail_limit" class="form-select">
-                                    <option value="0">Unlimited</option>
-                                    <option value="1">Up-to Entry</option>
-                                    <option value="2">Up-to T1</option>
-                                    <option value="3">Up-to T2</option>
-                                    <option value="4">Up-to T3</option>
-                                </select>
-                            </div>
+                            <div class="col-6"><label class="pos-grid-label">Default Order Type</label><select id="live_order_type" class="form-select"><option value="MARKET">MARKET</option><option value="LIMIT">LIMIT</option></select></div>
+                            <div class="col-6"><label class="pos-grid-label">Trail Limit Default</label><select id="live_trail_limit" class="form-select"><option value="0">Unlimited</option><option value="1">Up-to Entry</option><option value="2">Up-to T1</option><option value="3">Up-to T2</option><option value="4">Up-to T3</option></select></div>
                         </div>
                         <div class="row g-2 mb-2">
                             <div class="col-6"><label class="pos-grid-label">Default Trailing (Pts)</label><input type="number" step="0.5" id="live_def_trail" class="form-control" placeholder="0"></div>
@@ -290,7 +303,6 @@
                             <span class="input-group-text">Lock</span><input type="number" id="live_pl_min" class="form-control" placeholder="1000">
                             <span class="input-group-text">Trail</span><input type="number" id="live_pl_trail" class="form-control" placeholder="500">
                         </div>
-
                         <label class="pos-grid-label">Quantity Multiplier</label><input type="number" id="live_qty_mult" class="form-control mb-2" value="1" min="1">
                         <label class="pos-grid-label">Target Config (Ratio | Active | Lots | Full | Cost)</label>
                         <div class="input-group mb-1"> <span class="input-group-text">T1</span><input type="number" step="0.1" id="live_r1" class="form-control">
@@ -312,13 +324,7 @@
                         <div class="input-group mb-2"><input type="text" id="live_set_sym" class="form-control" placeholder="Symbol"><input type="number" id="live_set_sl" class="form-control" placeholder="SL Pts"><button class="btn btn-primary" onclick="saveSymSL('LIVE')">Add</button></div>
                         <div class="table-responsive mb-3" style="max-height: 150px; overflow-y: auto;">
                             <table class="table table-bordered table-sm mt-2 sl-table">
-                                <thead class="table-light">
-                                    <tr>
-                                        <th>Symbol</th>
-                                        <th>SL</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
+                                <thead class="table-light"><tr><th>Symbol</th><th>SL</th><th>Action</th></tr></thead>
                                 <tbody id="live_sl_table_body"></tbody>
                             </table>
                         </div>
