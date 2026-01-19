@@ -132,6 +132,7 @@
                 </ul>
                 <div class="tab-content" id="settingTabsContent">
                     <div class="tab-pane fade show active" id="tab-general">
+                        
                         <h6 class="text-primary">Watchlist</h6>
                         <div class="input-group mb-3">
                             <input type="text" id="new_watch_sym" class="form-control" placeholder="Symbol (e.g. RELIANCE)">
@@ -172,14 +173,24 @@
                         </div>
 
                         <h6 class="mb-2 text-primary border-top pt-2">Startup Configuration</h6>
+                        
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="first_trade_critical">
+                            <label class="form-check-label fw-bold" for="first_trade_critical">1st Trade Critical Mode</label>
+                        </div>
+                        <p class="small text-muted mb-2">
+                            If <b>ON</b>: When today's trade count is 0, the system forces 
+                            <b>Shadow Mode</b> and <b>Free Channel Only</b>.
+                        </p>
+
                         <div class="mb-3">
-                            <label class="form-label">Default Trade Mode</label>
+                            <label class="form-label">Default Trade Mode (Normal)</label>
                             <select id="def_trade_mode" class="form-select">
                                 <option value="PAPER">Paper Trading</option>
                                 <option value="SHADOW">Shadow Trading</option>
                                 <option value="LIVE">Live Trading</option>
                             </select>
-                            <div class="form-text">This mode will be auto-selected when you open the dashboard.</div>
+                            <div class="form-text">Used for 2nd trade onwards (or if Critical Mode is OFF).</div>
                         </div>
                     </div>
 
