@@ -9,6 +9,19 @@ function loadSettings() {
                 settings.exchanges.forEach(e => $(`#exch_${e}`).prop('checked', true));
             }
             
+            // --- NEW: Default Trade Mode ---
+            // 1. Set Value in Settings Modal
+            let defMode = settings.default_trade_mode || 'PAPER';
+            $('#def_trade_mode').val(defMode);
+
+            // 2. Apply to Dashboard (Auto-Click the Mode Button)
+            // We find the button that sets this mode and click it if it's not active
+            let btn = $(`button[onclick*="setMode"][onclick*="'${defMode}'"]`);
+            if(btn.length && !btn.hasClass('active')) {
+                btn.click();
+            }
+            // -------------------------------
+
             // --- Broadcast Defaults ---
             let defaults = settings.broadcast_defaults || ['vip', 'free', 'z2h'];
             $('#def_vip').prop('checked', defaults.includes('vip'));
@@ -28,44 +41,35 @@ function loadSettings() {
                 let s = settings.modes[m];
                 
                 $(`#${k}_qty_mult`).val(s.qty_mult);
-                
-                // Ratios
                 $(`#${k}_r1`).val(s.ratios[0]);
                 $(`#${k}_r2`).val(s.ratios[1]);
                 $(`#${k}_r3`).val(s.ratios[2]);
-                
-                // Risk & Order Settings
                 $(`#${k}_def_trail`).val(s.trailing_sl || 0);
                 $(`#${k}_order_type`).val(s.order_type || 'MARKET');
                 $(`#${k}_trail_limit`).val(s.sl_to_entry || 0);
                 $(`#${k}_exit_mult`).val(s.exit_multiplier || 1);
-                
                 $(`#${k}_time`).val(s.universal_exit_time || "15:25");
                 $(`#${k}_max_loss`).val(s.max_loss || 0);
                 $(`#${k}_pl_start`).val(s.profit_lock || 0);
                 $(`#${k}_pl_min`).val(s.profit_min || 0);
                 $(`#${k}_pl_trail`).val(s.profit_trail || 0);
 
-                // Targets
                 let tgts = s.targets || [
                     {active: true, lots: 0, full: false, trail_to_entry: false},
                     {active: true, lots: 0, full: false, trail_to_entry: false},
                     {active: true, lots: 1000, full: true, trail_to_entry: false}
                 ];
                 
-                // T1
                 $(`#${k}_a1`).prop('checked', tgts[0].active);
                 $(`#${k}_l1`).val(tgts[0].lots > 0 && !tgts[0].full ? tgts[0].lots : '');
                 $(`#${k}_f1`).prop('checked', tgts[0].full);
                 $(`#${k}_c1`).prop('checked', tgts[0].trail_to_entry || false);
                 
-                // T2
                 $(`#${k}_a2`).prop('checked', tgts[1].active);
                 $(`#${k}_l2`).val(tgts[1].lots > 0 && !tgts[1].full ? tgts[1].lots : '');
                 $(`#${k}_f2`).prop('checked', tgts[1].full);
                 $(`#${k}_c2`).prop('checked', tgts[1].trail_to_entry || false);
 
-                // T3
                 $(`#${k}_a3`).prop('checked', tgts[2].active);
                 $(`#${k}_l3`).val(tgts[2].lots > 0 && !tgts[2].full ? tgts[2].lots : '');
                 $(`#${k}_f3`).prop('checked', tgts[2].full);
@@ -78,8 +82,6 @@ function loadSettings() {
             if(settings.telegram) {
                 $('#tg_bot_token').val(settings.telegram.bot_token || '');
                 $('#tg_enable').prop('checked', settings.telegram.enable_notifications || false);
-                
-                // Channels
                 $('#tg_channel_id').val(settings.telegram.channel_id || '');
                 $('#tg_system_channel_id').val(settings.telegram.system_channel_id || ''); 
                 $('#tg_vip_channel_id').val(settings.telegram.vip_channel_id || '');
@@ -87,7 +89,6 @@ function loadSettings() {
                 $('#tg_z2h_channel_id').val(settings.telegram.z2h_channel_id || '');
                 $('#tg_z2h_channel_name').val(settings.telegram.z2h_channel_name || 'Zero To Hero');
 
-                // Toggles
                 let toggles = settings.telegram.event_toggles || {};
                 $('#tg_evt_new').prop('checked', toggles.NEW_TRADE !== false);
                 $('#tg_evt_active').prop('checked', toggles.ACTIVE !== false);
@@ -96,7 +97,6 @@ function loadSettings() {
                 $('#tg_evt_tgt').prop('checked', toggles.TARGET_HIT !== false);
                 $('#tg_evt_high').prop('checked', toggles.HIGH_MADE !== false);
 
-                // Templates
                 let tpls = settings.telegram.templates || {};
                 $('#tpl_new').val(tpls.NEW_TRADE || "");
                 $('#tpl_active').val(tpls.ACTIVE || "");
@@ -117,6 +117,9 @@ function saveSettings() {
     let selectedExchanges = [];
     $('input[name="exch_select"]:checked').each(function() { selectedExchanges.push($(this).val()); });
     settings.exchanges = selectedExchanges;
+
+    // Default Trade Mode
+    settings.default_trade_mode = $('#def_trade_mode').val(); // <--- SAVE NEW SETTING
 
     // Broadcast Defaults
     let b_defs = [];
