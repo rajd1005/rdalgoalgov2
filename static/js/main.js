@@ -55,28 +55,36 @@ $(document).ready(function() {
     loadClosedTrades(); // Initial Load
 });
 
-// --- CRITICAL TRADE LOGIC ---
+// --- CRITICAL TRADE LOGIC (1st Trade Enforcement) ---
 function checkCriticalTradeLogic() {
-    if (!settings || !settings.first_trade_critical) return;
+    // Ensure settings are loaded and the feature is enabled
+    if (typeof settings === 'undefined' || !settings || !settings.first_trade_critical) return;
 
+    // Calculate total trades for the day
     let total = g_activeTrades + g_closedTrades;
+    
+    // If it is the FIRST trade (Total = 0)
     if (total === 0) {
-        // --- APPLY OVERRIDE: SHADOW & FREE ONLY ---
-        
-        // 1. Set Mode to SHADOW (if not already)
+        // 1. FORCE MODE TO SHADOW
         let currMode = $('#mode_input').val();
         if(currMode !== 'SHADOW') {
+            // Programmatically click the SHADOW button to switch mode and update UI
             let btn = $(`.btn[onclick*="setMode"][onclick*="'SHADOW'"]`);
-            if(btn.length) btn.click();
+            if(btn.length) {
+                console.log("1st Trade Critical: Forcing SHADOW Mode");
+                btn.click();
+            }
         }
 
-        // 2. Set Broadcast: Free Checked, Others Unchecked
+        // 2. FORCE BROADCAST TO FREE ONLY
         if($('#chk_free').length) {
             let isFree = $('#chk_free').is(':checked');
             let isVip = $('#chk_vip').is(':checked');
             let isZ2h = $('#chk_z2h').is(':checked');
 
+            // Apply override if current state matches "Normal" defaults (VIP/Z2H enabled or Free disabled)
             if (!isFree || isVip || isZ2h) {
+                console.log("1st Trade Critical: Forcing FREE Channel Only");
                 $('#chk_free').prop('checked', true);
                 $('#chk_vip').prop('checked', false);
                 $('#chk_z2h').prop('checked', false);
@@ -85,7 +93,7 @@ function checkCriticalTradeLogic() {
     }
 }
 
-// Update Data (Active) -> Updates g_activeTrades
+// Update Data (Active Trades) -> Updates g_activeTrades
 function updateData() {
     $.get('/update_data', function(res) {
         if(res.redirect) window.location.href = res.redirect;
@@ -95,10 +103,10 @@ function updateData() {
         
         // Count Active Trades
         let trades = res.trades || [];
-        let validTrades = trades.filter(t => t.id); // Filter safety
+        let validTrades = trades.filter(t => t.id); // Filter out potential nulls
         g_activeTrades = validTrades.length;
         
-        // Check 1st Trade Logic
+        // Check 1st Trade Logic after updating count
         checkCriticalTradeLogic();
 
         let tbody = $('#active_table_body');
@@ -143,10 +151,11 @@ function loadClosedTrades() {
     $.get('/history', { date: date }, function(res) {
         let trades = res.trades || [];
         
-        // Count Closed Trades (Only if date is TODAY)
+        // Count Closed Trades (Only if date displayed is TODAY)
         let nowStr = new Date().toISOString().slice(0,10);
         if (date === nowStr) {
             g_closedTrades = trades.length;
+            // Re-check logic (e.g., if a trade was deleted, count drops to 0, logic re-engages)
             checkCriticalTradeLogic();
         }
 
@@ -178,7 +187,11 @@ function loadClosedTrades() {
 
 function updateDisplayValues() {
     let mode = $('#mode_input').val(); 
-    let s = settings.modes[mode]; if(!s) return;
+    if(!settings || !settings.modes) return; // Safety check
+    
+    let s = settings.modes[mode]; 
+    if(!s) return;
+    
     $('#qty_mult_disp').text(s.qty_mult); 
     $('#r_t1').text(s.ratios[0]); 
     $('#r_t2').text(s.ratios[1]); 
@@ -196,9 +209,11 @@ function switchTab(id) {
 
 function setMode(el, mode) { 
     $('#mode_input').val(mode); 
+    
+    // Update visual state of buttons
     $('.btn[onclick*="setMode"]').removeClass('active');
     
-    // Handle both direct click (el exists) and programmatic (el lookup needed)
+    // Handle both direct click (el exists) and programmatic calls (el null)
     if (el) {
         $(el).addClass('active');
     } else {
@@ -222,6 +237,7 @@ function panicExit() {
     }
 }
 
+// --- IMPORT & CALCULATOR FUNCTIONS ---
 function adjImpQty(dir) { let q = $('#imp_qty'); let v = parseInt(q.val()) || 0; let step = (typeof curLotSize !== 'undefined' && curLotSize > 0) ? curLotSize : 1; let n = v + (dir * step); if(n < step) n = step; q.val(n); }
 function calcImpFromPts() { let entry = parseFloat($('#imp_price').val()) || 0; let pts = parseFloat($('#imp_sl_pts').val()) || 0; if(entry > 0) { $('#imp_sl_price').val((entry - pts).toFixed(2)); calculateImportTargets(entry, pts); } }
 function calcImpFromPrice() { let entry = parseFloat($('#imp_price').val()) || 0; let price = parseFloat($('#imp_sl_price').val()) || 0; if(entry > 0) { let pts = entry - price; $('#imp_sl_pts').val(pts.toFixed(2)); calculateImportTargets(entry, pts); } }
