@@ -10,9 +10,20 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     
     let modeSettings = settings.modes[mode] || settings.modes.PAPER;
     
-    // Auto-fill SL
+    // Auto-fill SL (FIXED for Object Structure)
     if(slId) {
-        let savedSL = (modeSettings.symbol_sl && modeSettings.symbol_sl[settingsKey]) || 20;
+        let rawData = (modeSettings.symbol_sl && modeSettings.symbol_sl[settingsKey]);
+        let savedSL = 20; // Default
+
+        if (rawData) {
+            if (typeof rawData === 'object') {
+                // New Structure: { sl: 20, targets: [10, 20, 30] }
+                savedSL = rawData.sl || 20;
+            } else {
+                // Legacy Structure: 20 (Number)
+                savedSL = rawData;
+            }
+        }
         $(slId).val(savedSL);
     }
     
@@ -208,6 +219,30 @@ function calcRisk() {
     let mode = $('#mode_input').val(); 
     let modeObj = settings.modes[mode] || settings.modes.PAPER;
     let ratios = modeObj.ratios || [0.5, 1.0, 1.5];
+
+    // --- CHECK FOR SYMBOL OVERRIDE (TARGETS) ---
+    // If the user defined specific targets for this symbol, use them as ratios
+    let sVal = $('#sym').val();
+    if(sVal && modeObj.symbol_sl) {
+        let normS = normalizeSymbol(sVal);
+        let sData = modeObj.symbol_sl[normS];
+        
+        // Check if object structure exists and has targets
+        if (sData && typeof sData === 'object' && sData.targets && sData.targets.length === 3) {
+            let overrideSL = sData.sl;
+            if (overrideSL > 0) {
+                // Calculate implicit ratios from the saved target points
+                // Ratio = TargetPoints / SLPoints
+                // Note: sData.targets contains POINTS (e.g. 10, 20, 30)
+                ratios = [
+                    sData.targets[0] / overrideSL,
+                    sData.targets[1] / overrideSL,
+                    sData.targets[2] / overrideSL
+                ];
+            }
+        }
+    }
+    // -------------------------------------------
 
     let sl = basePrice - p;
     let t1 = basePrice + p * ratios[0]; 
