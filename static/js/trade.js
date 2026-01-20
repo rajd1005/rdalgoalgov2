@@ -96,6 +96,16 @@ function adjQty(inputId, dir) {
     }
 }
 
+// --- NEW ADJ LIVE QTY FUNCTION ---
+function adjLiveQty(dir) {
+    let val = parseInt($('#live_qty').val()) || curLotSize;
+    let step = curLotSize;
+    let newVal = val + (dir * step);
+    if(newVal >= step) {
+        $('#live_qty').val(newVal).trigger('input');
+    }
+}
+
 function fillExp(expId, typeSelector, symId) { 
     let typeVal = $(typeSelector).val();
     let l = typeVal=='FUT' ? window[symId+'_fut'] : window[symId+'_opt']; 
@@ -200,7 +210,7 @@ function calcLiveSLPtsFromPrice() {
 // Separate function to calculate P&L for Live Card based on its own inputs
 function calcLivePnl() {
     let p_input = parseFloat($('#live_sl_pts').val())||0; 
-    let qty = parseInt($('#qty').val())||1;
+    let qty = parseInt($('#live_qty').val())||1; // UPDATED: Get from live_qty
     let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
     
     if(basePrice <= 0) return;
@@ -322,6 +332,8 @@ function calcRisk() {
             $('#live_sl_to_entry').val(live.slEntry);
             $('#live_exit_mult').val(live.exitMult);
             
+            $('#live_qty').val(qty); // Initialize with Main Qty
+            
             // Targets
             $('#live_p_t1').val(live.t1.toFixed(2));
             $('#live_p_t2').val(live.t2.toFixed(2));
@@ -342,7 +354,7 @@ function calcRisk() {
                 $(`#live_${k}_full`).prop('checked', conf.full === true);
                 $(`#live_${k}_cost`).prop('checked', conf.trail_to_entry === true);
                 
-                if (conf.full) $(`#live_${k}_lots`).val(1000); // Or handled by visual logic
+                if (conf.full) $(`#live_${k}_lots`).val(1000); 
                 else $(`#live_${k}_lots`).val(conf.lots || 0);
             });
         }
