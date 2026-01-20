@@ -695,7 +695,7 @@ def place_trade():
                         
                         print(f"[DEBUG] Symbol Override for {clean_sym}: SL={s_sl}, Ratios={new_ratios}")
 
-        if mode_input == "SHADOW":
+if mode_input == "SHADOW":
             print("[DEBUG MAIN] Entering SHADOW Logic Block...")
             
             # 1. Check Live Feasibility
@@ -704,11 +704,13 @@ def place_trade():
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
                 return redirect('/')
 
-            # 2. Execute LIVE
+            # ==========================================
+            # LEG 1: EXECUTE LIVE (Uses LIVE Global Settings)
+            # ==========================================
             live_conf = app_settings['modes']['LIVE']
             live_qty = input_qty
             
-            # Construct target controls from Global Settings structure
+            # Construct target controls from Global LIVE Settings
             live_controls = []
             global_targets = live_conf.get('targets', []) 
             defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
@@ -724,22 +726,22 @@ def place_trade():
 
             live_ratios = live_conf.get('ratios', [0.5, 1.0, 2.0])
 
-            # Global Settings Override
+            # Global Settings Override for LIVE
             live_overrides = {
                 'trailing_sl': live_conf.get('trailing_sl', 0),
                 'sl_to_entry': live_conf.get('sl_to_entry', 0),
                 'exit_multiplier': live_conf.get('exit_multiplier', 1),
-                'sl_points': sl_points, # fallback
+                'sl_points': sl_points, # fallback to form
                 'target_controls': live_controls,
                 'ratios': live_ratios,
                 'custom_targets': [] 
             }
             
-            # MERGE SYMBOL SPECIFIC OVERRIDES (Higher Priority)
+            # MERGE SYMBOL SPECIFIC OVERRIDES (Higher Priority for LIVE)
             if symbol_override:
                 live_overrides.update(symbol_override)
             
-            # Live = Silent (no channels) + Overrides
+            # Execute LIVE (Silent)
             print("[DEBUG MAIN] calling execute('LIVE')...")
             res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
@@ -751,12 +753,43 @@ def place_trade():
             print("[DEBUG MAIN] LIVE Success. Waiting 1s...")
             time.sleep(1)
             
-            # 4. Execute PAPER
+            # ==========================================
+            # LEG 2: EXECUTE PAPER (Uses PAPER Global Settings)
+            # ==========================================
             paper_qty = input_qty
             
-            # Paper = Notifier + Form Settings (No Override)
-            print("[DEBUG MAIN] calling execute('PAPER')...")
-            res_paper = execute("PAPER", paper_qty, target_channels)
+            # Fetch PAPER Configuration
+            paper_conf = app_settings['modes']['PAPER']
+            
+            # Construct target controls from Global PAPER Settings
+            paper_controls = []
+            paper_global_targets = paper_conf.get('targets', []) 
+            
+            for i in range(3):
+                t_conf = paper_global_targets[i] if i < len(paper_global_targets) else defaults[i]
+                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
+                paper_controls.append({
+                    'enabled': t_conf.get('active', True),
+                    'lots': t_lots,
+                    'trail_to_entry': t_conf.get('trail_to_entry', False)
+                })
+
+            paper_ratios = paper_conf.get('ratios', [0.5, 1.0, 2.0])
+
+            # Create Overrides based on PAPER Settings
+            paper_overrides = {
+                'trailing_sl': paper_conf.get('trailing_sl', 0),
+                'sl_to_entry': paper_conf.get('sl_to_entry', 0),
+                'exit_multiplier': paper_conf.get('exit_multiplier', 1),
+                'sl_points': sl_points, # Base SL still comes from form (Trade Entry)
+                'target_controls': paper_controls,
+                'ratios': paper_ratios,
+                'custom_targets': [] # Reset so internal ratios are used
+            }
+            
+            # Execute PAPER (Broadcast with Paper Settings)
+            print("[DEBUG MAIN] calling execute('PAPER') with PAPER settings...")
+            res_paper = execute("PAPER", paper_qty, target_channels, overrides=paper_overrides)
             
             if res_paper['status'] == 'success':
                 flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
