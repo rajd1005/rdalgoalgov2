@@ -39,7 +39,10 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
         let trailVal = modeSettings.trailing_sl || 0;
         
         if(prefix === '#imp_') {
-             // ... (Import Modal Logic ignored for this update) ...
+             // Import Modal Logic
+             $('#imp_trail_sl').val(trailVal);
+             $('#imp_trail_limit').val(modeSettings.sl_to_entry || 0);
+             $('#imp_exit_mult').val(modeSettings.exit_multiplier || 1);
         } else {
              $('#trail_sl').val(trailVal);
              $('#ord').val(modeSettings.order_type || 'MARKET').trigger('change');
@@ -65,7 +68,6 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
 
     $.get('/api/details', {symbol: s}, function(d) { 
         symLTP[symId] = d.ltp; 
-        // ... (Qty/Lot Logic) ...
         if(d.lot_size > 0) {
             curLotSize = d.lot_size;
             if(symId !== '#imp_sym') $('#lot').text(curLotSize); 
@@ -147,7 +149,10 @@ function fetchLTP() {
     });
 
     if($('#importModal').is(':visible')) {
-        // ... (Modal logic)
+        let iSym = $('#imp_sym').val();
+        if(iSym && $('#imp_exp').val() && $('#imp_str').val()) {
+             // ... import modal logic ...
+        }
     }
 }
 
@@ -171,7 +176,7 @@ function calcSLPtsFromPrice(priceId, ptsId) {
     }
 }
 
-// --- UPDATED: DUAL CARD CALCULATION ---
+// --- UPDATED: DUAL CARD POPULATION ---
 function calcRisk() {
     let p_input = parseFloat($('#sl_pts').val())||0; 
     let qty = parseInt($('#qty').val())||1;
@@ -182,13 +187,13 @@ function calcRisk() {
     let selectedMode = $('#mode_input').val();
     let isShadow = (selectedMode === 'SHADOW');
 
-    // Helper to calculate P&L Stats
+    // Helper: Calculate P&L Stats + Retrieve Configs
     function getModePnL(modeKey, defaultSL) {
         let mObj = settings.modes[modeKey] || settings.modes.PAPER;
         let ratios = mObj.ratios || [0.5, 1.0, 1.5];
         let effectiveSL = defaultSL;
 
-        // Check Symbol Override
+        // Check Symbol Override (SL/Ratios)
         let sVal = $('#sym').val();
         if(sVal && mObj.symbol_sl) {
             let normS = normalizeSymbol(sVal);
@@ -223,11 +228,16 @@ function calcRisk() {
             pnl_t2: (t2 - basePrice) * qty,
             pnl_t3: (t3 - basePrice) * qty,
             pnl_sl: (slPrice - basePrice) * qty,
-            ratios: ratios
+            ratios: ratios,
+            // Return raw settings for display
+            trailing: mObj.trailing_sl || 0,
+            slEntry: mObj.sl_to_entry || 0,
+            exitMult: mObj.exit_multiplier || 1,
+            targets: mObj.targets || []
         };
     }
 
-    // 1. Calculate & Populate MAIN CARD (Paper/Form)
+    // 1. MAIN CARD (Editable / Paper)
     let paperMode = isShadow ? 'PAPER' : selectedMode;
     let std = getModePnL(paperMode, p_input);
     
@@ -241,40 +251,62 @@ function calcRisk() {
         $('#p_sl').val(std.slPrice.toFixed(2));
     }
     
-    // Update Main P&L Labels
     $('#pnl_t1').text(`₹ ${std.pnl_t1.toFixed(0)}`); 
     $('#pnl_t2').text(`₹ ${std.pnl_t2.toFixed(0)}`); 
     $('#pnl_t3').text(`₹ ${std.pnl_t3.toFixed(0)}`);
     $('#pnl_sl').text(`₹ ${std.pnl_sl.toFixed(0)}`);
     
-    // Update Ratios in Titles
     $('#r_t1').text(std.ratios[0].toFixed(1));
     $('#r_t2').text(std.ratios[1].toFixed(1));
     $('#r_t3').text(std.ratios[2].toFixed(1));
 
-    // 2. Calculate & Populate LIVE SHADOW CARD (Read Only)
+    // 2. LIVE CARD (Read Only - for Shadow)
     if (isShadow) {
         let live = getModePnL('LIVE', p_input);
         
-        // Populate Live Card Fields
+        // --- Populate New Detailed Fields ---
         $('#live_sl_pts').val(live.slPts);
+        $('#live_pnl_sl').text(`₹ ${live.pnl_sl.toFixed(0)}`);
+        
+        $('#live_trail_sl').val(live.trailing);
+        
+        // Map SL Limit codes to text
+        let limitMap = {0: 'Unlim', 1: 'Entry', 2: 'T1', 3: 'T2', 4: 'T3'};
+        $('#live_sl_to_entry').val(limitMap[live.slEntry] || live.slEntry);
+        
+        $('#live_qty').val(qty); // Shared Qty
+        $('#live_exit_mult').val(live.exitMult);
+        
+        // Targets Prices
         $('#live_p_t1').val(live.t1.toFixed(2));
         $('#live_p_t2').val(live.t2.toFixed(2));
         $('#live_p_t3').val(live.t3.toFixed(2));
         
-        // Populate Live P&L
+        // Targets P&L
         $('#live_pnl_t1').text(`₹ ${live.pnl_t1.toFixed(0)}`);
         $('#live_pnl_t2').text(`₹ ${live.pnl_t2.toFixed(0)}`);
         $('#live_pnl_t3').text(`₹ ${live.pnl_t3.toFixed(0)}`);
-        $('#live_pnl_sl').text(`₹ ${live.pnl_sl.toFixed(0)}`);
         
-        // Populate Live Ratios
+        // Targets Ratios
         $('#live_r_t1').text(live.ratios[0].toFixed(1));
         $('#live_r_t2').text(live.ratios[1].toFixed(1));
         $('#live_r_t3').text(live.ratios[2].toFixed(1));
+        
+        // Targets Config (Checkboxes & Lots)
+        ['t1', 't2', 't3'].forEach((k, i) => {
+            let conf = live.targets[i] || {};
+            // Set Checkboxes (Read Only)
+            $(`#live_${k}_active`).prop('checked', conf.active !== false); // default true
+            $(`#live_${k}_full`).prop('checked', conf.full === true);
+            $(`#live_${k}_cost`).prop('checked', conf.trail_to_entry === true);
+            
+            // Set Lots
+            if (conf.full) $(`#live_${k}_lots`).val('MAX');
+            else $(`#live_${k}_lots`).val(conf.lots || 0);
+        });
     }
 
-    // Update Lots Readonly State
+    // Update Main Lots Readonly State
     ['t1', 't2', 't3'].forEach(k => {
         if ($(`#${k}_full`).is(':checked')) {
             $(`#${k}_lots`).val(1000).prop('readonly', true);
@@ -294,7 +326,7 @@ function updateModeVisuals(mode) {
 
     if (mode === "SHADOW") {
         // Show Shadow Card
-        shadowCard.show();
+        shadowCard.slideDown();
         
         // Style Main Card (Paper)
         mainCard.css('border', '2px solid #007bff'); // Blue for Paper
