@@ -705,44 +705,50 @@ def place_trade():
                 return redirect('/')
 
             # ==========================================
-            # LEG 1: EXECUTE LIVE (Strictly LIVE Global/Symbol Settings)
+            # LEG 1: EXECUTE LIVE (Uses Specific "Live" Form Inputs)
             # ==========================================
-            live_conf = app_settings['modes']['LIVE']
             live_qty = input_qty
             
-            # Construct target controls from Global LIVE Settings
+            # Construct Target Controls from FORM (Live Fields)
             live_controls = []
-            global_targets = live_conf.get('targets', []) 
-            defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
-            
-            for i in range(3):
-                t_conf = global_targets[i] if i < len(global_targets) else defaults[i]
-                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
+            for i in range(1, 4):
+                # Checkboxes in HTML are "on" if checked, missing if not
+                enabled = request.form.get(f'live_t{i}_active') == 'on'
+                lots = int(request.form.get(f'live_t{i}_lots') or 0)
+                full = request.form.get(f'live_t{i}_full') == 'on'
+                cost = request.form.get(f'live_t{i}_cost') == 'on'
+                
+                if full: lots = 1000
+                
                 live_controls.append({
-                    'enabled': t_conf.get('active', True),
-                    'lots': t_lots,
-                    'trail_to_entry': t_conf.get('trail_to_entry', False)
+                    'enabled': enabled,
+                    'lots': lots,
+                    'trail_to_entry': cost
                 })
 
-            live_ratios = live_conf.get('ratios', [0.5, 1.0, 2.0])
+            # Fetch editable params
+            # Priority: Form Live SL -> Form Base SL -> 0
+            live_sl_points = float(request.form.get('live_sl_points') or sl_points) 
+            
+            # Explicit prices from form
+            live_t1 = float(request.form.get('live_t1_price', 0))
+            live_t2 = float(request.form.get('live_t2_price', 0))
+            live_t3 = float(request.form.get('live_t3_price', 0))
+            live_custom_targets = [live_t1, live_t2, live_t3]
 
-            # Global Settings Override for LIVE
+            # Construct Overrides using Form Data
             live_overrides = {
-                'trailing_sl': live_conf.get('trailing_sl', 0),
-                'sl_to_entry': live_conf.get('sl_to_entry', 0),
-                'exit_multiplier': live_conf.get('exit_multiplier', 1),
-                'sl_points': sl_points, # Fallback to form ONLY if no symbol specific SL found
+                'trailing_sl': float(request.form.get('live_trailing_sl') or 0),
+                'sl_to_entry': int(request.form.get('live_sl_to_entry') or 0),
+                'exit_multiplier': int(request.form.get('live_exit_multiplier') or 1),
+                'sl_points': live_sl_points,
                 'target_controls': live_controls,
-                'ratios': live_ratios,
-                'custom_targets': [] 
+                'custom_targets': live_custom_targets,
+                'ratios': None # We use custom targets (prices) directly
             }
             
-            # MERGE SYMBOL SPECIFIC OVERRIDES (Highest Priority)
-            if symbol_override:
-                live_overrides.update(symbol_override)
-            
             # Execute LIVE (Silent)
-            print("[DEBUG MAIN] calling execute('LIVE')...")
+            print("[DEBUG MAIN] calling execute('LIVE') with Form Overrides...")
             res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
             if res_live['status'] != 'success':
@@ -754,16 +760,15 @@ def place_trade():
             time.sleep(1)
             
             # ==========================================
-            # LEG 2: EXECUTE PAPER (Uses PAPER Settings + Paper Symbol Overrides)
+            # LEG 2: EXECUTE PAPER (Uses Standard Paper Settings)
             # ==========================================
             paper_qty = input_qty
-            
-            # Fetch PAPER Configuration
             paper_conf = app_settings['modes']['PAPER']
             
             # Construct target controls from Global PAPER Settings
             paper_controls = []
             paper_global_targets = paper_conf.get('targets', []) 
+            defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
             
             for i in range(3):
                 t_conf = paper_global_targets[i] if i < len(paper_global_targets) else defaults[i]
@@ -788,7 +793,6 @@ def place_trade():
             }
             
             # --- CRITICAL FIX: Fetch Paper SYMBOL SPECIFIC Overrides ---
-            # This logic was missing, causing Paper trades to ignore symbol settings
             paper_symbol_override = {}
             if 'symbol_sl' in paper_conf and clean_sym in paper_conf['symbol_sl']:
                 s_data = paper_conf['symbol_sl'][clean_sym]
