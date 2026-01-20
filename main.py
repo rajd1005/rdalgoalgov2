@@ -26,7 +26,32 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-kite = KiteConnect(api_key=config.API_KEY)
+# --- CREDENTIAL MANAGEMENT ---
+CREDENTIALS_DB_ID = 999  # Reserved ID for Zerodha Credentials
+
+def load_credentials():
+    """Loads credentials from DB and overrides config variables"""
+    global kite
+    try:
+        with app.app_context():
+            creds = AppSetting.query.get(CREDENTIALS_DB_ID)
+            if creds:
+                data = json.loads(creds.data)
+                # Override config variables in memory
+                if data.get("API_KEY"): config.API_KEY = data["API_KEY"]
+                if data.get("API_SECRET"): config.API_SECRET = data["API_SECRET"]
+                if data.get("TOTP_SECRET"): config.TOTP_SECRET = data["TOTP_SECRET"]
+                if data.get("ZERODHA_USER_ID"): config.ZERODHA_USER_ID = data["ZERODHA_USER_ID"]
+                if data.get("ZERODHA_PASSWORD"): config.ZERODHA_PASSWORD = data["ZERODHA_PASSWORD"]
+                print("✅ Credentials Loaded from Database")
+    except Exception as e:
+        print(f"⚠️ Failed to load credentials: {e}")
+
+    # Re-initialize Kite with potentially new API Key
+    kite = KiteConnect(api_key=config.API_KEY)
+
+# Load immediately on startup
+load_credentials()
 
 # --- GLOBAL STATE MANAGEMENT ---
 bot_active = False
@@ -36,9 +61,10 @@ login_error_msg = None
 def run_auto_login_process():
     global bot_active, login_state, login_error_msg
     
-    if not config.ZERODHA_USER_ID or not config.TOTP_SECRET:
-        login_state = "FAILED"
-        login_error_msg = "Missing Credentials in Config"
+    # Check if credentials exist in config (memory)
+    if not config.ZERODHA_USER_ID or not config.TOTP_SECRET or not config.ZERODHA_PASSWORD:
+        login_state = "SETUP"
+        login_error_msg = "Credentials Missing. Please configure them."
         return
 
     login_state = "WORKING"
@@ -177,7 +203,57 @@ def home():
         active = [t for t in trades if t['status'] in ['OPEN', 'PROMOTED_LIVE', 'PENDING', 'MONITORING']]
         return render_template('dashboard.html', is_active=True, trades=active)
     
-    return render_template('dashboard.html', is_active=False, state=login_state, error=login_error_msg, login_url=kite.login_url())
+    # Pass current config values (from DB or Env) to pre-fill the form
+    creds = {
+        "user_id": config.ZERODHA_USER_ID or "",
+        "password": config.ZERODHA_PASSWORD or "",
+        "totp": config.TOTP_SECRET or "",
+        "api_key": config.API_KEY or "",
+        "api_secret": config.API_SECRET or ""
+    }
+    
+    return render_template('dashboard.html', is_active=False, state=login_state, error=login_error_msg, login_url=kite.login_url(), creds=creds)
+
+@app.route('/api/save_credentials', methods=['POST'])
+def api_save_credentials():
+    global login_state
+    data = request.json
+    
+    try:
+        # 1. Update Config In-Memory
+        config.API_KEY = data.get("api_key")
+        config.API_SECRET = data.get("api_secret")
+        config.TOTP_SECRET = data.get("totp")
+        config.ZERODHA_USER_ID = data.get("user_id")
+        config.ZERODHA_PASSWORD = data.get("password")
+        
+        # 2. Save to Database
+        db_data = {
+            "API_KEY": config.API_KEY,
+            "API_SECRET": config.API_SECRET,
+            "TOTP_SECRET": config.TOTP_SECRET,
+            "ZERODHA_USER_ID": config.ZERODHA_USER_ID,
+            "ZERODHA_PASSWORD": config.ZERODHA_PASSWORD
+        }
+        
+        setting = AppSetting.query.get(CREDENTIALS_DB_ID)
+        if not setting:
+            setting = AppSetting(id=CREDENTIALS_DB_ID, data=json.dumps(db_data))
+            db.session.add(setting)
+        else:
+            setting.data = json.dumps(db_data)
+        
+        db.session.commit()
+        
+        # 3. Reload & Reset State to Trigger Login
+        load_credentials() 
+        login_state = "IDLE" 
+        
+        flash("✅ Credentials Saved! Auto-Login starting...")
+        return jsonify({"status": "success"})
+        
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 @app.route('/secure', methods=['GET', 'POST'])
 def secure_login_page():
@@ -417,25 +493,8 @@ def api_import_trade():
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
         # --- NEW: Extract Channel Selection from Request ---
-        # Default to 'main' if missing. Logic handles single selection.
         selected_channel = data.get('target_channel', 'main')
-        
-        # Construct target_channels list. 
-        # 'main' is always primary for internal logic, but we want to broadcast to the selected one.
-        # If user selected VIP, Free, or Z2H, we pass that along with 'main' logic (or replace it depending on telegram manager logic).
-        # Typically, telegram_manager broadcasts to 'main' AND any others in the list.
-        # If the requirement is "only one telegram channel", we pass that specific one.
-        
-        # However, to maintain system compatibility (where 'main' might be used for logging), 
-        # we usually pass ['main', 'vip'] etc. 
-        # BUT, if the user explicitly wants ONLY one channel (e.g. Free), we can pass just that if the backend supports it.
-        # Assuming standard logic: Main is always required for system logs? 
-        # Let's stick to the requested behavior: "only one telegram channel can be selected".
-        
         target_channels = [selected_channel] 
-        # Note: If 'main' was not selected, we might miss system logs if the bot logic relies on 'main' key.
-        # To be safe, usually we send ['main', selected_channel] if selected != main. 
-        # But if the user strictly wants ONE channel, we pass that list.
         
         # Call Replay Engine with channels
         result = replay_engine.import_past_trade(
@@ -467,8 +526,6 @@ def api_import_trade():
                         # Handle Structure: If dict, save dict. If int (legacy), wrap it.
                         if isinstance(msg_ids, dict):
                             ids_dict = msg_ids
-                            # If we sent to 'free', main_id might be None or the id for free channel
-                            # We grab the ID corresponding to the selected channel as the "primary" reference
                             main_id = msg_ids.get(selected_channel) or msg_ids.get('main')
                         else:
                             ids_dict = {'main': msg_ids}
@@ -592,11 +649,9 @@ def place_trade():
     try:
         # --- DEBUG LOG: INCOMING REQUEST ---
         raw_mode = request.form['mode']
-        print(f"\n[DEBUG MAIN] Received Trade Request. RAW Mode: '{raw_mode}'")
         
         # --- FIX: Clean Mode Input ---
         mode_input = raw_mode.strip().upper()
-        print(f"[DEBUG MAIN] Cleaned Mode: '{mode_input}'")
         
         sym = request.form['index']
         type_ = request.form['type']
@@ -676,8 +731,6 @@ def place_trade():
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
             
-            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
-            
             return trade_manager.create_trade_direct(
                 kite, ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, 
                 order_type, limit_price, use_target_controls, 
@@ -717,11 +770,7 @@ def place_trade():
                         # Force empty custom targets so ratios are used
                         symbol_override['custom_targets'] = []
                         
-                        print(f"[DEBUG] Symbol Override for {clean_sym}: SL={s_sl}, Ratios={new_ratios}")
-
         if mode_input == "SHADOW":
-            print("[DEBUG MAIN] Entering SHADOW Logic Block...")
-            
             # 1. Check Live Feasibility
             can_live, reason = common.can_place_order("LIVE")
             if not can_live:
@@ -800,7 +849,6 @@ def place_trade():
             }
             
             # Execute LIVE (Silent)
-            print("[DEBUG MAIN] calling execute('LIVE') with Form Overrides...")
             res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
             if res_live['status'] != 'success':
@@ -808,7 +856,6 @@ def place_trade():
                 return redirect('/')
             
             # 3. Wait for DB Safety (1s to ensure ID separation)
-            print("[DEBUG MAIN] LIVE Success. Waiting 1s...")
             time.sleep(1)
             
             # ==========================================
@@ -817,7 +864,6 @@ def place_trade():
             paper_qty = input_qty
             
             # Execute PAPER (Broadcast with Main Form Settings)
-            print("[DEBUG MAIN] calling execute('PAPER') with Main Form Inputs...")
             res_paper = execute("PAPER", paper_qty, target_channels, overrides=None)
             
             if res_paper['status'] == 'success':
@@ -827,7 +873,6 @@ def place_trade():
 
         else:
             # Standard Execution (PAPER or LIVE)
-            print(f"[DEBUG MAIN] Entering STANDARD Logic Block (Mode: {mode_input})...")
             
             can_trade, reason = common.can_place_order(mode_input)
             if not can_trade:
@@ -850,7 +895,6 @@ def place_trade():
                 flash(f"❌ Error: {res['message']}")
             
     except Exception as e:
-        print(f"[DEBUG MAIN] Exception: {e}")
         flash(f"Error: {e}")
     return redirect('/')
 
