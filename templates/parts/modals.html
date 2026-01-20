@@ -567,6 +567,20 @@
                 <label class="pos-grid-label">Entry Time (Past)</label>
                 <input type="datetime-local" id="imp_time" class="form-control mb-2">
 
+                <label class="pos-grid-label">📡 Broadcast To</label>
+                <div class="btn-group w-100 btn-group-check mb-2" role="group">
+                    <input type="radio" class="btn-check" name="imp_channel" id="ic_main" value="main" checked autocomplete="off">
+                    <label class="btn btn-outline-secondary btn-sm" for="ic_main">Main</label>
+
+                    <input type="radio" class="btn-check" name="imp_channel" id="ic_vip" value="vip" autocomplete="off">
+                    <label class="btn btn-outline-warning btn-sm" for="ic_vip">VIP</label>
+
+                    <input type="radio" class="btn-check" name="imp_channel" id="ic_free" value="free" autocomplete="off">
+                    <label class="btn btn-outline-success btn-sm" for="ic_free">Free</label>
+
+                    <input type="radio" class="btn-check" name="imp_channel" id="ic_z2h" value="z2h" autocomplete="off">
+                    <label class="btn btn-outline-info btn-sm" for="ic_z2h">Z2H</label>
+                </div>
                 <div class="row g-2 mb-2">
                     <div class="col-6">
                         <label class="pos-grid-label">Quantity</label>
