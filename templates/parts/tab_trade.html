@@ -69,65 +69,72 @@
             <div class="card-body">
                  <div class="row g-2 align-items-center mb-2">
                     <div class="col-6">
-                        <small class="text-danger fw-bold">SL Points (Auto)</small>
-                        <input type="text" id="live_sl_pts" class="form-control form-control-sm fw-bold text-center" readonly style="background:#f8d7da;">
+                        <small class="text-danger fw-bold">SL Points (Live)</small>
+                        <input type="number" step="0.05" id="live_sl_pts" name="live_sl_points" class="form-control fw-bold text-center" oninput="calcLiveSLPriceFromPts()">
                     </div>
                     <div class="col-6">
-                         <small class="text-danger fw-bold">Est. Loss</small>
-                         <div id="live_pnl_sl" class="fw-bold text-danger text-center border border-danger rounded bg-white py-1">₹ 0</div>
+                         <small class="text-danger fw-bold">SL Price (Edit)</small>
+                         <input type="number" step="0.05" id="live_p_sl" class="form-control text-center text-danger fw-bold border-danger" oninput="calcLiveSLPtsFromPrice()">
                     </div>
+                </div>
+                
+                <div class="text-center mb-2">
+                     <small class="text-muted fw-bold">Est. Loss: </small>
+                     <span id="live_pnl_sl" class="fw-bold text-danger">₹ 0</span>
                 </div>
 
                 <div class="row g-2 align-items-center mb-2">
-                    <div class="col-3">
+                    <div class="col-4">
                         <small class="text-muted" style="font-size:0.7rem;">Trail Pts</small>
-                        <input type="text" id="live_trail_sl" class="form-control form-control-sm text-center" readonly>
+                        <input type="number" step="0.05" name="live_trailing_sl" id="live_trail_sl" class="form-control form-control-sm text-center">
                     </div>
-                    <div class="col-3">
+                    <div class="col-4">
                         <small class="text-muted" style="font-size:0.7rem;">Trail Limit</small>
-                        <input type="text" id="live_sl_to_entry" class="form-control form-control-sm text-center" readonly>
+                        <select name="live_sl_to_entry" id="live_sl_to_entry" class="form-select form-select-sm text-center">
+                             <option value="0">Unlim</option>
+                             <option value="1">Entry</option>
+                             <option value="2">T1</option>
+                             <option value="3">T2</option>
+                             <option value="4">T3</option>
+                        </select>
                     </div>
-                    <div class="col-3">
-                        <small class="text-muted" style="font-size:0.7rem;">Qty</small>
-                        <input type="text" id="live_qty" class="form-control form-control-sm text-center fw-bold" readonly>
-                    </div>
-                    <div class="col-3">
+                    <div class="col-4">
                         <small class="text-muted" style="font-size:0.7rem;">Exit Mult</small>
-                        <input type="text" id="live_exit_mult" class="form-control form-control-sm text-center" readonly>
+                        <input type="number" name="live_exit_multiplier" id="live_exit_mult" class="form-control form-control-sm text-center">
                     </div>
                 </div>
                 
                 <div class="row g-2 text-center">
                     <div class="col-4 px-1">
                         <small class="text-danger fw-bold">T1 (<span id="live_r_t1">0.5</span>x)</small>
-                        <input type="text" id="live_p_t1" class="form-control form-control-sm text-center text-danger fw-bold mb-1" readonly>
+                        <input type="number" step="0.05" id="live_p_t1" name="live_t1_price" class="form-control form-control-sm text-center text-danger fw-bold mb-1" oninput="calcLivePnl()">
                         <div class="input-group input-group-sm mb-1 justify-content-center">
-                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" id="live_t1_active" disabled></span>
-                            <input type="text" id="live_t1_lots" class="form-control px-1 text-center" style="max-width:40px;" readonly>
-                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="live_t1_full" disabled> F</span>
-                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" id="live_t1_cost" disabled> C</span>
+                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" name="live_t1_active" id="live_t1_active"></span>
+                            <input type="number" name="live_t1_lots" id="live_t1_lots" class="form-control px-1 text-center" style="max-width:40px;">
+                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" name="live_t1_full" id="live_t1_full"> F</span>
+                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" name="live_t1_cost" id="live_t1_cost"> C</span>
                         </div>
                         <span id="live_pnl_t1" class="small fw-bold text-success">₹ 0</span>
                     </div>
                     <div class="col-4 px-1">
                         <small class="text-danger fw-bold">T2 (<span id="live_r_t2">1.0</span>x)</small>
-                        <input type="text" id="live_p_t2" class="form-control form-control-sm text-center text-danger fw-bold mb-1" readonly>
+                        <input type="number" step="0.05" id="live_p_t2" name="live_t2_price" class="form-control form-control-sm text-center text-danger fw-bold mb-1" oninput="calcLivePnl()">
                         <div class="input-group input-group-sm mb-1 justify-content-center">
-                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" id="live_t2_active" disabled></span>
-                            <input type="text" id="live_t2_lots" class="form-control px-1 text-center" style="max-width:40px;" readonly>
-                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="live_t2_full" disabled> F</span>
-                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" id="live_t2_cost" disabled> C</span>
+                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" name="live_t2_active" id="live_t2_active"></span>
+                            <input type="number" name="live_t2_lots" id="live_t2_lots" class="form-control px-1 text-center" style="max-width:40px;">
+                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" name="live_t2_full" id="live_t2_full"> F</span>
+                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" name="live_t2_cost" id="live_t2_cost"> C</span>
                         </div>
                         <span id="live_pnl_t2" class="small fw-bold text-success">₹ 0</span>
                     </div>
                     <div class="col-4 px-1">
                         <small class="text-danger fw-bold">T3 (<span id="live_r_t3">1.5</span>x)</small>
-                        <input type="text" id="live_p_t3" class="form-control form-control-sm text-center text-danger fw-bold mb-1" readonly>
+                        <input type="number" step="0.05" id="live_p_t3" name="live_t3_price" class="form-control form-control-sm text-center text-danger fw-bold mb-1" oninput="calcLivePnl()">
                         <div class="input-group input-group-sm mb-1 justify-content-center">
-                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" id="live_t3_active" disabled></span>
-                            <input type="text" id="live_t3_lots" class="form-control px-1 text-center" style="max-width:40px;" readonly>
-                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" id="live_t3_full" disabled> F</span>
-                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" id="live_t3_cost" disabled> C</span>
+                            <span class="input-group-text px-1" title="Active"><input class="form-check-input mt-0" type="checkbox" name="live_t3_active" id="live_t3_active"></span>
+                            <input type="number" name="live_t3_lots" id="live_t3_lots" class="form-control px-1 text-center" style="max-width:40px;">
+                            <span class="input-group-text px-1" title="Full"><input class="form-check-input mt-0" type="checkbox" name="live_t3_full" id="live_t3_full"> F</span>
+                            <span class="input-group-text px-1" title="Cost"><input class="form-check-input mt-0" type="checkbox" name="live_t3_cost" id="live_t3_cost"> C</span>
                         </div>
                         <span id="live_pnl_t3" class="small fw-bold text-success">₹ 0</span>
                     </div>
