@@ -60,6 +60,7 @@ $(document).ready(function() {
                 $(`#imp_${k}_lots`).val(1000).prop('readonly', true);
             } else {
                 $(`#imp_${k}_lots`).prop('readonly', false);
+                // Optional: restore default lots? For now just unlock.
                 if($(`#imp_${k}_lots`).val() == 1000) $(`#imp_${k}_lots`).val(0); 
             }
         });
@@ -234,6 +235,9 @@ function submitImport() {
         price: parseFloat($('#imp_price').val()),
         sl: parseFloat($('#imp_sl_price').val()), // Send SL Price to Backend
         
+        // Broadcast Channel
+        target_channel: $('input[name="imp_channel"]:checked').val() || 'main',
+
         // New Settings
         trailing_sl: parseFloat($('#imp_trail_sl').val()) || 0,
         sl_to_entry: parseInt($('#imp_trail_limit').val()) || 0,
@@ -284,14 +288,11 @@ function submitImport() {
 function renderWatchlist() {
     if (typeof settings === 'undefined' || !settings.watchlist) return;
     let wl = settings.watchlist || [];
+    let opts = '<option value="">📺 Select</option>';
+    wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
+    $('#trade_watch').html(opts);
+    $('#imp_watch').html(opts);
     
-    // Dashboard & Import Selects
-    let mainOpts = '<option value="">📺 Select</option>';
-    wl.forEach(w => { mainOpts += `<option value="${w}">${w}</option>`; });
-    $('#trade_watch').html(mainOpts);
-    if($('#imp_watch').length) $('#imp_watch').html(mainOpts);
-
-    // Settings Remove Select (New Sync Logic)
     let remOpts = '<option value="">Select to Remove...</option>';
     wl.forEach(w => { remOpts += `<option value="${w}">${w}</option>`; });
     if($('#remove_watch_sym').length) $('#remove_watch_sym').html(remOpts);
