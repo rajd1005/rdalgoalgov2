@@ -707,14 +707,21 @@ def place_trade():
             # ==========================================
             # LEG 1: EXECUTE LIVE (Uses Specific "Live" Form Inputs)
             # ==========================================
-            live_qty = input_qty
             
-            # Construct Target Controls from FORM (Live Fields)
+            # 1. Quantity (Use form input or fallback)
+            try:
+                live_qty = int(request.form.get('live_qty'))
+            except (ValueError, TypeError):
+                live_qty = input_qty
+
+            # 2. Target Controls (Live)
             live_controls = []
             for i in range(1, 4):
-                # Checkboxes in HTML are "on" if checked, missing if not
                 enabled = request.form.get(f'live_t{i}_active') == 'on'
-                lots = int(request.form.get(f'live_t{i}_lots') or 0)
+                try:
+                    lots = int(request.form.get(f'live_t{i}_lots'))
+                except:
+                    lots = 0
                 full = request.form.get(f'live_t{i}_full') == 'on'
                 cost = request.form.get(f'live_t{i}_cost') == 'on'
                 
@@ -726,25 +733,45 @@ def place_trade():
                     'trail_to_entry': cost
                 })
 
-            # Fetch editable params
-            # Priority: Form Live SL -> Form Base SL -> 0
-            live_sl_points = float(request.form.get('live_sl_points') or sl_points) 
-            
-            # Explicit prices from form
-            live_t1 = float(request.form.get('live_t1_price', 0))
-            live_t2 = float(request.form.get('live_t2_price', 0))
-            live_t3 = float(request.form.get('live_t3_price', 0))
-            live_custom_targets = [live_t1, live_t2, live_t3]
+            # 3. Parameters (Try fetching live inputs, fallback to base inputs)
+            try:
+                live_sl_points = float(request.form.get('live_sl_points'))
+            except:
+                live_sl_points = sl_points
 
-            # Construct Overrides using Form Data
+            try:
+                live_trail = float(request.form.get('live_trailing_sl'))
+            except:
+                live_trail = trailing_sl 
+
+            try:
+                live_entry_sl = int(request.form.get('live_sl_to_entry'))
+            except:
+                live_entry_sl = sl_to_entry
+
+            try:
+                live_exit_mult = int(request.form.get('live_exit_multiplier'))
+            except:
+                live_exit_mult = exit_multiplier
+
+            # 4. Custom Targets (Live Prices)
+            try:
+                lt1 = float(request.form.get('live_t1_price', 0))
+                lt2 = float(request.form.get('live_t2_price', 0))
+                lt3 = float(request.form.get('live_t3_price', 0))
+                live_custom_targets = [lt1, lt2, lt3]
+            except:
+                live_custom_targets = custom_targets
+
+            # Construct Overrides
             live_overrides = {
-                'trailing_sl': float(request.form.get('live_trailing_sl') or 0),
-                'sl_to_entry': int(request.form.get('live_sl_to_entry') or 0),
-                'exit_multiplier': int(request.form.get('live_exit_multiplier') or 1),
+                'trailing_sl': live_trail,
+                'sl_to_entry': live_entry_sl,
+                'exit_multiplier': live_exit_mult,
                 'sl_points': live_sl_points,
                 'target_controls': live_controls,
                 'custom_targets': live_custom_targets,
-                'ratios': None # We use custom targets (prices) directly
+                'ratios': None 
             }
             
             # Execute LIVE (Silent)
@@ -760,61 +787,13 @@ def place_trade():
             time.sleep(1)
             
             # ==========================================
-            # LEG 2: EXECUTE PAPER (Uses Standard Paper Settings)
+            # LEG 2: EXECUTE PAPER (Uses Standard Paper Form Inputs)
             # ==========================================
             paper_qty = input_qty
-            paper_conf = app_settings['modes']['PAPER']
             
-            # Construct target controls from Global PAPER Settings
-            paper_controls = []
-            paper_global_targets = paper_conf.get('targets', []) 
-            defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
-            
-            for i in range(3):
-                t_conf = paper_global_targets[i] if i < len(paper_global_targets) else defaults[i]
-                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
-                paper_controls.append({
-                    'enabled': t_conf.get('active', True),
-                    'lots': t_lots,
-                    'trail_to_entry': t_conf.get('trail_to_entry', False)
-                })
-
-            paper_ratios = paper_conf.get('ratios', [0.5, 1.0, 2.0])
-
-            # Create Overrides based on PAPER Settings
-            paper_overrides = {
-                'trailing_sl': paper_conf.get('trailing_sl', 0),
-                'sl_to_entry': paper_conf.get('sl_to_entry', 0),
-                'exit_multiplier': paper_conf.get('exit_multiplier', 1),
-                'sl_points': sl_points, 
-                'target_controls': paper_controls,
-                'ratios': paper_ratios,
-                'custom_targets': [] 
-            }
-            
-            # --- CRITICAL FIX: Fetch Paper SYMBOL SPECIFIC Overrides ---
-            paper_symbol_override = {}
-            if 'symbol_sl' in paper_conf and clean_sym in paper_conf['symbol_sl']:
-                s_data = paper_conf['symbol_sl'][clean_sym]
-                if isinstance(s_data, (int, float)):
-                    paper_symbol_override['sl_points'] = float(s_data)
-                elif isinstance(s_data, dict):
-                    s_sl = float(s_data.get('sl', 0))
-                    if s_sl > 0:
-                        paper_symbol_override['sl_points'] = s_sl
-                        t_points = s_data.get('targets', [])
-                        if len(t_points) == 3:
-                            new_ratios = [t / s_sl for t in t_points]
-                            paper_symbol_override['ratios'] = new_ratios
-                            paper_symbol_override['custom_targets'] = []
-                            print(f"[DEBUG] Paper Symbol Override for {clean_sym}: SL={s_sl}")
-
-            if paper_symbol_override:
-                paper_overrides.update(paper_symbol_override)
-            
-            # Execute PAPER (Broadcast with Perfect Paper Settings)
-            print("[DEBUG MAIN] calling execute('PAPER') with PAPER settings...")
-            res_paper = execute("PAPER", paper_qty, target_channels, overrides=paper_overrides)
+            # Execute PAPER (Broadcast with Main Form Settings)
+            print("[DEBUG MAIN] calling execute('PAPER') with Main Form Inputs...")
+            res_paper = execute("PAPER", paper_qty, target_channels, overrides=None)
             
             if res_paper['status'] == 'success':
                 flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
