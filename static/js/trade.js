@@ -2,14 +2,24 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     let s = $(symId).val(); if(!s) return;
     
     let settingsKey = normalizeSymbol(s);
+    
+    // --- UPDATED: Determine Effective Mode ---
+    // If SHADOW is selected, we must load PAPER settings for the UI form.
+    let selectedMode = $('#mode_input').val();
     let mode = 'PAPER'; 
     
     if (symId === '#h_sym' || $('#history').is(':visible')) mode = 'SIMULATOR'; 
     else if (symId === '#imp_sym') mode = 'PAPER'; 
-    else mode = $('#mode_input').val();
+    else {
+        // Map SHADOW -> PAPER for settings retrieval
+        mode = (selectedMode === 'SHADOW') ? 'PAPER' : selectedMode;
+    }
     
     let modeSettings = settings.modes[mode] || settings.modes.PAPER;
     
+    // Update Visuals (Border/Button) if working on Main Tab
+    if(symId === '#sym') updateModeVisuals(selectedMode);
+
     // Auto-fill SL (FIXED for Object Structure)
     if(slId) {
         let rawData = (modeSettings.symbol_sl && modeSettings.symbol_sl[settingsKey]);
@@ -216,7 +226,9 @@ function calcRisk() {
     }
 
     // Safely get ratios
-    let mode = $('#mode_input').val(); 
+    let rawMode = $('#mode_input').val();
+    // --- UPDATED: Use PAPER Settings for Shadow ---
+    let mode = (rawMode === 'SHADOW') ? 'PAPER' : rawMode;
     let modeObj = settings.modes[mode] || settings.modes.PAPER;
     let ratios = modeObj.ratios || [0.5, 1.0, 1.5];
 
@@ -270,6 +282,30 @@ function calcRisk() {
     });
 }
 
+// --- NEW FUNCTION: Update Visuals for Shadow/Live ---
+function updateModeVisuals(mode) {
+    let btn = $('#submit_btn');
+    let card = $('#trade_form_card');
+    
+    // Reset classes
+    btn.removeClass('btn-dark btn-danger btn-primary btn-warning btn-success');
+
+    if (mode === "SHADOW") {
+        if(card.length) card.css('border', '2px solid #6f42c1'); // Purple
+        btn.text("👻 Execute Shadow Trade");
+        btn.addClass('btn-dark'); // Dark/Purple style
+    } else if (mode === "LIVE") {
+        if(card.length) card.css('border', '1px solid red');
+        btn.text("⚡ Execute LIVE Trade");
+        btn.addClass('btn-danger');
+    } else {
+        // PAPER or others
+        if(card.length) card.css('border', '1px solid #007bff'); // Blue
+        btn.text("Execute Paper Trade");
+        btn.addClass('btn-primary');
+    }
+}
+
 // --- NEW: Toggle Limit Price Requirement on Order Type Change ---
 $(function() {
     $('#ord').change(function() {
@@ -282,6 +318,21 @@ $(function() {
         }
     });
     
+    // --- NEW: Listener for Mode Change to Update UI Settings ---
+    $('#mode_input').change(function() {
+        let val = $(this).val();
+        updateModeVisuals(val);
+        
+        // Reload details (SL/Targets) based on the new mode
+        // Only trigger if a symbol is already selected to avoid blank fetches
+        if($('#sym').val()) {
+            loadDetails('#sym', '#exp', 'input[name="type"]:checked', '#qty', '#sl_pts');
+        }
+    });
+
     // Initialize on load
     $('#ord').trigger('change');
+    
+    // Initialize Visuals based on default/loaded value
+    updateModeVisuals($('#mode_input').val());
 });
