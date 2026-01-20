@@ -7,9 +7,8 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     
     // --- Determine Mode ---
     if (symId === '#h_sym' || $('#history').is(':visible')) mode = 'SIMULATOR'; 
-    else if (symId === '#imp_sym') mode = 'PAPER'; // Import always uses Paper settings
+    else if (symId === '#imp_sym') mode = 'PAPER'; // Import always defaults to PAPER settings
     else {
-        // Map SHADOW -> PAPER for main card settings
         mode = (selectedMode === 'SHADOW') ? 'PAPER' : selectedMode;
     }
     
@@ -39,27 +38,30 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
         let trailVal = modeSettings.trailing_sl || 0;
         
         if(prefix === '#imp_') {
-             // --- IMPORT MODAL LOGIC (UPDATED) ---
+             // --- IMPORT MODAL POPULATION (FIXED) ---
              $('#imp_trail_sl').val(trailVal);
              $('#imp_trail_limit').val(modeSettings.sl_to_entry || 0);
              $('#imp_exit_mult').val(modeSettings.exit_multiplier || 1);
              
-             // POPULATE TARGET CONFIGS FOR IMPORT
+             // Populate Targets (Active | Lots | Full | Cost)
              if(modeSettings.targets) {
                 ['t1', 't2', 't3'].forEach((k, i) => {
-                    let conf = modeSettings.targets[i];
+                    let conf = modeSettings.targets[i] || {};
                     // Checkboxes
-                    $(`#imp_${k}_active`).prop('checked', conf.active);
-                    $(`#imp_${k}_full`).prop('checked', conf.full);
-                    $(`#imp_${k}_cost`).prop('checked', conf.trail_to_entry || false);
+                    $(`#imp_${k}_active`).prop('checked', conf.active !== false); 
+                    $(`#imp_${k}_full`).prop('checked', conf.full === true);
+                    $(`#imp_${k}_cost`).prop('checked', conf.trail_to_entry === true);
                     
-                    // Lots
-                    if(conf.full) $(`#imp_${k}_lots`).val(1000);
-                    else $(`#imp_${k}_lots`).val(conf.lots > 0 ? conf.lots : '');
+                    // Lots & Readonly State
+                    if(conf.full) {
+                        $(`#imp_${k}_lots`).val(1000).prop('readonly', true);
+                    } else {
+                        $(`#imp_${k}_lots`).val(conf.lots || 0).prop('readonly', false);
+                    }
                 });
              }
         } else {
-             // --- MAIN TRADE FORM LOGIC ---
+             // --- MAIN TRADE FORM POPULATION ---
              $('#trail_sl').val(trailVal);
              $('#ord').val(modeSettings.order_type || 'MARKET').trigger('change');
              $('select[name="sl_to_entry"]').val(modeSettings.sl_to_entry || 0);
@@ -67,13 +69,16 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
              
              if(modeSettings.targets) {
                 ['t1', 't2', 't3'].forEach((k, i) => {
-                    let conf = modeSettings.targets[i];
-                    $(`#${k}_active`).prop('checked', conf.active);
-                    $(`#${k}_full`).prop('checked', conf.full);
-                    $(`input[name="${k}_cost"]`).prop('checked', conf.trail_to_entry || false);
+                    let conf = modeSettings.targets[i] || {};
+                    $(`#${k}_active`).prop('checked', conf.active !== false);
+                    $(`#${k}_full`).prop('checked', conf.full === true);
+                    $(`input[name="${k}_cost"]`).prop('checked', conf.trail_to_entry === true);
                     
-                    if(conf.full) $(`#${k}_lots`).val(1000);
-                    else $(`#${k}_lots`).val(conf.lots > 0 ? conf.lots : '');
+                    if(conf.full) {
+                        $(`#${k}_lots`).val(1000).prop('readonly', true);
+                    } else {
+                        $(`#${k}_lots`).val(conf.lots || 0).prop('readonly', false);
+                    }
                 });
              }
         }
@@ -112,7 +117,6 @@ function adjQty(inputId, dir) {
     }
 }
 
-// --- ADJ LIVE QTY FUNCTION ---
 function adjLiveQty(dir) {
     let val = parseInt($('#live_qty').val()) || curLotSize;
     let step = curLotSize;
@@ -185,7 +189,6 @@ function fetchLTP() {
             }, function(d) {
                 if(d.ltp > 0) {
                     $('#imp_ltp').text("LTP: "+d.ltp);
-                    // Only auto-fill if empty to avoid overwriting user edits
                     if(!$('#imp_price').val()) $('#imp_price').val(d.ltp);
                 }
             });
@@ -213,7 +216,6 @@ function calcSLPtsFromPrice(priceId, ptsId) {
     }
 }
 
-// --- NEW LIVE CARD CALCULATIONS ---
 function calcLiveSLPriceFromPts() {
     let pts = parseFloat($('#live_sl_pts').val()) || 0;
     let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
@@ -368,23 +370,21 @@ function calcRisk() {
                 $(`#live_${k}_full`).prop('checked', conf.full === true);
                 $(`#live_${k}_cost`).prop('checked', conf.trail_to_entry === true);
                 
-                if (conf.full) $(`#live_${k}_lots`).val(1000); 
-                else $(`#live_${k}_lots`).val(conf.lots || 0);
+                if (conf.full) {
+                    $(`#live_${k}_lots`).val(1000).prop('readonly', true);
+                } else {
+                    $(`#live_${k}_lots`).val(conf.lots || 0).prop('readonly', false);
+                }
             });
         }
     }
 
+    // Enforce Readonly logic for Main Card as well
     ['t1', 't2', 't3'].forEach(k => {
         if ($(`#${k}_full`).is(':checked')) {
             $(`#${k}_lots`).val(1000).prop('readonly', true);
         } else {
             $(`#${k}_lots`).prop('readonly', false);
-        }
-        
-        if ($(`#live_${k}_full`).is(':checked')) {
-            $(`#live_${k}_lots`).val(1000).prop('readonly', true);
-        } else {
-            $(`#live_${k}_lots`).prop('readonly', false);
         }
     });
 }
