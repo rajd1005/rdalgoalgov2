@@ -187,6 +187,52 @@ function renderActivePositions(trades) {
                 activeTimeStr = t.last_update_time.slice(11, 16);
                 waitDuration = '<span class="text-info ms-1" style="font-size:0.65rem;">(Sim)</span>';
             }
+            
+            // --- PROJECTED P&L CALCULATION ---
+            let projProfit = 0;
+            let projLoss = 0;
+            let remQty = t.quantity;
+            let lotSz = t.lot_size || 1;
+            
+            // 1. Calc Max Loss (SL Hit) -> (SL - Entry) * Remaining Qty
+            projLoss = (t.sl - t.entry_price) * remQty;
+
+            // 2. Calc Max Profit (Exiting at Targets)
+            let tControls = t.target_controls || [
+                {enabled:true, lots:0, trail_to_entry:false}, 
+                {enabled:true, lots:0, trail_to_entry:false}, 
+                {enabled:true, lots:1000, trail_to_entry:false}
+            ];
+            
+            // Start from the next unhit target
+            let startIdx = 0;
+            if(t.targets_hit_indices && t.targets_hit_indices.length > 0) {
+                 startIdx = Math.max(...t.targets_hit_indices) + 1;
+            }
+
+            let pQty = remQty;
+            for(let i=startIdx; i<3; i++) {
+                if(pQty <= 0) break;
+                
+                let tp = t.targets[i];
+                let tc = tControls[i];
+                if(!tc) continue;
+
+                let q = 0;
+                // If last target OR "Full" checked OR lots >= 1000, take all remaining
+                if(i === 2 || tc.lots >= 1000) { 
+                    q = pQty; 
+                } else {
+                    q = tc.lots * lotSz;
+                    if(q > pQty) q = pQty; // Cap at available
+                }
+                
+                if(q > 0) {
+                    projProfit += (tp - t.entry_price) * q;
+                    pQty -= q;
+                }
+            }
+            // ----------------------------------------
 
             // --- Buttons ---
             let editBtn = `<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" onclick="openEditTradeModal('${t.id}')">✏️</button>`;
@@ -235,6 +281,15 @@ function renderActivePositions(trades) {
                          <span class="text-danger fw-bold">SL: ${t.sl.toFixed(1)}</span>
                          <span class="text-muted">T: ${t.targets[0].toFixed(0)} | ${t.targets[1].toFixed(0)} | ${t.targets[2].toFixed(0)}</span>
                     </div>
+
+                    <div class="d-flex justify-content-between align-items-center mt-1 px-1 py-1 border-top border-light" style="font-size:0.75rem;">
+                        <span class="text-muted" title="Based on Global/Trade Target Config"><i class="fas fa-shield-alt text-secondary"></i> Projected:</span>
+                        <div>
+                             <span class="${projProfit >= 0 ? 'text-success' : 'text-danger'} fw-bold me-2" title="Max Profit if all Targets hit">₹${projProfit.toFixed(0)}</span>
+                             <span class="${projLoss >= 0 ? 'text-success' : 'text-danger'} fw-bold" title="Max Loss if SL hit">₹${projLoss.toFixed(0)}</span>
+                        </div>
+                    </div>
+
                     <div class="d-flex justify-content-end gap-2 mt-2 pt-1 border-top border-light">
                         ${editBtn}
                         <button class="btn btn-sm btn-light border text-muted py-0 px-2" style="font-size:0.75rem;" onclick="showLogs('${t.id}', 'active')">📜 Logs</button>
