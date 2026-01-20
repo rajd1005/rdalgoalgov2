@@ -26,7 +26,7 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-# --- CREDENTIAL MANAGEMENT & KITE INITIALIZATION ---
+# --- CREDENTIAL MANAGEMENT ---
 CREDENTIALS_DB_ID = 999  # Reserved ID for Zerodha Credentials
 
 def load_credentials():
@@ -61,7 +61,11 @@ login_error_msg = None
 def run_auto_login_process():
     global bot_active, login_state, login_error_msg
     
-    # Check if credentials exist in config (memory)
+    # 1. Block if paused (User explicitly Logged Out)
+    if login_state == "PAUSED":
+        return
+
+    # 2. Check Creds
     if not config.ZERODHA_USER_ID or not config.TOTP_SECRET or not config.ZERODHA_PASSWORD:
         login_state = "SETUP"
         login_error_msg = "Credentials Missing. Please configure them."
@@ -75,6 +79,11 @@ def run_auto_login_process():
         token, error = auto_login.perform_auto_login(kite)
         gc.collect() # Cleanup memory after selenium usage
         
+        # [SAFETY CHECK] Did user click logout WHILE we were logging in?
+        if login_state == "PAUSED":
+            print("🛑 Auto-Login Aborted by User (PAUSED)")
+            return
+
         if token:
             try:
                 data = kite.generate_session(token, api_secret=config.API_SECRET)
@@ -83,44 +92,49 @@ def run_auto_login_process():
                 # Fetch instruments immediately after login
                 smart_trader.fetch_instruments(kite)
                 
-                bot_active = True
-                login_state = "IDLE"
-                gc.collect()
-                
-                # [NOTIFICATION] Success
-                telegram_bot.notify_system_event("LOGIN_SUCCESS", "Auto-Login Successful. Session Renewed.")
-                print("✅ Session Generated Successfully & Instruments Fetched")
+                # Final Safety Check before going Live
+                if login_state != "PAUSED":
+                    bot_active = True
+                    login_state = "IDLE"
+                    gc.collect()
+                    
+                    # [NOTIFICATION] Success
+                    telegram_bot.notify_system_event("LOGIN_SUCCESS", "Auto-Login Successful. Session Renewed.")
+                    print("✅ Session Generated Successfully & Instruments Fetched")
                 
             except Exception as e:
                 # [NOTIFICATION] Session Gen Failure
                 telegram_bot.notify_system_event("LOGIN_FAIL", f"Session Gen Failed: {str(e)}")
                 
-                if "Token is invalid" in str(e):
-                    print("⚠️ Generated Token Expired or Invalid. Retrying...")
-                    login_state = "FAILED" 
-                else:
-                    print(f"❌ Session Generation Error: {e}")
-                    login_state = "FAILED"
-                    login_error_msg = str(e)
+                if login_state != "PAUSED":
+                    if "Token is invalid" in str(e):
+                        print("⚠️ Generated Token Expired or Invalid. Retrying...")
+                        login_state = "FAILED" 
+                    else:
+                        print(f"❌ Session Generation Error: {e}")
+                        login_state = "FAILED"
+                        login_error_msg = str(e)
         else:
             if bot_active:
                 print("✅ Auto-Login: Handled via Callback Route. System Online.")
-                login_state = "IDLE"
+                if login_state != "PAUSED": login_state = "IDLE"
             else:
                 # [NOTIFICATION] Auto-Login Failure
                 telegram_bot.notify_system_event("LOGIN_FAIL", f"Auto-Login Failed: {error}")
                 
                 print(f"❌ Auto-Login Failed: {error}")
-                login_state = "FAILED"
-                login_error_msg = error
+                if login_state != "PAUSED":
+                    login_state = "FAILED"
+                    login_error_msg = error
             
     except Exception as e:
         # [NOTIFICATION] Critical Error
         telegram_bot.notify_system_event("LOGIN_FAIL", f"Critical Login Error: {str(e)}")
         
         print(f"❌ Critical Session Error: {e}")
-        login_state = "FAILED"
-        login_error_msg = str(e)
+        if login_state != "PAUSED":
+            login_state = "FAILED"
+            login_error_msg = str(e)
 
 def background_monitor():
     global bot_active, login_state
@@ -165,6 +179,8 @@ def background_monitor():
                             if bot_active:
                                 telegram_bot.notify_system_event("OFFLINE", f"Connection Lost: {err}")
                             
+                            # CRITICAL: We set active=False, but keep state=IDLE. 
+                            # This causes the block below to run next loop -> Triggering Auto-Login.
                             bot_active = False 
                         else:
                             print(f"⚠️ Risk Loop Warning: {err}")
@@ -275,7 +291,7 @@ def reset_connection():
     global bot_active, login_state
     
     # [NOTIFICATION] Manual Reset
-    telegram_bot.notify_system_event("RESET", "Manual Connection Reset. Auto-Login Paused.")
+    telegram_bot.notify_system_event("RESET", "Manual Logout. Auto-Login Paused.")
     
     bot_active = False
     # STOP THE LOOP: Set state to PAUSED instead of IDLE
@@ -292,13 +308,14 @@ def resume_login():
 
 @app.route('/callback')
 def callback():
-    global bot_active
+    global bot_active, login_state
     t = request.args.get("request_token")
     if t:
         try:
             data = kite.generate_session(t, api_secret=config.API_SECRET)
             kite.set_access_token(data["access_token"])
             bot_active = True
+            login_state = "IDLE" # Reset state to healthy
             smart_trader.fetch_instruments(kite)
             gc.collect()
             
