@@ -98,7 +98,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
                     elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
                     if activated:
-                        status = "OPEN"; fill_price = entry_price; highest_ltp = max(fill_price, ltp)
+                        # [FIX 1] Update final_status to OPEN so dashboard shows it correctly
+                        status = "OPEN"; final_status = "OPEN"; fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
                         # Notify Activation
                         notification_queue.append({'event': 'ACTIVE', 'data': {'price': fill_price, 'time': c_date_str}})
@@ -179,7 +180,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Partial Exit {exit_qty} Qty. Rem: {current_qty}")
                     
                     if current_qty == 0:
-                         if final_status == "PENDING": final_status = "TARGET_HIT"
+                         # [FIX 2] Ensure trade is marked CLOSED if Qty becomes 0 via Partial Exits
+                         if final_status in ["PENDING", "OPEN"]: final_status = "TARGET_HIT"
                          if not exit_reason: exit_reason = "TARGET_HIT"
                          final_exit_price = ltp
                          break 
