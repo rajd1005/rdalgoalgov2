@@ -1,6 +1,6 @@
 $(document).ready(function() {
     // --- CONFIGURATION ---
-    const REFRESH_INTERVAL = 3000; // Updated to 3000ms (3 seconds) for stability
+    const REFRESH_INTERVAL = 3000; // 3 Seconds Refresh for Stability
     // ---------------------
 
     renderWatchlist();
@@ -136,12 +136,41 @@ function calcImpFromPrice() {
         calculateImportTargets(entry, pts);
     }
 }
+
+// --- UPDATED: Calculate Import Targets with Symbol Overrides ---
 function calculateImportTargets(entry, pts) {
     if(!entry || !pts) return;
+    
+    // Default Ratios from Paper Settings
     let ratios = settings.modes.PAPER.ratios || [0.5, 1.0, 1.5];
-    $('#imp_t1').val((entry + (pts * ratios[0])).toFixed(2));
-    $('#imp_t2').val((entry + (pts * ratios[1])).toFixed(2));
-    $('#imp_t3').val((entry + (pts * ratios[2])).toFixed(2));
+    let t1_pts = pts * ratios[0];
+    let t2_pts = pts * ratios[1];
+    let t3_pts = pts * ratios[2];
+
+    // --- CHECK FOR SYMBOL SPECIFIC OVERRIDE ---
+    let sVal = $('#imp_sym').val();
+    if(sVal) {
+        // Normalize symbol (remove expiry/exchange parts)
+        let normS = sVal.split(':')[0].trim().toUpperCase();
+        
+        let paperSettings = settings.modes.PAPER;
+        if(paperSettings && paperSettings.symbol_sl && paperSettings.symbol_sl[normS]) {
+            let sData = paperSettings.symbol_sl[normS];
+            
+            // Check if object structure exists and has targets (Points)
+            if (typeof sData === 'object' && sData.targets && sData.targets.length === 3) {
+                // Use specific points defined in global settings for this symbol
+                t1_pts = sData.targets[0];
+                t2_pts = sData.targets[1];
+                t3_pts = sData.targets[2];
+            }
+        }
+    }
+    // ------------------------------------------
+
+    $('#imp_t1').val((entry + t1_pts).toFixed(2));
+    $('#imp_t2').val((entry + t2_pts).toFixed(2));
+    $('#imp_t3').val((entry + t3_pts).toFixed(2));
     
     // Visual update for full exit checkboxes
     ['t1', 't2', 't3'].forEach(k => {
