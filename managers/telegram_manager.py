@@ -1,6 +1,7 @@
 import requests
 import json
 import time
+import threading
 import settings
 import smart_trader
 from managers.common import get_time_str
@@ -158,11 +159,6 @@ class TelegramManager:
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends notifications to ALL configured channels based on rules.
-        
-        UPDATED LOGIC:
-          1. Checks 'event_toggles' to see if this specific event is enabled.
-          2. Uses templates for message content.
-          3. Maintains filtering (VIP/Z2H/FREE) and Spillover logic.
         """
         conf = self._get_config()
         if not conf.get('enable_notifications', False):
@@ -319,26 +315,45 @@ class TelegramManager:
             except: pass
 
     def delete_trade_messages(self, trade_id):
+        """
+        Deletes messages associated with a trade from the database immediately,
+        then spawns a background thread to call the Telegram API for cleanup.
+        Prevents Worker Timeout on slow network calls.
+        """
         try:
+            # 1. Fetch messages
             messages = TelegramMessage.query.filter_by(trade_id=str(trade_id)).all()
             if not messages: return
 
-            conf = self._get_config()
-            token = conf.get('bot_token')
-            if not token: return
+            # 2. Extract data for background processing
+            msg_data_list = [{"chat_id": m.chat_id, "message_id": m.message_id} for m in messages]
 
-            delete_url = f"{self.base_url}{token}/deleteMessage"
-
+            # 3. Delete from DB immediately (Fast)
             for msg in messages:
-                try:
-                    payload = {"chat_id": msg.chat_id, "message_id": msg.message_id}
-                    requests.post(delete_url, json=payload, timeout=2)
-                except Exception as req_err:
-                    print(f"TG Delete Request Error: {req_err}")
                 db.session.delete(msg)
             
             db.session.commit()
-            print(f"🗑️ Deleted {len(messages)} Telegram messages for Trade {trade_id}")
+            print(f"🗑️ Deleted {len(messages)} Telegram messages from DB for Trade {trade_id}")
+
+            # 4. Background Task Definition
+            def bg_cleanup(token, items):
+                delete_url = f"{self.base_url}{token}/deleteMessage"
+                for item in items:
+                    try:
+                        requests.post(delete_url, json=item, timeout=5)
+                        # Small sleep to prevent rate limiting if many messages
+                        time.sleep(0.1) 
+                    except Exception as req_err:
+                        print(f"BG Delete Request Error: {req_err}")
+
+            # 5. Launch Background Thread
+            conf = self._get_config()
+            token = conf.get('bot_token')
+            
+            if token and msg_data_list:
+                t = threading.Thread(target=bg_cleanup, args=(token, msg_data_list))
+                t.daemon = True # Ensure thread doesn't block app shutdown
+                t.start()
 
         except Exception as e:
             print(f"❌ Error deleting Telegram messages: {e}")
