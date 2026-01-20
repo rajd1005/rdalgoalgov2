@@ -51,6 +51,19 @@ $(document).ready(function() {
     $('#imp_price').on('input', function() { calcImpFromPts(); }); 
     $('#imp_sl_pts').on('input', calcImpFromPts);
     $('#imp_sl_price').on('input', calcImpFromPrice);
+    
+    // --- NEW: Import Modal "Full" Checkbox Listeners ---
+    ['t1', 't2', 't3'].forEach(k => {
+        $(`#imp_${k}_full`).change(function() {
+            if($(this).is(':checked')) {
+                $(`#imp_${k}_lots`).val(1000).prop('readonly', true);
+            } else {
+                $(`#imp_${k}_lots`).prop('readonly', false);
+                // Optional: restore default lots? For now just unlock.
+                if($(`#imp_${k}_lots`).val() == 1000) $(`#imp_${k}_lots`).val(0); 
+            }
+        });
+    });
 
     // Auto-Remove Floating Notifications
     setTimeout(function() {
@@ -137,7 +150,7 @@ function calcImpFromPrice() {
     }
 }
 
-// --- UPDATED: Calculate Import Targets with Symbol Overrides ---
+// --- UPDATED: Calculate Import Targets with Symbol Overrides & Readonly Logic ---
 function calculateImportTargets(entry, pts) {
     if(!entry || !pts) return;
     
@@ -172,9 +185,13 @@ function calculateImportTargets(entry, pts) {
     $('#imp_t2').val((entry + t2_pts).toFixed(2));
     $('#imp_t3').val((entry + t3_pts).toFixed(2));
     
-    // Visual update for full exit checkboxes
+    // Visual & Readonly update for full exit checkboxes
     ['t1', 't2', 't3'].forEach(k => {
-        if ($(`#imp_${k}_full`).is(':checked')) $(`#imp_${k}_lots`).val(1000);
+        if ($(`#imp_${k}_full`).is(':checked')) {
+            $(`#imp_${k}_lots`).val(1000).prop('readonly', true);
+        } else {
+            $(`#imp_${k}_lots`).prop('readonly', false);
+        }
     });
 }
 
