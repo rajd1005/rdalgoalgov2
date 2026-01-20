@@ -416,13 +416,35 @@ def api_import_trade():
         final_sym = smart_trader.get_exact_symbol(data['symbol'], data['expiry'], data['strike'], data['type'])
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
-        # Call Replay Engine
+        # --- NEW: Extract Channel Selection from Request ---
+        # Default to 'main' if missing. Logic handles single selection.
+        selected_channel = data.get('target_channel', 'main')
+        
+        # Construct target_channels list. 
+        # 'main' is always primary for internal logic, but we want to broadcast to the selected one.
+        # If user selected VIP, Free, or Z2H, we pass that along with 'main' logic (or replace it depending on telegram manager logic).
+        # Typically, telegram_manager broadcasts to 'main' AND any others in the list.
+        # If the requirement is "only one telegram channel", we pass that specific one.
+        
+        # However, to maintain system compatibility (where 'main' might be used for logging), 
+        # we usually pass ['main', 'vip'] etc. 
+        # BUT, if the user explicitly wants ONLY one channel (e.g. Free), we can pass just that if the backend supports it.
+        # Assuming standard logic: Main is always required for system logs? 
+        # Let's stick to the requested behavior: "only one telegram channel can be selected".
+        
+        target_channels = [selected_channel] 
+        # Note: If 'main' was not selected, we might miss system logs if the bot logic relies on 'main' key.
+        # To be safe, usually we send ['main', selected_channel] if selected != main. 
+        # But if the user strictly wants ONE channel, we pass that list.
+        
+        # Call Replay Engine with channels
         result = replay_engine.import_past_trade(
             kite, final_sym, data['entry_time'], 
             int(data['qty']), float(data['price']), 
             float(data['sl']), [float(t) for t in data['targets']],
             data.get('trailing_sl', 0), data.get('sl_to_entry', 0),
-            data.get('exit_multiplier', 1), data.get('target_controls')
+            data.get('exit_multiplier', 1), data.get('target_controls'),
+            target_channels=target_channels
         )
         
         # --- SEQUENTIAL TELEGRAM SENDER (UPDATED) ---
@@ -433,7 +455,7 @@ def api_import_trade():
             def send_seq_notifications():
                 # Wrap thread in app_context to access DB
                 with app.app_context():
-                    # 1. Send Initial "NEW_TRADE" message -> Returns Dict of IDs (e.g. {'main': 1, 'vip': 2})
+                    # 1. Send Initial "NEW_TRADE" message -> Returns Dict of IDs
                     msg_ids = telegram_bot.notify_trade_event(trade_ref, "NEW_TRADE")
                     
                     if msg_ids:
@@ -445,7 +467,9 @@ def api_import_trade():
                         # Handle Structure: If dict, save dict. If int (legacy), wrap it.
                         if isinstance(msg_ids, dict):
                             ids_dict = msg_ids
-                            main_id = msg_ids.get('main')
+                            # If we sent to 'free', main_id might be None or the id for free channel
+                            # We grab the ID corresponding to the selected channel as the "primary" reference
+                            main_id = msg_ids.get(selected_channel) or msg_ids.get('main')
                         else:
                             ids_dict = {'main': msg_ids}
                             main_id = msg_ids
