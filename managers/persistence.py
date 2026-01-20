@@ -41,10 +41,6 @@ def load_trades():
         raw_rows = ActiveTrade.query.all()
         trades = [json.loads(r.data) for r in raw_rows]
         
-        # [DEBUG LOG]
-        ids = [t.get('id') for t in trades]
-        print(f"[DEBUG] DB LOAD: Fetched {len(trades)} trades. IDs: {ids}")
-        
         return trades
     except Exception as e:
         print(f"[DEBUG] Load Trades Error: {e}")
@@ -55,16 +51,16 @@ def save_trades(trades):
     Overwrites the ActiveTrade table with the provided list of trades.
     """
     try:
-        # [DEBUG LOG]
-        ids = [t.get('id') for t in trades]
-        modes = [t.get('mode') for t in trades]
-        print(f"[DEBUG] DB SAVE: Saving {len(trades)} trades. IDs: {ids} | Modes: {modes}")
+        # [DEBUG LOG] - Optional: You can comment this out too if needed
+        # ids = [t.get('id') for t in trades]
+        # modes = [t.get('mode') for t in trades]
+        # print(f"[DEBUG] DB SAVE: Saving {len(trades)} trades. IDs: {ids} | Modes: {modes}")
 
         db.session.query(ActiveTrade).delete()
         for t in trades: 
             db.session.add(ActiveTrade(data=json.dumps(t)))
         db.session.commit()
-        print(f"[DEBUG] DB SAVE: Commit Successful.")
+        # print(f"[DEBUG] DB SAVE: Commit Successful.")
     except Exception as e:
         print(f"[DEBUG] Save Trades Error: {e}")
         db.session.rollback()
