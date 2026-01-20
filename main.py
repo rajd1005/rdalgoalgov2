@@ -26,7 +26,7 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
 
-# --- CREDENTIAL MANAGEMENT ---
+# --- CREDENTIAL MANAGEMENT & KITE INITIALIZATION ---
 CREDENTIALS_DB_ID = 999  # Reserved ID for Zerodha Credentials
 
 def load_credentials():
@@ -185,6 +185,8 @@ def background_monitor():
                         print("⚠️ Auto-Login previously failed. Retrying in 60s...")
                         time.sleep(60)
                         login_state = "IDLE" 
+                    
+                    # NOTE: If state is "PAUSED" or "SETUP", monitor does nothing (waits for user).
                         
             except Exception as e:
                 print(f"❌ Monitor Loop Critical Error: {e}")
@@ -273,12 +275,20 @@ def reset_connection():
     global bot_active, login_state
     
     # [NOTIFICATION] Manual Reset
-    telegram_bot.notify_system_event("RESET", "Manual Connection Reset Initiated.")
+    telegram_bot.notify_system_event("RESET", "Manual Connection Reset. Auto-Login Paused.")
     
     bot_active = False
-    login_state = "IDLE"
-    flash("🔄 Connection Reset. Login Monitor will retry.")
+    # STOP THE LOOP: Set state to PAUSED instead of IDLE
+    login_state = "PAUSED" 
+    
+    flash("⏸️ System Paused. Edit Credentials or Login Manually.")
     return redirect('/')
+
+@app.route('/api/resume_login')
+def resume_login():
+    global login_state
+    login_state = "IDLE" # Resume the loop
+    return jsonify({"status": "success"})
 
 @app.route('/callback')
 def callback():
@@ -649,9 +659,11 @@ def place_trade():
     try:
         # --- DEBUG LOG: INCOMING REQUEST ---
         raw_mode = request.form['mode']
+        print(f"\n[DEBUG MAIN] Received Trade Request. RAW Mode: '{raw_mode}'")
         
         # --- FIX: Clean Mode Input ---
         mode_input = raw_mode.strip().upper()
+        print(f"[DEBUG MAIN] Cleaned Mode: '{mode_input}'")
         
         sym = request.form['index']
         type_ = request.form['type']
@@ -731,6 +743,8 @@ def place_trade():
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
             
+            print(f"[DEBUG MAIN] Executing Helper: Mode={ex_mode}, Qty={ex_qty}, Trail={use_trail}, Mult={use_exit_mult}")
+            
             return trade_manager.create_trade_direct(
                 kite, ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, 
                 order_type, limit_price, use_target_controls, 
@@ -770,7 +784,11 @@ def place_trade():
                         # Force empty custom targets so ratios are used
                         symbol_override['custom_targets'] = []
                         
+                        print(f"[DEBUG] Symbol Override for {clean_sym}: SL={s_sl}, Ratios={new_ratios}")
+
         if mode_input == "SHADOW":
+            print("[DEBUG MAIN] Entering SHADOW Logic Block...")
+            
             # 1. Check Live Feasibility
             can_live, reason = common.can_place_order("LIVE")
             if not can_live:
@@ -849,6 +867,7 @@ def place_trade():
             }
             
             # Execute LIVE (Silent)
+            print("[DEBUG MAIN] calling execute('LIVE') with Form Overrides...")
             res_live = execute("LIVE", live_qty, [], overrides=live_overrides)
             
             if res_live['status'] != 'success':
@@ -856,6 +875,7 @@ def place_trade():
                 return redirect('/')
             
             # 3. Wait for DB Safety (1s to ensure ID separation)
+            print("[DEBUG MAIN] LIVE Success. Waiting 1s...")
             time.sleep(1)
             
             # ==========================================
@@ -864,6 +884,7 @@ def place_trade():
             paper_qty = input_qty
             
             # Execute PAPER (Broadcast with Main Form Settings)
+            print("[DEBUG MAIN] calling execute('PAPER') with Main Form Inputs...")
             res_paper = execute("PAPER", paper_qty, target_channels, overrides=None)
             
             if res_paper['status'] == 'success':
@@ -873,6 +894,7 @@ def place_trade():
 
         else:
             # Standard Execution (PAPER or LIVE)
+            print(f"[DEBUG MAIN] Entering STANDARD Logic Block (Mode: {mode_input})...")
             
             can_trade, reason = common.can_place_order(mode_input)
             if not can_trade:
@@ -895,6 +917,7 @@ def place_trade():
                 flash(f"❌ Error: {res['message']}")
             
     except Exception as e:
+        print(f"[DEBUG MAIN] Exception: {e}")
         flash(f"Error: {e}")
     return redirect('/')
 
