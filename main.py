@@ -664,7 +664,7 @@ def place_trade():
         
         # --- PREPARE OVERRIDES (Check for Symbol Specific Settings) ---
         # Determine which mode config to check for symbol settings
-        # Shadow uses LIVE settings. Standard modes use their own.
+        # Shadow uses LIVE settings by default here for Leg 1 logic
         target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
         mode_conf = app_settings['modes'].get(target_mode_conf, {})
         
@@ -711,8 +711,6 @@ def place_trade():
             live_qty = input_qty
             
             # Construct target controls from Global LIVE Settings
-            # This ensures we use the backend configuration (e.g. "50% at T1") 
-            # instead of whatever checkboxes are clicked on the form.
             live_controls = []
             global_targets = live_conf.get('targets', []) 
             defaults = [{'active': True, 'lots': 0, 'full': False, 'trail_to_entry': False}] * 3
@@ -736,11 +734,10 @@ def place_trade():
                 'sl_points': sl_points, # Fallback to form ONLY if no symbol specific SL found
                 'target_controls': live_controls,
                 'ratios': live_ratios,
-                'custom_targets': [] # Reset so internal ratios are used
+                'custom_targets': [] 
             }
             
             # MERGE SYMBOL SPECIFIC OVERRIDES (Highest Priority)
-            # Ensure 'symbol_override' was calculated using 'LIVE' config earlier in the function
             if symbol_override:
                 live_overrides.update(symbol_override)
             
@@ -757,15 +754,63 @@ def place_trade():
             time.sleep(1)
             
             # ==========================================
-            # LEG 2: EXECUTE PAPER (Copy Form Inputs)
+            # LEG 2: EXECUTE PAPER (Uses PAPER Settings + Paper Symbol Overrides)
             # ==========================================
             paper_qty = input_qty
             
-            # Execute PAPER (Broadcast using Form Inputs)
-            # overrides=None ensures it uses sl_points, custom_targets, target_controls 
-            # exactly as they appear on the input form.
-            print("[DEBUG MAIN] calling execute('PAPER') with Form Inputs...")
-            res_paper = execute("PAPER", paper_qty, target_channels, overrides=None)
+            # Fetch PAPER Configuration
+            paper_conf = app_settings['modes']['PAPER']
+            
+            # Construct target controls from Global PAPER Settings
+            paper_controls = []
+            paper_global_targets = paper_conf.get('targets', []) 
+            
+            for i in range(3):
+                t_conf = paper_global_targets[i] if i < len(paper_global_targets) else defaults[i]
+                t_lots = 1000 if t_conf.get('full') else int(t_conf.get('lots', 0))
+                paper_controls.append({
+                    'enabled': t_conf.get('active', True),
+                    'lots': t_lots,
+                    'trail_to_entry': t_conf.get('trail_to_entry', False)
+                })
+
+            paper_ratios = paper_conf.get('ratios', [0.5, 1.0, 2.0])
+
+            # Create Overrides based on PAPER Settings
+            paper_overrides = {
+                'trailing_sl': paper_conf.get('trailing_sl', 0),
+                'sl_to_entry': paper_conf.get('sl_to_entry', 0),
+                'exit_multiplier': paper_conf.get('exit_multiplier', 1),
+                'sl_points': sl_points, 
+                'target_controls': paper_controls,
+                'ratios': paper_ratios,
+                'custom_targets': [] 
+            }
+            
+            # --- CRITICAL FIX: Fetch Paper SYMBOL SPECIFIC Overrides ---
+            # This logic was missing, causing Paper trades to ignore symbol settings
+            paper_symbol_override = {}
+            if 'symbol_sl' in paper_conf and clean_sym in paper_conf['symbol_sl']:
+                s_data = paper_conf['symbol_sl'][clean_sym]
+                if isinstance(s_data, (int, float)):
+                    paper_symbol_override['sl_points'] = float(s_data)
+                elif isinstance(s_data, dict):
+                    s_sl = float(s_data.get('sl', 0))
+                    if s_sl > 0:
+                        paper_symbol_override['sl_points'] = s_sl
+                        t_points = s_data.get('targets', [])
+                        if len(t_points) == 3:
+                            new_ratios = [t / s_sl for t in t_points]
+                            paper_symbol_override['ratios'] = new_ratios
+                            paper_symbol_override['custom_targets'] = []
+                            print(f"[DEBUG] Paper Symbol Override for {clean_sym}: SL={s_sl}")
+
+            if paper_symbol_override:
+                paper_overrides.update(paper_symbol_override)
+            
+            # Execute PAPER (Broadcast with Perfect Paper Settings)
+            print("[DEBUG MAIN] calling execute('PAPER') with PAPER settings...")
+            res_paper = execute("PAPER", paper_qty, target_channels, overrides=paper_overrides)
             
             if res_paper['status'] == 'success':
                 flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
