@@ -95,7 +95,6 @@ function loadSettings() {
             });
             
             // --- CRITICAL FIX: Alias SHADOW to LIVE ---
-            // This ensures Shadow Mode uses LIVE settings (SL, Targets) instead of falling back to PAPER defaults.
             if(settings.modes.LIVE) {
                 settings.modes.SHADOW = settings.modes.LIVE;
             }
@@ -232,11 +231,19 @@ function testTelegram() {
 }
 
 function renderWatchlist() {
+    if (typeof settings === 'undefined' || !settings.watchlist) return;
     let wl = settings.watchlist || [];
-    let opts = '<option value="">📺 Select</option>';
-    wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
-    $('#trade_watch').html(opts);
-    if($('#imp_watch').length) $('#imp_watch').html(opts);
+    
+    // Dashboard & Import Selects
+    let mainOpts = '<option value="">📺 Select</option>';
+    wl.forEach(w => { mainOpts += `<option value="${w}">${w}</option>`; });
+    $('#trade_watch').html(mainOpts);
+    if($('#imp_watch').length) $('#imp_watch').html(mainOpts);
+
+    // Settings Remove Select (New Sync Logic)
+    let remOpts = '<option value="">Select to Remove...</option>';
+    wl.forEach(w => { remOpts += `<option value="${w}">${w}</option>`; });
+    if($('#remove_watch_sym').length) $('#remove_watch_sym').html(remOpts);
 }
 
 function addToWatchlist(inputId) {
