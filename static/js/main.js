@@ -31,6 +31,7 @@ $(document).ready(function() {
     // Bind Search Logic
     bindSearch('#sym', '#sym_list'); 
     bindSearch('#imp_sym', '#sym_list'); 
+    bindSearch('#new_watch_sym', '#sym_list'); // Added binding for settings
 
     // Chain & input Bindings
     $('#sym').change(() => loadDetails('#sym', '#exp', 'input[name="type"]:checked', '#qty', '#sl_pts'));
@@ -283,8 +284,15 @@ function submitImport() {
 function renderWatchlist() {
     if (typeof settings === 'undefined' || !settings.watchlist) return;
     let wl = settings.watchlist || [];
-    let opts = '<option value="">📺 Select</option>';
-    wl.forEach(w => { opts += `<option value="${w}">${w}</option>`; });
-    $('#trade_watch').html(opts);
-    $('#imp_watch').html(opts); 
+    
+    // Dashboard & Import Selects
+    let mainOpts = '<option value="">📺 Select</option>';
+    wl.forEach(w => { mainOpts += `<option value="${w}">${w}</option>`; });
+    $('#trade_watch').html(mainOpts);
+    if($('#imp_watch').length) $('#imp_watch').html(mainOpts);
+
+    // Settings Remove Select (New Sync Logic)
+    let remOpts = '<option value="">Select to Remove...</option>';
+    wl.forEach(w => { remOpts += `<option value="${w}">${w}</option>`; });
+    if($('#remove_watch_sym').length) $('#remove_watch_sym').html(remOpts);
 }
