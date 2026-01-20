@@ -710,7 +710,8 @@ def place_trade():
             
             # 1. Quantity (Use form input or fallback)
             try:
-                live_qty = int(request.form.get('live_qty'))
+                val = request.form.get('live_qty')
+                live_qty = int(val) if val else input_qty
             except (ValueError, TypeError):
                 live_qty = input_qty
 
