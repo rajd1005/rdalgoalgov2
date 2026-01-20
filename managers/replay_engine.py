@@ -39,7 +39,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         trigger_dir = "ABOVE" if first_open < entry_price else "BELOW"
 
         status = "PENDING"
-        final_status = "PENDING" # Initialize default
         current_sl = float(sl_price)
         current_qty = int(qty)
         highest_ltp = float(entry_price)
@@ -58,6 +57,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         }
         notification_queue.append({'event': 'NEW_TRADE', 'data': initial_trade_data})
 
+        final_status = "PENDING"
         exit_reason = ""
         final_exit_price = 0.0
         
@@ -77,9 +77,10 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                         current_qty = 0
                         break
                     elif status == "PENDING":
+                        # --- NEW: Handle Pending Time Exit ---
                         final_status = "NOT_ACTIVE"
                         exit_reason = "TIME_EXIT"
-                        final_exit_price = entry_price # No fill
+                        final_exit_price = entry_price # No fill, neutral price
                         realized_pnl = 0.0
                         logs.append(f"[{c_date_str}] ⏰ Universal Time Exit (Order Not Triggered)")
                         current_qty = 0
@@ -97,9 +98,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
                     elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
                     if activated:
-                        # [FIX] Sync final_status immediately so DB knows it's OPEN
-                        status = "OPEN"; final_status = "OPEN"; 
-                        fill_price = entry_price; highest_ltp = max(fill_price, ltp)
+                        # [FIX 1] Update final_status to OPEN so dashboard shows it correctly
+                        status = "OPEN"; final_status = "OPEN"; fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
                         # Notify Activation
                         notification_queue.append({'event': 'ACTIVE', 'data': {'price': fill_price, 'time': c_date_str}})
@@ -180,32 +180,32 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Partial Exit {exit_qty} Qty. Rem: {current_qty}")
                     
                     if current_qty == 0:
-                         # [FIX] Ensure trade status is updated if Qty hits 0 via partial exits
-                         if final_status in ["PENDING", "OPEN"]: 
-                             final_status = "TARGET_HIT"
-                         if not exit_reason: 
-                             exit_reason = "TARGET_HIT"
+                         # [FIX 2] Ensure trade is marked CLOSED if Qty becomes 0 via Partial Exits
+                         if final_status in ["PENDING", "OPEN"]: final_status = "TARGET_HIT"
+                         if not exit_reason: exit_reason = "TARGET_HIT"
                          final_exit_price = ltp
                          break 
             
-            # Post-Exit Scan Logic
+            # --- FIXED: POST-EXIT SCAN NOTIFICATION ---
             if current_qty == 0:
                 skip_scan = (final_status == "SL_HIT" and len(targets_hit_indices) > 0)
                 if not skip_scan:
                     remaining_candles = hist_data[idx+1:]
                     if remaining_candles:
                         try:
+                            # Calculate high
                             max_rest = -1.0
                             max_time = ""
                             for c in remaining_candles:
                                 if float(c['high']) > max_rest:
                                     max_rest = float(c['high'])
-                                    max_time = c['date']
+                                    max_time = c['date'] # Capture exact time of high
 
                             if max_rest > highest_ltp:
                                 highest_ltp = max_rest
                                 logs.append(f"[{max_time}] ℹ️ Post-Exit High Detected: {highest_ltp}")
                                 
+                                # ADD NOTIFICATION IF T3 WAS HIT
                                 if 2 in targets_hit_indices:
                                     notification_queue.append({
                                         'event': 'HIGH_MADE', 
@@ -219,7 +219,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         with TRADE_LOCK:
             current_ltp = entry_price
             
-            # [FIX] Use final_status here instead of relying on loop logic
             if final_status in ["OPEN", "PENDING"]:
                 try: 
                     q = kite.quote(f"{exchange}:{symbol}")
@@ -272,7 +271,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
                     "logs": logs, "is_replay": True, "pnl": realized_pnl
                 }
-                # [FIX] Ensure Closed Trades Move to History immediately
                 move_to_history(record, exit_reason, final_exit_price)
                 
                 return {
@@ -286,7 +284,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         return {"status": "error", "message": str(e)}
 
 def simulate_trade_scenario(kite, trade_id, scenario_config):
-    # (Existing Logic - No Changes Needed for Import Bug)
+    # (Remains unchanged)
     try:
         trades = load_history()
         original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
