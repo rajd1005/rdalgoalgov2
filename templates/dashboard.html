@@ -92,7 +92,7 @@
                 
                 {% if state == "PAUSED" %}
                     <h2>⏸️ System Paused</h2>
-                    <p class="text-muted">Auto-Login stopped. You can now edit credentials.</p>
+                    <p class="text-muted">Auto-Login stopped. You can now edit credentials or resume.</p>
                 {% else %}
                     <h2>🔌 System Offline</h2>
                     {% if error %}
@@ -253,9 +253,18 @@
     }
 
     function resumeLogin() {
+        const btn = $('button[onclick="resumeLogin()"]');
+        btn.html('<i class="fas fa-spinner fa-spin"></i> Resuming...');
+        btn.prop('disabled', true);
+        
         fetch('/api/resume_login')
             .then(r => r.json())
-            .then(() => location.reload());
+            .then(() => location.reload())
+            .catch(e => {
+                alert('Error: ' + e);
+                btn.html('<i class="fas fa-play"></i> Resume Auto-Login');
+                btn.prop('disabled', false);
+            });
     }
 </script>
 
