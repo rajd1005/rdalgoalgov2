@@ -59,7 +59,6 @@ $(document).ready(function() {
                 $(`#imp_${k}_lots`).val(1000).prop('readonly', true);
             } else {
                 $(`#imp_${k}_lots`).prop('readonly', false);
-                // Optional: restore default lots? For now just unlock.
                 if($(`#imp_${k}_lots`).val() == 1000) $(`#imp_${k}_lots`).val(0); 
             }
         });
@@ -150,7 +149,7 @@ function calcImpFromPrice() {
     }
 }
 
-// --- UPDATED: Calculate Import Targets with Symbol Overrides & Readonly Logic ---
+// --- UPDATED: Calculate Import Targets with Symbol Overrides ---
 function calculateImportTargets(entry, pts) {
     if(!entry || !pts) return;
     
@@ -164,7 +163,10 @@ function calculateImportTargets(entry, pts) {
     let sVal = $('#imp_sym').val();
     if(sVal) {
         // Normalize symbol (remove expiry/exchange parts)
-        let normS = sVal.split(':')[0].trim().toUpperCase();
+        // Use global normalize function if available, else simple split
+        let normS = (typeof normalizeSymbol === 'function') 
+            ? normalizeSymbol(sVal) 
+            : sVal.split(':')[0].trim().toUpperCase();
         
         let paperSettings = settings.modes.PAPER;
         if(paperSettings && paperSettings.symbol_sl && paperSettings.symbol_sl[normS]) {
@@ -173,6 +175,7 @@ function calculateImportTargets(entry, pts) {
             // Check if object structure exists and has targets (Points)
             if (typeof sData === 'object' && sData.targets && sData.targets.length === 3) {
                 // Use specific points defined in global settings for this symbol
+                // Override the ratio-based points
                 t1_pts = sData.targets[0];
                 t2_pts = sData.targets[1];
                 t3_pts = sData.targets[2];
