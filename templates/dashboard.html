@@ -6,6 +6,7 @@
     <title>RD Algo Terminal</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </head>
@@ -42,27 +43,104 @@
                 setTimeout(function(){ location.reload(); }, 3000);
             </script>
 
-        {% else %}
-            <h2>🔌 System Offline</h2>
-            
-            {% if error %}
-                <div class="alert alert-danger mt-3 text-start">
-                    <strong><i class="fas fa-exclamation-circle"></i> Login Failed:</strong><br>
-                    {{ error }}
-                </div>
-            {% endif %}
+        {% elif state == "SETUP" %}
+             <div class="text-start" style="max-width: 500px; margin: 0 auto;">
+                 <h2 class="text-center mb-3">⚙️ Zerodha Configuration</h2>
+                 <p class="text-muted text-center mb-4">Credentials are missing. Please enter them to enable Auto-Login.</p>
+                 
+                 <form id="credsFormSetup">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">User ID</label>
+                        <input type="text" class="form-control" name="user_id" placeholder="Ex: DV4043" value="{{ creds.user_id }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">Password</label>
+                        <input type="password" class="form-control" name="password" placeholder="Zerodha Password" value="{{ creds.password }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">TOTP Secret</label>
+                        <input type="text" class="form-control" name="totp" placeholder="32 Character TOTP Key" value="{{ creds.totp }}">
+                        <div class="form-text">Found in Zerodha Profile > Password & Security > Enable TOTP</div>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold small">API Key</label>
+                            <input type="text" class="form-control" name="api_key" placeholder="Kite Connect API Key" value="{{ creds.api_key }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold small">API Secret</label>
+                            <input type="password" class="form-control" name="api_secret" placeholder="Kite Connect API Secret" value="{{ creds.api_secret }}">
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid mt-4">
+                        <button type="button" class="btn btn-primary btn-lg" onclick="saveCredentials('credsFormSetup')">💾 Save & Connect</button>
+                    </div>
+                 </form>
+             </div>
 
-            <div class="mt-4">
-                <div class="alert alert-secondary d-inline-block px-4 py-2">
-                    <i class="fas fa-robot"></i> Background Monitor is active. Retrying...
+        {% else %}
+            <div id="offlineView">
+                <h2>🔌 System Offline</h2>
+                
+                {% if error %}
+                    <div class="alert alert-danger mt-3 text-start d-inline-block" style="max-width: 600px;">
+                        <strong><i class="fas fa-exclamation-circle"></i> Login Failed:</strong><br>
+                        {{ error }}
+                    </div>
+                {% endif %}
+
+                <div class="mt-4">
+                    <div class="alert alert-secondary d-inline-block px-4 py-2">
+                        <i class="fas fa-robot"></i> Background Monitor is active. Retrying...
+                    </div>
+                    
+                    <div class="d-flex gap-3 justify-content-center mt-4">
+                        <button class="btn btn-outline-secondary" onclick="$('#offlineView').hide(); $('#editCredsView').show();">
+                            <i class="fas fa-cog"></i> Edit Credentials
+                        </button>
+                        
+                        <a href="{{ login_url }}" class="btn btn-primary fw-bold">
+                            <i class="fas fa-key"></i> Manual Login (Web)
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <div id="editCredsView" class="text-start" style="display: none; max-width: 500px; margin: 0 auto;">
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h3 class="m-0">Update Credentials</h3>
+                    <button class="btn btn-sm btn-close" onclick="$('#editCredsView').hide(); $('#offlineView').show();"></button>
                 </div>
                 
-                <div class="mt-3">
-                     <p class="text-muted small">If auto-login fails repeatedly, use manual login:</p>
-                     <a href="{{ login_url }}" class="btn btn-primary fw-bold">
-                        <i class="fas fa-key"></i> Manual Login (Web)
-                    </a>
-                </div>
+                <form id="credsFormEdit">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">User ID</label>
+                        <input type="text" class="form-control" name="user_id" value="{{ creds.user_id }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">Password</label>
+                        <input type="password" class="form-control" name="password" value="{{ creds.password }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold small">TOTP Secret</label>
+                        <input type="text" class="form-control" name="totp" value="{{ creds.totp }}">
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold small">API Key</label>
+                            <input type="text" class="form-control" name="api_key" value="{{ creds.api_key }}">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label class="form-label fw-bold small">API Secret</label>
+                            <input type="password" class="form-control" name="api_secret" value="{{ creds.api_secret }}">
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid mt-4">
+                        <button type="button" class="btn btn-success btn-lg" onclick="saveCredentials('credsFormEdit')">💾 Update & Retry</button>
+                    </div>
+                 </form>
             </div>
         {% endif %}
 
@@ -108,6 +186,44 @@
 <script src="{{ url_for('static', filename='js/positions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/history.js') }}"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+
+<script>
+    function saveCredentials(formId) {
+        const data = {};
+        $('#' + formId).serializeArray().forEach(item => {
+            data[item.name] = item.value;
+        });
+
+        // Basic validation
+        if(!data.user_id || !data.password || !data.totp) {
+            alert("Please fill in User ID, Password and TOTP Secret.");
+            return;
+        }
+
+        const btn = $('#' + formId + ' button');
+        const originalText = btn.html();
+        btn.html('<i class="fas fa-spinner fa-spin"></i> Saving...').prop('disabled', true);
+
+        fetch('/api/save_credentials', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        })
+        .then(r => r.json())
+        .then(d => {
+            if(d.status === 'success') {
+                location.reload(); // Reloads to show Spinner/Success state
+            } else {
+                alert('Error saving: ' + d.message);
+                btn.html(originalText).prop('disabled', false);
+            }
+        })
+        .catch(e => {
+            alert('Network Error: ' + e);
+            btn.html(originalText).prop('disabled', false);
+        });
+    }
+</script>
 
 </body>
 </html>
