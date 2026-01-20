@@ -7,7 +7,7 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
     
     // --- Determine Mode ---
     if (symId === '#h_sym' || $('#history').is(':visible')) mode = 'SIMULATOR'; 
-    else if (symId === '#imp_sym') mode = 'PAPER'; 
+    else if (symId === '#imp_sym') mode = 'PAPER'; // Import always uses Paper settings
     else {
         // Map SHADOW -> PAPER for main card settings
         mode = (selectedMode === 'SHADOW') ? 'PAPER' : selectedMode;
@@ -39,11 +39,27 @@ function loadDetails(symId, expId, typeSelector, qtyId, slId) {
         let trailVal = modeSettings.trailing_sl || 0;
         
         if(prefix === '#imp_') {
-             // Import Modal Logic
+             // --- IMPORT MODAL LOGIC (UPDATED) ---
              $('#imp_trail_sl').val(trailVal);
              $('#imp_trail_limit').val(modeSettings.sl_to_entry || 0);
              $('#imp_exit_mult').val(modeSettings.exit_multiplier || 1);
+             
+             // POPULATE TARGET CONFIGS FOR IMPORT
+             if(modeSettings.targets) {
+                ['t1', 't2', 't3'].forEach((k, i) => {
+                    let conf = modeSettings.targets[i];
+                    // Checkboxes
+                    $(`#imp_${k}_active`).prop('checked', conf.active);
+                    $(`#imp_${k}_full`).prop('checked', conf.full);
+                    $(`#imp_${k}_cost`).prop('checked', conf.trail_to_entry || false);
+                    
+                    // Lots
+                    if(conf.full) $(`#imp_${k}_lots`).val(1000);
+                    else $(`#imp_${k}_lots`).val(conf.lots > 0 ? conf.lots : '');
+                });
+             }
         } else {
+             // --- MAIN TRADE FORM LOGIC ---
              $('#trail_sl').val(trailVal);
              $('#ord').val(modeSettings.order_type || 'MARKET').trigger('change');
              $('select[name="sl_to_entry"]').val(modeSettings.sl_to_entry || 0);
@@ -96,7 +112,7 @@ function adjQty(inputId, dir) {
     }
 }
 
-// --- NEW ADJ LIVE QTY FUNCTION ---
+// --- ADJ LIVE QTY FUNCTION ---
 function adjLiveQty(dir) {
     let val = parseInt($('#live_qty').val()) || curLotSize;
     let step = curLotSize;
@@ -161,7 +177,18 @@ function fetchLTP() {
     if($('#importModal').is(':visible')) {
         let iSym = $('#imp_sym').val();
         if(iSym && $('#imp_exp').val() && $('#imp_str').val()) {
-             // ... import modal logic ...
+             $.get('/api/specific_ltp', {
+                symbol: iSym, 
+                expiry: $('#imp_exp').val(), 
+                strike: $('#imp_str').val(), 
+                type: $('input[name="imp_type"]:checked').val()
+            }, function(d) {
+                if(d.ltp > 0) {
+                    $('#imp_ltp').text("LTP: "+d.ltp);
+                    // Only auto-fill if empty to avoid overwriting user edits
+                    if(!$('#imp_price').val()) $('#imp_price').val(d.ltp);
+                }
+            });
         }
     }
 }
@@ -193,7 +220,7 @@ function calcLiveSLPriceFromPts() {
     if(basePrice > 0) {
         let price = basePrice - pts;
         $('#live_p_sl').val(price.toFixed(2));
-        calcLivePnl(); // Recalculate P&L specifically for Live card
+        calcLivePnl(); 
     }
 }
 
@@ -203,14 +230,13 @@ function calcLiveSLPtsFromPrice() {
     if(basePrice > 0 && price > 0) {
         let pts = basePrice - price;
         $('#live_sl_pts').val(pts.toFixed(2));
-        calcLivePnl(); // Recalculate P&L specifically for Live card
+        calcLivePnl(); 
     }
 }
 
-// Separate function to calculate P&L for Live Card based on its own inputs
 function calcLivePnl() {
     let p_input = parseFloat($('#live_sl_pts').val())||0; 
-    let qty = parseInt($('#live_qty').val())||1; // UPDATED: Get from live_qty
+    let qty = parseInt($('#live_qty').val())||1; 
     let basePrice = ($('#ord').val() === 'LIMIT' && $('#lim_pr').val() > 0) ? parseFloat($('#lim_pr').val()) : curLTP;
     
     if(basePrice <= 0) return;
@@ -219,8 +245,6 @@ function calcLivePnl() {
     let pnl_sl = (slPrice - basePrice) * qty;
     $('#live_pnl_sl').text(`₹ ${pnl_sl.toFixed(0)}`);
     
-    // We assume targets are manually edited or populated by init.
-    // We just update P&L for them.
     ['t1', 't2', 't3'].forEach(k => {
         let tPrice = parseFloat($(`#live_p_${k}`).val()) || 0;
         if(tPrice > 0) {
@@ -229,7 +253,6 @@ function calcLivePnl() {
         }
     });
 }
-// ----------------------------------
 
 function calcRisk() {
     let p_input = parseFloat($('#sl_pts').val())||0; 
@@ -241,13 +264,11 @@ function calcRisk() {
     let selectedMode = $('#mode_input').val();
     let isShadow = (selectedMode === 'SHADOW');
 
-    // Helper: Calculate P&L Stats + Retrieve Configs
     function getModePnL(modeKey, defaultSL) {
         let mObj = settings.modes[modeKey] || settings.modes.PAPER;
         let ratios = mObj.ratios || [0.5, 1.0, 1.5];
         let effectiveSL = defaultSL;
 
-        // Check Symbol Override (SL/Ratios)
         let sVal = $('#sym').val();
         if(sVal && mObj.symbol_sl) {
             let normS = normalizeSymbol(sVal);
@@ -283,7 +304,6 @@ function calcRisk() {
             pnl_t3: (t3 - basePrice) * qty,
             pnl_sl: (slPrice - basePrice) * qty,
             ratios: ratios,
-            // Return raw settings for display
             trailing: mObj.trailing_sl || 0,
             slEntry: mObj.sl_to_entry || 0,
             exitMult: mObj.exit_multiplier || 1,
@@ -291,11 +311,10 @@ function calcRisk() {
         };
     }
 
-    // 1. MAIN CARD (Editable / Paper)
+    // 1. MAIN CARD
     let paperMode = isShadow ? 'PAPER' : selectedMode;
     let std = getModePnL(paperMode, p_input);
     
-    // Update Main Inputs (User Editable) - Only update if NOT focused
     if (!document.activeElement || !['p_t1', 'p_t2', 'p_t3'].includes(document.activeElement.id)) {
         $('#p_t1').val(std.t1.toFixed(2)); 
         $('#p_t2').val(std.t2.toFixed(2)); 
@@ -314,16 +333,13 @@ function calcRisk() {
     $('#r_t2').text(std.ratios[1].toFixed(1));
     $('#r_t3').text(std.ratios[2].toFixed(1));
 
-    // 2. LIVE CARD (Editable for Shadow)
+    // 2. LIVE CARD
     if (isShadow) {
-        // Only Populate from Global Settings IF we are NOT currently editing a Live field
-        // This check prevents overwriting user manual edits in the Live card during calcRisk calls from Main card updates
         let liveActive = document.activeElement && document.activeElement.id.startsWith('live_');
         
         if (!liveActive) {
-            let live = getModePnL('LIVE', p_input); // Use p_input as base, overrides will apply
+            let live = getModePnL('LIVE', p_input); 
             
-            // Populate Fields
             $('#live_sl_pts').val(live.slPts);
             $('#live_p_sl').val(live.slPrice.toFixed(2));
             $('#live_pnl_sl').text(`₹ ${live.pnl_sl.toFixed(0)}`);
@@ -332,9 +348,8 @@ function calcRisk() {
             $('#live_sl_to_entry').val(live.slEntry);
             $('#live_exit_mult').val(live.exitMult);
             
-            $('#live_qty').val(qty); // Initialize with Main Qty
+            $('#live_qty').val(qty); 
             
-            // Targets
             $('#live_p_t1').val(live.t1.toFixed(2));
             $('#live_p_t2').val(live.t2.toFixed(2));
             $('#live_p_t3').val(live.t3.toFixed(2));
@@ -347,7 +362,6 @@ function calcRisk() {
             $('#live_r_t2').text(live.ratios[1].toFixed(1));
             $('#live_r_t3').text(live.ratios[2].toFixed(1));
             
-            // Configs
             ['t1', 't2', 't3'].forEach((k, i) => {
                 let conf = live.targets[i] || {};
                 $(`#live_${k}_active`).prop('checked', conf.active !== false);
@@ -360,16 +374,13 @@ function calcRisk() {
         }
     }
 
-    // Update Lots Readonly State for both cards
     ['t1', 't2', 't3'].forEach(k => {
-        // Main Card
         if ($(`#${k}_full`).is(':checked')) {
             $(`#${k}_lots`).val(1000).prop('readonly', true);
         } else {
             $(`#${k}_lots`).prop('readonly', false);
         }
         
-        // Live Card
         if ($(`#live_${k}_full`).is(':checked')) {
             $(`#live_${k}_lots`).val(1000).prop('readonly', true);
         } else {
@@ -408,7 +419,6 @@ function updateModeVisuals(mode) {
     }
 }
 
-// --- Init & Listeners ---
 $(function() {
     $('#ord').change(function() {
         if($(this).val() === 'LIMIT') {
