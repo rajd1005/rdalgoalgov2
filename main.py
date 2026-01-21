@@ -82,6 +82,18 @@ with app.app_context():
         print(f"⚠️ History Patch Note: {e}")
     # -------------------------------------------
 
+    # --- [FIX: TELEGRAM TABLE MIGRATION] ---
+    try:
+        # 6. Fix Missing user_id in TelegramMessage
+        db.session.execute(text('ALTER TABLE telegram_message ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
+        db.session.execute(text('CREATE INDEX IF NOT EXISTS idx_tg_msg_user_id ON telegram_message(user_id)'))
+        db.session.commit()
+        print("✅ TelegramMessage Patched: user_id Column Added")
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ Telegram Patch Note: {e}")
+    # ---------------------------------------
+
 # Initialize Login Manager
 login_manager = LoginManager()
 login_manager.init_app(app)
