@@ -1,5 +1,5 @@
 from managers.common import log_event, get_time_str
-from managers.persistence import TRADE_LOCK, load_trades, save_trades, save_to_history_db
+from managers.persistence import get_user_lock, load_trades, save_trades, save_to_history_db
 import smart_trader
 
 def place_order(kite, symbol, transaction_type, quantity, order_type="MARKET", product="MIS", price=0, trigger_price=0, exchange=None, tag="RD_ALGO"):
@@ -103,7 +103,8 @@ def panic_exit_all(kite, user_id=None):
     """
     Emergency Function: Immediately closes all active positions for the specific user.
     """
-    with TRADE_LOCK:
+    # [FIX] Use granular user lock instead of global TRADE_LOCK
+    with get_user_lock(user_id):
         trades = load_trades(user_id=user_id)
         if not trades: 
             return True
