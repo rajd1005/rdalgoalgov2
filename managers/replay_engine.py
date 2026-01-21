@@ -6,14 +6,13 @@ from managers.common import IST, get_exchange, log_event, get_time_str
 from managers.persistence import TRADE_LOCK, load_trades, save_trades, load_history
 from managers.broker_ops import move_to_history
 
-def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls, target_channels=['main']):
+def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls, target_channels=['main'], user_id=None):
     """
     Simulates a trade based on historical data.
     Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
     """
     try:
         # 1. Parse Input & Initialize Data
-        # HTML datetime-local input is naive (no timezone). We treat it as IST.
         try:
             entry_time = datetime.strptime(entry_dt_str, "%Y-%m-%dT%H:%M") 
             entry_time = IST.localize(entry_time)
@@ -54,7 +53,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         
         # --- Notification Queue ---
         notification_queue = []
-        # Create a base object for the initial notification
         initial_trade_data = {
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
             "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list,
@@ -101,7 +99,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
                     elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
                     if activated:
-                        # [FIX] Sync final_status immediately so DB knows it's OPEN
+                        # Sync final_status immediately so DB knows it's OPEN
                         status = "OPEN"; final_status = "OPEN"; 
                         fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
@@ -184,7 +182,7 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Partial Exit {exit_qty} Qty. Rem: {current_qty}")
                     
                     if current_qty == 0:
-                         # [FIX] Force update Status if loop ends
+                         # Force update Status if loop ends
                          final_status = "TARGET_HIT"
                          if not exit_reason: exit_reason = "TARGET_HIT"
                          final_exit_price = ltp
@@ -223,7 +221,6 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         with TRADE_LOCK:
             current_ltp = entry_price
             
-            # [FIX] Use final_status here instead of relying on loop logic
             if final_status in ["OPEN", "PENDING"]:
                 try: 
                     q = kite.quote(f"{exchange}:{symbol}")
@@ -246,9 +243,10 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": current_ltp, "trigger_dir": trigger_dir, "logs": logs,
                     "is_replay": True, "last_update_time": hist_data[-1]['date'] if hist_data else get_time_str(),
-                    "target_channels": target_channels # Store channels in DB for future reference
+                    "target_channels": target_channels, # Store channels in DB
+                    "user_id": user_id
                 }
-                trades = load_trades(); trades.append(record); save_trades(trades)
+                trades = load_trades(user_id=user_id); trades.append(record); save_trades(trades, user_id=user_id)
                 
                 return {
                     "status": "success", 
@@ -276,9 +274,10 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": final_exit_price, "trigger_dir": trigger_dir, 
                     "logs": logs, "is_replay": True, "pnl": realized_pnl,
-                    "target_channels": target_channels
+                    "target_channels": target_channels,
+                    "user_id": user_id
                 }
-                move_to_history(record, exit_reason, final_exit_price)
+                move_to_history(record, exit_reason, final_exit_price, user_id=user_id)
                 
                 return {
                     "status": "success", 
@@ -290,15 +289,17 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
     except Exception as e: 
         return {"status": "error", "message": str(e)}
 
-def simulate_trade_scenario(kite, trade_id, scenario_config):
+def simulate_trade_scenario(kite, trade_id, scenario_config, user_id=None):
     """
     Runs a hypothetical simulation on a past trade with modified settings.
     Does NOT affect the database or send notifications.
     """
     try:
-        trades = load_history()
+        trades = load_history(user_id=user_id)
         original_trade = next((t for t in trades if str(t['id']) == str(trade_id)), None)
-        if not original_trade: return {"status": "error", "message": "Trade not found"}
+        
+        if not original_trade: 
+            return {"status": "error", "message": "Trade not found in History"}
 
         symbol = original_trade['symbol']
         exchange = original_trade['exchange']
