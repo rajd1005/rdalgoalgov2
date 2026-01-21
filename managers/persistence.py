@@ -40,21 +40,20 @@ def save_risk_state(mode, state, user_id):
 # --- Active Trades Persistence (Multi-User) ---
 def load_trades(user_id):
     """
-    Loads active trades ONLY for the specified user.
+    Loads active trades ONLY for the specified user via DB filtering.
     """
     try:
         # [DEBUG] Reset session to force fresh read
         db.session.remove() 
         
-        raw_rows = ActiveTrade.query.all()
+        # FIX: Efficient DB-side filtering
+        rows = ActiveTrade.query.filter_by(user_id=user_id).all()
         user_trades = []
         
-        for r in raw_rows:
+        for r in rows:
             try:
                 t_data = json.loads(r.data)
-                # Filter: Only return trades belonging to this user
-                if str(t_data.get('user_id')) == str(user_id):
-                    user_trades.append(t_data)
+                user_trades.append(t_data)
             except:
                 continue
         
@@ -65,40 +64,22 @@ def load_trades(user_id):
 
 def save_trades(trades, user_id):
     """
-    Overwrites the ActiveTrade table intelligently.
-    1. Reads ALL trades.
-    2. Keeps trades belonging to OTHER users.
-    3. Merges with NEW trades for CURRENT user.
-    4. Saves everything back.
-    
-    This ensures User A doesn't wipe User B's trades.
+    Saves trades ONLY for the current user safely.
+    Deletes existing rows for this user ID and inserts the new list.
+    Does NOT affect other users' data.
     """
     with TRADE_LOCK:
         try:
-            # 1. Fetch current DB state
-            all_rows = ActiveTrade.query.all()
-            preserved_trades = []
+            # 1. Delete ONLY this user's active trades
+            ActiveTrade.query.filter_by(user_id=user_id).delete()
             
-            # 2. Preserve other users' data
-            for r in all_rows:
-                try:
-                    t_data = json.loads(r.data)
-                    if str(t_data.get('user_id')) != str(user_id):
-                        preserved_trades.append(t_data)
-                except:
-                    continue 
-            
-            # 3. Prepare current user's trades (Ensure ID is stamped)
+            # 2. Insert the updated list
             for t in trades:
-                t['user_id'] = user_id
+                t['user_id'] = user_id # Ensure ID is stamped in JSON too
                 
-            # 4. Combine
-            final_list = preserved_trades + trades
-            
-            # 5. Atomic Wipe & Replace
-            db.session.query(ActiveTrade).delete()
-            for t in final_list: 
-                db.session.add(ActiveTrade(data=json.dumps(t)))
+                # FIX: Insert with user_id column populated
+                new_row = ActiveTrade(user_id=user_id, data=json.dumps(t))
+                db.session.add(new_row)
             
             db.session.commit()
         except Exception as e:
