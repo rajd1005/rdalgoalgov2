@@ -21,6 +21,7 @@ def send_email(to_email, subject, body_html):
     """
     Sends an email using the SMTP settings stored in DB.
     Supports both STARTTLS (587) and SSL (465).
+    Includes a 10-second timeout to prevent worker crashes.
     """
     config = get_smtp_config()
     
@@ -49,13 +50,15 @@ def send_email(to_email, subject, body_html):
         msg['Subject'] = subject
         msg.attach(MIMEText(body_html, 'html'))
 
-        # Connect to Server
+        # Connect to Server with Timeout
         if smtp_port == 465:
-            # SSL Connection (Legacy/Specific Providers)
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port)
+            # SSL Connection (Legacy/Specific Providers like Yahoo/older Gmail)
+            # ADDED timeout=10 to prevent hanging
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10)
         else:
             # TLS Connection (Standard for Gmail/Outlook/AWS on 587)
-            server = smtplib.SMTP(smtp_server, smtp_port)
+            # ADDED timeout=10 to prevent hanging
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
             server.starttls() # Upgrade connection to secure
 
         # Login and Send
@@ -65,7 +68,11 @@ def send_email(to_email, subject, body_html):
 
         return {"status": "success"}
 
+    except smtplib.SMTPAuthenticationError:
+        return {"status": "error", "message": "SMTP Authentication Failed. Check Email/Password."}
+    except smtplib.SMTPConnectError:
+        return {"status": "error", "message": "Could not connect to SMTP Server."}
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Email Send Error: {error_msg}")
-        return {"status": "error", "message": error_msg}
+        return {"status": "error", "message": f"Email Failed: {error_msg}"}
