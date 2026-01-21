@@ -10,6 +10,7 @@ from flask import Flask, render_template, request, redirect, flash, jsonify, url
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from kiteconnect import KiteConnect
+from sqlalchemy import text # Required for the DB Fix
 import config
 
 # --- REFACTORED IMPORTS ---
@@ -25,10 +26,24 @@ app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 app.config.from_object(config)
 
-# Initialize Database
+# Initialize Database & Apply Fixes
 db.init_app(app)
 with app.app_context():
     db.create_all()
+    
+    # --- [CRITICAL FIX] AUTO-UPDATE DATABASE SCHEMA ---
+    # This block automatically fixes the "value too long" error by resizing the column
+    try:
+        # Try to resize the password column to 255 chars
+        db.session.execute(text('ALTER TABLE "user" ALTER COLUMN password TYPE VARCHAR(255)'))
+        db.session.commit()
+        print("✅ Database Auto-Fix: Password column successfully resized to 255 characters.")
+    except Exception as e:
+        # This will fail silently if the table is already correct or if using SQLite (which doesn't strictly enforce length)
+        # We catch it to prevent startup crashes on fresh installs
+        db.session.rollback()
+        print(f"ℹ️ Database Check: Schema up to date or patch not needed. ({e})")
+    # --------------------------------------------------
 
 # Initialize Login Manager
 login_manager = LoginManager()
@@ -170,6 +185,7 @@ def login():
             user = User.query.filter_by(username="admin").first()
             if not user:
                 hashed = generate_password_hash(config.ADMIN_PASSWORD)
+                # This insert will now succeed because the column was resized on startup
                 user = User(username="admin", password=hashed, is_admin=True)
                 db.session.add(user)
                 db.session.commit()
@@ -360,6 +376,8 @@ def callback():
         except Exception as e:
             flash(f"Login Error: {e}")
     return redirect('/')
+
+# --- SETTINGS & TRADING (Context Aware) ---
 
 @app.route('/api/settings/load')
 @login_required
