@@ -6,6 +6,7 @@ import gc
 import secrets
 import random
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, date
 from flask import Flask, render_template, request, redirect, flash, jsonify, url_for, session
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
@@ -132,32 +133,64 @@ def stop_user_session(user_id):
         user_sessions[user_id]['active'] = False
         user_sessions[user_id]['state'] = 'PAUSED'
 
-# --- BACKGROUND MONITOR (MULTI-USER) ---
+# --- BACKGROUND MONITOR (MULTI-THREADED) ---
 def background_monitor():
     with app.app_context():
-        print("🖥️ Multi-User Background Monitor Started (Manual Mode)")
+        print("🖥️ Multi-Threaded Background Monitor Started")
         time.sleep(5)
         
+        # Create a pool of workers (e.g., 10 concurrent threads)
+        executor = ThreadPoolExecutor(max_workers=10)
+        
         while True:
-            active_ids = list(user_sessions.keys())
-            
-            for uid in active_ids:
-                session = user_sessions[uid]
-                if not session['active']: continue
+            try:
+                # 1. Snapshot active users safely
+                # Filter only active sessions to avoid wasting threads
+                active_users = [
+                    uid for uid, sess in user_sessions.items() 
+                    if sess.get('active') and sess.get('kite')
+                ]
+                
+                if not active_users:
+                    time.sleep(1)
+                    continue
 
-                if session['kite']:
+                # 2. Define the task function for a single user
+                def process_user_risk(uid):
+                    # Create a NEW app context for this thread so DB access works
+                    with app.app_context():
+                        session = user_sessions[uid]
+                        try:
+                            # Verify token existence before call
+                            if not hasattr(session['kite'], "mock_instruments"):
+                                if not session['kite'].access_token: 
+                                    raise Exception("No Token")
+                            
+                            # The actual risk check
+                            risk_engine.update_risk_engine(session['kite'], user_id=uid)
+                            
+                        except Exception as e:
+                            err = str(e)
+                            if "Token is invalid" in err or "access_token" in err:
+                                print(f"⚠️ User {uid} Connection Lost: {err}")
+                                session['active'] = False
+                                session['state'] = 'OFFLINE' # Reset to Offline
+                            else:
+                                print(f"⚠️ User {uid} Risk Loop Warning: {err}")
+
+                # 3. Submit all tasks to the pool
+                # This runs process_user_risk for all users simultaneously
+                futures = [executor.submit(process_user_risk, uid) for uid in active_users]
+                
+                # 4. Wait for all threads to finish before starting the next loop cycle
+                for f in futures:
                     try:
-                        if not hasattr(session['kite'], "mock_instruments"):
-                            if not session['kite'].access_token: raise Exception("No Token")
-                        risk_engine.update_risk_engine(session['kite'], user_id=uid)
-                    except Exception as e:
-                        err = str(e)
-                        if "Token is invalid" in err or "access_token" in err:
-                            print(f"⚠️ User {uid} Connection Lost: {err}")
-                            session['active'] = False
-                            session['state'] = 'OFFLINE' # Reset to Offline
-                        else:
-                            print(f"⚠️ User {uid} Risk Loop Warning: {err}")
+                        f.result() # Handled inside, but ensures we wait
+                    except Exception: pass
+                    
+            except Exception as e:
+                print(f"Global Monitor Error: {e}")
+            
             time.sleep(1)
 
 # --- HELPER: EMAIL TEMPLATES ---
