@@ -9,3 +9,5 @@ pyotp
 selenium
 webdriver-manager
 requests
+flask-login
+werkzeug
