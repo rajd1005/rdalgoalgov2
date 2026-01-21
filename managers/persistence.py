@@ -109,6 +109,7 @@ def load_history(user_id):
     """
     Loads trade history efficiently using DB Index.
     Filters by user_id at the database level to prevent memory overload.
+    [CRITICAL FIX] Injects user_id into the dictionary so TelegramManager knows which bot to use.
     """
     try:
         db.session.commit() # Ensure fresh data
@@ -119,7 +120,15 @@ def load_history(user_id):
                                       .order_by(TradeHistory.id.desc())\
                                       .limit(200).all()
         
-        return [json.loads(r.data) for r in records]
+        history = []
+        for r in records:
+            try:
+                t_data = json.loads(r.data)
+                t_data['user_id'] = user_id  # <--- FIX: Inject ID explicitly
+                history.append(t_data)
+            except:
+                continue
+        return history
     except Exception as e:
         print(f"Load History Error (User {user_id}): {e}")
         return []
