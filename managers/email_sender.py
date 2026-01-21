@@ -6,8 +6,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from database import db, SystemConfig
 
-# --- IPv4 FORCING PATCH (CRITICAL FOR DOCKER) ---
-# This ensures we don't try to connect via IPv6 which causes timeouts/unreachable errors
+# --- IPv4 FORCING PATCH ---
+# Fixes [Errno 101] Network is unreachable in Docker/IPv6 environments
 orig_getaddrinfo = socket.getaddrinfo
 
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
@@ -23,86 +23,102 @@ def get_smtp_config():
         print(f"Error fetching SMTP config: {e}")
     return None
 
-def send_email(to_email, subject, body_html):
+def attempt_send(server_host, port, user, password, msg, timeout=20):
     """
-    Sends an email using the SMTP settings stored in DB.
-    Includes Timeout protection (30s) and IPv4 forcing.
+    Internal helper to try sending email on a specific port.
+    Returns: (Success Boolean, Error Message)
     """
-    config = get_smtp_config()
-    
-    if not config:
-        return {"status": "error", "message": "SMTP Config missing. Go to Admin > SMTP."}
-
-    # Extract Settings
-    smtp_server = config.get('server')
-    try:
-        smtp_port = int(config.get('port', 465)) # Default to 465 for Hostinger/SSL
-    except:
-        smtp_port = 465
-        
-    sender_email = config.get('email')
-    sender_password = config.get('password')
-
-    if not all([smtp_server, sender_email, sender_password]):
-        return {"status": "error", "message": "Incomplete SMTP settings in database."}
-
-    # --- APPLY IPv4 PATCH ---
-    socket.getaddrinfo = getaddrinfo_ipv4
     server = None
-
     try:
-        print(f"📧 [DEBUG] Connecting to {smtp_server}:{smtp_port}...")
+        print(f"📧 [DEBUG] Attempting Connection: {server_host}:{port}...")
         
-        # Create Message
-        msg = MIMEMultipart()
-        msg['From'] = sender_email
-        msg['To'] = to_email
-        msg['Subject'] = subject
-        msg.attach(MIMEText(body_html, 'html'))
-
         # Create Secure Context
         context = ssl.create_default_context()
-
-        # CONNECTION LOGIC
-        # Port 465 = SSL (Recommended for Hostinger)
-        if smtp_port == 465:
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port, context=context, timeout=30)
-        # Port 587 = STARTTLS
+        
+        # Logic for SSL (465) vs TLS (587)
+        if int(port) == 465:
+            server = smtplib.SMTP_SSL(server_host, port, context=context, timeout=timeout)
         else:
-            server = smtplib.SMTP(smtp_server, smtp_port, timeout=30)
-            server.set_debuglevel(1) # Print connection details to logs
-            print("📧 [DEBUG] Sending EHLO...")
+            server = smtplib.SMTP(server_host, port, timeout=timeout)
+            # server.set_debuglevel(1) # Uncomment for deep protocol debug
             server.ehlo()
-            print("📧 [DEBUG] Starting TLS...")
-            server.starttls(context=context)
-            print("📧 [DEBUG] Sending EHLO after TLS...")
-            server.ehlo()
+            try:
+                server.starttls(context=context)
+                server.ehlo()
+            except Exception as tls_err:
+                print(f"⚠️ [WARN] STARTTLS skipped/failed on {port}: {tls_err}")
 
-        print(f"📧 [DEBUG] Logging in as {sender_email}...")
-        server.login(sender_email, sender_password)
-        
-        print(f"📧 [DEBUG] Sending email to {to_email}...")
-        server.sendmail(sender_email, to_email, msg.as_string())
-        
-        print("✅ [DEBUG] Email Sent Successfully!")
+        server.login(user, password)
+        server.send_message(msg)
         server.quit()
-        return {"status": "success"}
+        return True, "Sent"
 
-    except socket.timeout:
-        print("❌ [ERROR] Connection Timed Out. Firewall might be blocking the port.")
-        return {"status": "error", "message": "Connection Timed Out (Firewall Blocked?)"}
-        
-    except smtplib.SMTPAuthenticationError:
-        print("❌ [ERROR] Auth Failed. Check Email/Password.")
-        return {"status": "error", "message": "Authentication Failed. Check Password."}
-        
     except Exception as e:
-        print(f"❌ [ERROR] Email Failed: {e}")
-        return {"status": "error", "message": str(e)}
-        
-    finally:
-        # Restore Socket (Clean up)
-        socket.getaddrinfo = orig_getaddrinfo
+        err_str = str(e)
+        print(f"❌ [FAIL] Port {port} failed: {err_str}")
         try:
             if server: server.quit()
         except: pass
+        return False, err_str
+
+def send_email(to_email, subject, body_html):
+    """
+    Sends email with Auto-Fallback logic.
+    1. Tries configured port.
+    2. If fails (Timeout/Network), tries alternative port (587 <-> 465).
+    """
+    config = get_smtp_config()
+    if not config:
+        return {"status": "error", "message": "SMTP Config missing in Admin Panel."}
+
+    # Extract Settings
+    smtp_server = config.get('server')
+    user_email = config.get('email')
+    user_pass = config.get('password')
+    
+    try:
+        primary_port = int(config.get('port', 465))
+    except:
+        primary_port = 465
+
+    if not all([smtp_server, user_email, user_pass]):
+        return {"status": "error", "message": "Incomplete SMTP settings."}
+
+    # Prepare Message
+    msg = MIMEMultipart()
+    msg['From'] = user_email
+    msg['To'] = to_email
+    msg['Subject'] = subject
+    msg.attach(MIMEText(body_html, 'html'))
+
+    # --- APPLY IPv4 PATCH ---
+    socket.getaddrinfo = getaddrinfo_ipv4
+
+    try:
+        # ATTEMPT 1: User Configured Port
+        success, error = attempt_send(smtp_server, primary_port, user_email, user_pass, msg)
+        
+        if success:
+            print("✅ [SUCCESS] Email Sent via Primary Port.")
+            return {"status": "success"}
+        
+        # ATTEMPT 2: Fallback Port
+        # If 465 failed, try 587. If 587 failed, try 465.
+        fallback_port = 587 if primary_port == 465 else 465
+        print(f"🔄 [RETRY] Switching to Fallback Port: {fallback_port}...")
+        
+        success_fb, error_fb = attempt_send(smtp_server, fallback_port, user_email, user_pass, msg)
+        
+        if success_fb:
+            print(f"✅ [SUCCESS] Email Sent via Fallback Port {fallback_port}.")
+            return {"status": "success"}
+        
+        # Both Failed
+        return {"status": "error", "message": f"All ports failed. Primary: {error} | Fallback: {error_fb}"}
+
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+        
+    finally:
+        # Restore Socket
+        socket.getaddrinfo = orig_getaddrinfo
