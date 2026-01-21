@@ -112,8 +112,8 @@ def send_eod_report(mode, user_id=None):
                 f"----------------"
             )
 
-        # Send Detailed Report
-        telegram_bot.send_message(msg_details)
+        # Send Detailed Report (Fixed: Pass user_id)
+        telegram_bot.send_message(msg_details, user_id=user_id)
 
         # --- REPORT 2: AGGREGATE SUMMARY ---
         msg_summary = (
@@ -129,8 +129,8 @@ def send_eod_report(mode, user_id=None):
             f"🛑 Direct SL: {cnt_direct_sl}"     
         )
         
-        # Send Summary Report
-        telegram_bot.send_message(msg_summary)
+        # Send Summary Report (Fixed: Pass user_id)
+        telegram_bot.send_message(msg_summary, user_id=user_id)
 
     except Exception as e:
         print(f"Error generating EOD report: {e}")
@@ -207,7 +207,8 @@ def send_manual_trade_status(mode, user_id=None):
                 f"----------------"
             )
 
-        telegram_bot.send_message(msg_details)
+        # Fixed: Pass user_id
+        telegram_bot.send_message(msg_details, user_id=user_id)
         return {"status": "success"}
 
     except Exception as e:
@@ -283,7 +284,8 @@ def send_manual_trade_report(trade_id, user_id=None):
             f"Max Potential: {max_pot_val:.2f}"
         )
         
-        telegram_bot.send_message(msg)
+        # Fixed: Pass user_id
+        telegram_bot.send_message(msg, user_id=user_id)
         return {"status": "success"}
 
     except Exception as e:
@@ -354,7 +356,8 @@ def send_manual_summary(mode, user_id=None):
             f"🛑 Direct SL: {cnt_direct_sl}"
         )
         
-        telegram_bot.send_message(msg_summary)
+        # Fixed: Pass user_id
+        telegram_bot.send_message(msg_summary, user_id=user_id)
         return {"status": "success"}
 
     except Exception as e:
@@ -472,7 +475,7 @@ def update_risk_engine(kite, user_id=None):
     Updates prices, checks SL/Target hits, and triggers exits.
     """
     # Check Global Conditions first
-    current_settings = settings.load_settings()
+    current_settings = settings.load_settings(user_id=user_id) # Ensure this also loads per user if supported
     check_global_exit_conditions(kite, "PAPER", current_settings['modes']['PAPER'], user_id=user_id)
     check_global_exit_conditions(kite, "LIVE", current_settings['modes']['LIVE'], user_id=user_id)
 
@@ -706,12 +709,15 @@ def update_risk_engine(kite, user_id=None):
                         
                         # --- NOTIFICATION: High Made on Closed Trade ---
                         try:
+                            # Note: t is a dictionary here.
+                            # notify_trade_event handles extracting user_id internally
+                            # provided t['user_id'] is present (which it is, from database/persistence)
                             telegram_bot.notify_trade_event(t, "HIGH_MADE", ltp)
                         except: pass
                         
                     # Direct DB merge for efficiency (updating historical record)
                     # Use a fresh History Object to update
-                    new_hist = TradeHistory(id=t['id'], data=json.dumps(t))
+                    new_hist = TradeHistory(id=t['id'], data=json.dumps(t), user_id=user_id)
                     db.session.merge(new_hist)
                     history_updated = True
                     
