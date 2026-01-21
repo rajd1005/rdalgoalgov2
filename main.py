@@ -16,7 +16,6 @@ import config
 # --- REFACTORED IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
 from managers.telegram_manager import bot as telegram_bot
-# --------------------------
 import smart_trader
 import settings
 from database import db, AppSetting, User
@@ -40,14 +39,20 @@ with app.app_context():
         db.session.rollback()
 
     try:
-        # 2. Fix Missing user_id in AppSetting (The Error You Are Seeing)
-        # This checks if the column is missing and adds it if necessary
+        # 2. Fix Missing user_id in AppSetting (Multi-User Settings)
         db.session.execute(text('ALTER TABLE app_setting ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
         db.session.commit()
-        print("✅ Database Patched: 'user_id' column added to 'app_setting'")
+    except:
+        db.session.rollback()
+
+    try:
+        # 3. Add Email and Blocked Status Columns (User Management)
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR(150)'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE'))
+        db.session.commit()
+        print("✅ Database Patched: Schema Updated Successfully")
     except Exception as e:
         db.session.rollback()
-        # Print only if it's a real error, ignore if it's just "already exists" on non-Postgres DBs
         print(f"⚠️ DB Patch Note: {e}")
     # --------------------------------------
 
@@ -126,7 +131,7 @@ def background_monitor():
                         if not hasattr(session['kite'], "mock_instruments"):
                             if not session['kite'].access_token: raise Exception("No Token")
                         
-                        # UPDATED: Pass user_id to risk engine
+                        # UPDATED: Pass user_id to risk engine for isolated management
                         risk_engine.update_risk_engine(session['kite'], user_id=uid)
                         
                     except Exception as e:
@@ -148,10 +153,12 @@ def login():
         return redirect(url_for('home'))
         
     if request.method == 'POST':
-        username = request.form.get('username')
+        # Form field is named 'username' but acts as Email ID now
+        username_input = request.form.get('username') 
         password = request.form.get('password')
         
-        if username == "admin" and password == config.ADMIN_PASSWORD:
+        # Admin Bypass
+        if username_input == "admin" and password == config.ADMIN_PASSWORD:
             user = User.query.filter_by(username="admin").first()
             if not user:
                 hashed = generate_password_hash(config.ADMIN_PASSWORD)
@@ -161,9 +168,13 @@ def login():
             login_user(user)
             return redirect(url_for('home'))
 
-        user = User.query.filter_by(username=username).first()
+        # Standard User Login
+        user = User.query.filter_by(username=username_input).first()
         if user and check_password_hash(user.password, password):
-            if not user.is_active_sub:
+            # Check for Blocks/Revoked Access
+            if user.is_blocked:
+                flash("⛔ Access Revoked by Admin.")
+            elif not user.is_active_sub:
                 flash("❌ Subscription/Trial Expired. Contact Admin.")
             else:
                 login_user(user)
@@ -185,6 +196,8 @@ def logout():
 def magic_login(token, uid):
     user = User.query.get(uid)
     if user:
+        if user.is_blocked:
+            return "⛔ Access Revoked"
         login_user(user)
         return redirect(url_for('home'))
     return "Invalid Link"
@@ -201,23 +214,44 @@ def admin_panel():
 def add_user():
     if not current_user.is_admin: return "Access Denied", 403
     
-    username = request.form['username']
+    # Updated: Use Email as the primary Username
+    email = request.form.get('email')
     password = request.form['password']
     days = int(request.form.get('days', 7))
     is_trial = request.form.get('is_trial') == 'on'
     
-    if User.query.filter_by(username=username).first():
+    # Check duplicate
+    if User.query.filter_by(username=email).first():
         flash("User already exists")
         return redirect('/admin')
         
     hashed = generate_password_hash(password)
     expiry = datetime.now() + timedelta(days=days)
     
-    new_user = User(username=username, password=hashed, subscription_end=expiry, is_trial=is_trial)
+    # Create User with Email
+    new_user = User(username=email, email=email, password=hashed, subscription_end=expiry, is_trial=is_trial)
     db.session.add(new_user)
     db.session.commit()
     
-    flash(f"User {username} created!")
+    flash(f"User {email} created!")
+    return redirect('/admin')
+
+@app.route('/admin/toggle_access/<int:uid>')
+@login_required
+def toggle_access(uid):
+    if not current_user.is_admin: return "Access Denied", 403
+    user = User.query.get(uid)
+    if user:
+        if user.is_admin:
+            flash("Cannot block Admin.")
+        else:
+            user.is_blocked = not user.is_blocked
+            db.session.commit()
+            status = "blocked" if user.is_blocked else "activated"
+            flash(f"User {user.username} {status}.")
+            # Terminate active session if blocked
+            if user.is_blocked:
+                stop_user_session(user.id)
     return redirect('/admin')
 
 @app.route('/admin/generate_link/<int:uid>')
@@ -249,6 +283,11 @@ def admin_reset_password():
 @app.route('/')
 @login_required
 def home():
+    # Security Check: Force logout if user is blocked during session
+    if current_user.is_blocked:
+        logout_user()
+        return redirect('/login')
+
     session = get_user_session(current_user.id)
     
     # Check if we need to initialize the session (first load)
@@ -360,7 +399,7 @@ def callback():
 @app.route('/api/settings/load')
 @login_required
 def api_settings_load():
-    # UPDATED: Load settings for the current user
+    # Pass Current User ID to load their specific settings
     s = settings.load_settings(user_id=current_user.id)
     try:
         today_str = time.strftime("%Y-%m-%d")
@@ -381,7 +420,7 @@ def api_settings_load():
 @app.route('/api/settings/save', methods=['POST'])
 @login_required
 def api_settings_save():
-    # UPDATED: Save settings for the current user
+    # Pass Current User ID to save their specific settings
     if settings.save_settings_file(request.json, user_id=current_user.id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
@@ -451,7 +490,7 @@ def api_indices():
 @login_required
 def api_search():
     session = get_user_session(current_user.id)
-    # UPDATED: Load User Settings for allowed exchanges
+    # Pass User ID to load their allowed exchanges
     current_settings = settings.load_settings(user_id=current_user.id)
     allowed = current_settings.get('exchanges', None)
     return jsonify(smart_trader.search_symbols(session['kite'], request.args.get('q', ''), allowed))
@@ -479,6 +518,7 @@ def api_panic_exit():
     session = get_user_session(current_user.id)
     if not session['active']:
         return jsonify({"status": "error", "message": "Bot not connected"})
+    # Pass User ID to panic exit
     if broker_ops.panic_exit_all(session['kite'], user_id=current_user.id):
         flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
@@ -531,6 +571,7 @@ def api_import_trade():
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         selected_channel = data.get('target_channel', 'main')
         target_channels = [selected_channel] 
+        # Pass User ID
         result = replay_engine.import_past_trade(
             session['kite'], final_sym, data['entry_time'], int(data['qty']), float(data['price']), 
             float(data['sl']), [float(t) for t in data['targets']],
@@ -592,6 +633,7 @@ def api_simulate_scenario():
     data = request.json
     trade_id = data.get('trade_id')
     config = data.get('config')
+    # Pass User ID
     result = replay_engine.simulate_trade_scenario(session['kite'], trade_id, config, user_id=current_user.id)
     return jsonify(result)
 
@@ -649,7 +691,7 @@ def place_trade():
         selected_channel = request.form.get('target_channel')
         if selected_channel in ['vip', 'free', 'z2h']: target_channels.append(selected_channel)
         
-        # CHECK PERMISSIONS (Passed user_id)
+        # Check permissions with User ID
         can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER", user_id=current_user.id)
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
@@ -665,7 +707,7 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
         
-        # Load USER settings
+        # Load User Settings
         app_settings = settings.load_settings(user_id=current_user.id)
         
         def execute(ex_mode, ex_qty, ex_channels, overrides=None):
@@ -685,6 +727,7 @@ def place_trade():
                 use_trail = trailing_sl
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
+            # Pass User ID
             return trade_manager.create_trade_direct(session['kite'], ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, order_type, limit_price, use_target_controls, use_trail, use_sl_entry, use_exit_mult, target_channels=ex_channels, risk_ratios=use_ratios, user_id=current_user.id)
         
         target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
@@ -705,6 +748,7 @@ def place_trade():
                         symbol_override['ratios'] = new_ratios
                         symbol_override['custom_targets'] = []
         if mode_input == "SHADOW":
+            # Pass User ID
             can_live, reason = common.can_place_order("LIVE", user_id=current_user.id)
             if not can_live:
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
@@ -747,6 +791,7 @@ def place_trade():
             if res_paper['status'] == 'success': flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
             else: flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
         else:
+            # Pass User ID
             can_trade, reason = common.can_place_order(mode_input, user_id=current_user.id)
             if not can_trade:
                 flash(f"⛔ Trade Blocked: {reason}")
