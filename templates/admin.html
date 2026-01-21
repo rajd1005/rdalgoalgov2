@@ -9,47 +9,13 @@
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
     
     <style>
-        /* LIGHT THEME OVERRIDES */
-        body {
-            background-color: #f4f6f9;
-            color: #333;
-        }
-        .navbar {
-            background-color: #ffffff !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .navbar-brand, .nav-link, .navbar-text {
-            color: #333 !important;
-        }
-        .card {
-            background-color: #ffffff;
-            border: 1px solid #e0e0e0;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-            color: #333;
-        }
-        .card-header {
-            background-color: #f8f9fa;
-            border-bottom: 1px solid #e0e0e0;
-            color: #555;
-            font-weight: 600;
-        }
-        .table {
-            color: #333;
-        }
-        .table thead th {
-            background-color: #f8f9fa;
-            color: #666;
-            border-bottom: 2px solid #dee2e6;
-        }
-        .form-control, .form-select {
-            background-color: #fff;
-            border: 1px solid #ced4da;
-            color: #495057;
-        }
-        .form-control:focus {
-            border-color: #80bdff;
-            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
-        }
+        body { background-color: #f4f6f9; color: #333; }
+        .navbar { background-color: #ffffff !important; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .navbar-brand, .nav-link, .navbar-text { color: #333 !important; }
+        .card { background-color: #ffffff; border: 1px solid #e0e0e0; box-shadow: 0 4px 6px rgba(0,0,0,0.05); color: #333; }
+        .card-header { background-color: #f8f9fa; border-bottom: 1px solid #e0e0e0; color: #555; font-weight: 600; }
+        .table thead th { background-color: #f8f9fa; color: #666; border-bottom: 2px solid #dee2e6; }
+        .nav-tabs .nav-link.active { background-color: #f8f9fa; border-bottom-color: #f8f9fa; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -58,6 +24,9 @@
   <div class="container">
     <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-shield-alt me-2"></i>RD Algo Admin</a>
     <div class="d-flex gap-2">
+        <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">
+            <i class="fas fa-cog me-1"></i> Settings
+        </button>
         <a href="/" class="btn btn-outline-secondary btn-sm"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
         <a href="/logout" class="btn btn-danger btn-sm"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
     </div>
@@ -76,39 +45,6 @@
             {% endfor %}
         {% endif %}
     {% endwith %}
-
-    <div class="row mb-4">
-        <div class="col-12">
-            <div class="card shadow-sm border-warning">
-                <div class="card-header bg-warning bg-opacity-10 text-dark fw-bold">
-                    <i class="fas fa-mail-bulk me-2"></i> SMTP Email Configuration (Required for OTPs)
-                </div>
-                <div class="card-body">
-                    <form action="/admin/save_smtp" method="POST" class="row g-3 align-items-end">
-                        <div class="col-md-3">
-                            <label class="form-label small text-muted">SMTP Server</label>
-                            <input type="text" class="form-control" name="server" placeholder="smtp.gmail.com" value="{{ smtp.server if smtp else '' }}">
-                        </div>
-                        <div class="col-md-2">
-                            <label class="form-label small text-muted">Port</label>
-                            <input type="number" class="form-control" name="port" placeholder="587" value="{{ smtp.port if smtp else '' }}">
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label small text-muted">Email Address</label>
-                            <input type="email" class="form-control" name="email" placeholder="sender@email.com" value="{{ smtp.email if smtp else '' }}">
-                        </div>
-                        <div class="col-md-3">
-                            <label class="form-label small text-muted">Password / App Password</label>
-                            <input type="password" class="form-control" name="password" placeholder="****" value="{{ smtp.password if smtp else '' }}">
-                        </div>
-                        <div class="col-md-1 d-grid">
-                            <button class="btn btn-dark"><i class="fas fa-save"></i></button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
-    </div>
 
     <div class="row">
         <div class="col-lg-4 mb-4">
@@ -156,7 +92,7 @@
         </div>
 
         <div class="col-lg-8">
-            <div class="card shadow-sm">
+            <div class="card shadow-sm h-100">
                 <div class="card-header d-flex justify-content-between align-items-center bg-white">
                     <span class="fw-bold text-uppercase text-muted small"><i class="fas fa-users me-1"></i> User Management</span>
                     
@@ -241,6 +177,84 @@
     </div>
 </div>
 
+<div class="modal fade" id="settingsModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-bottom-0 bg-light">
+        <h5 class="modal-title fw-bold"><i class="fas fa-cogs text-secondary me-2"></i>Global Settings</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body p-0">
+        <form action="/admin/save_settings" method="POST">
+            <div class="d-flex align-items-start">
+                <div class="nav flex-column nav-pills me-3 bg-light h-100 p-3" id="v-pills-tab" role="tablist" style="width: 200px; min-height: 400px;">
+                    <button class="nav-link active text-start mb-2" data-bs-toggle="pill" data-bs-target="#tab-email-config" type="button"><i class="fas fa-server me-2"></i> Email Config</button>
+                    <button class="nav-link text-start mb-2" data-bs-toggle="pill" data-bs-target="#tab-templates" type="button"><i class="fas fa-envelope-open-text me-2"></i> Templates</button>
+                </div>
+                
+                <div class="tab-content w-100 p-4" id="v-pills-tabContent">
+                    
+                    <div class="tab-pane fade show active" id="tab-email-config">
+                        <h6 class="text-uppercase text-muted small fw-bold border-bottom pb-2 mb-3">SMTP / API Configuration</h6>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label small text-muted">Sender Name</label>
+                                <input type="text" class="form-control" name="sender_name" placeholder="RD Algo Admin" value="{{ smtp.sender_name }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small text-muted">Sender Email</label>
+                                <input type="email" class="form-control" name="email" placeholder="admin@example.com" value="{{ smtp.email }}">
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label small text-muted">SMTP Server / API Host</label>
+                                <input type="text" class="form-control" name="server" placeholder="smtp.hostinger.com" value="{{ smtp.server }}">
+                                <div class="form-text small">Use 'resend' or 'sendgrid' here to enable API mode.</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small text-muted">Port</label>
+                                <input type="number" class="form-control" name="port" placeholder="465" value="{{ smtp.port }}">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small text-muted">Password / API Key</label>
+                                <input type="password" class="form-control" name="password" placeholder="****" value="{{ smtp.password }}">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="tab-pane fade" id="tab-templates">
+                        <h6 class="text-uppercase text-muted small fw-bold border-bottom pb-2 mb-3">Action Templates</h6>
+                        
+                        <div class="mb-4">
+                            <label class="fw-bold small text-primary mb-1">1. Login OTP Email</label>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text small">Subject</span>
+                                <input type="text" class="form-control" name="tpl_otp_subject" value="{{ templates.otp_subject or 'Login Verification OTP' }}">
+                            </div>
+                            <textarea class="form-control font-monospace small" name="tpl_otp_body" rows="3" placeholder="HTML Content. Use {otp} as placeholder.">{{ templates.otp_body or '<h3>Your OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>' }}</textarea>
+                        </div>
+
+                        <div>
+                            <label class="fw-bold small text-danger mb-1">2. Forgot Password Email</label>
+                            <div class="input-group mb-2">
+                                <span class="input-group-text small">Subject</span>
+                                <input type="text" class="form-control" name="tpl_reset_subject" value="{{ templates.reset_subject or 'Password Reset Request' }}">
+                            </div>
+                            <textarea class="form-control font-monospace small" name="tpl_reset_body" rows="3" placeholder="HTML Content. Use {otp} as placeholder.">{{ templates.reset_body or '<h3>Your Reset OTP is: <b>{otp}</b></h3><p>Valid for 15 minutes.</p>' }}</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-footer bg-light border-top-0">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
+                <button type="submit" class="btn btn-primary fw-bold px-4">Save All Settings</button>
+            </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal fade" id="editUserModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content border-0 shadow-lg">
@@ -278,14 +292,12 @@
       </div>
       <div class="modal-body text-center">
         <p class="text-muted mb-3">Share this link with the user for instant login access:</p>
-        
         <div class="input-group mb-3">
             <input type="text" class="form-control bg-light border text-center font-monospace" id="magicLinkInput" readonly style="font-size: 0.9rem;">
             <button class="btn btn-primary fw-bold" onclick="copyLink()">
                 <i class="fas fa-copy"></i> Copy
             </button>
         </div>
-        
         <div class="alert alert-light d-inline-block py-1 px-3 small mb-0 border">
             <i class="fas fa-info-circle me-1"></i> This link bypasses the password check.
         </div>
@@ -305,7 +317,6 @@
           <div class="modal-body">
             <p class="text-muted mb-3">Set a new password for: <strong id="resetUsername" class="text-dark"></strong></p>
             <input type="hidden" name="user_id" id="resetUserId">
-            
             <div class="mb-3">
                 <input type="text" class="form-control form-control-lg text-center" name="new_password" placeholder="Enter New Password" required autocomplete="off">
             </div>
@@ -327,7 +338,6 @@
     
     function generateLink(uid) {
         document.body.style.cursor = 'wait';
-        
         fetch('/admin/generate_link/' + uid)
         .then(response => {
             if (!response.ok) throw new Error("Permission Denied");
@@ -361,14 +371,12 @@
         const copyText = document.getElementById("magicLinkInput");
         copyText.select();
         copyText.setSelectionRange(0, 99999);
-        
         navigator.clipboard.writeText(copyText.value).then(() => {
             const btn = document.querySelector('#linkModal .btn-primary');
             const originalHtml = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
             btn.classList.remove('btn-primary');
             btn.classList.add('btn-success');
-            
             setTimeout(() => {
                 btn.innerHTML = originalHtml;
                 btn.classList.add('btn-primary');
@@ -377,7 +385,6 @@
         });
     }
 
-    // SEARCH FUNCTION
     function searchUsers() {
       var input, filter, table, tr, td, i, txtValue;
       input = document.getElementById("userSearchInput");
@@ -385,7 +392,6 @@
       table = document.getElementById("userTable");
       tr = table.getElementsByTagName("tr");
       for (i = 0; i < tr.length; i++) {
-        // Index 1 is the "Email/Username" column
         td = tr[i].getElementsByTagName("td")[1];
         if (td) {
           txtValue = td.textContent || td.innerText;
