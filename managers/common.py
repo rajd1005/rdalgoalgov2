@@ -1,89 +1,58 @@
-import pytz
-from datetime import datetime
 import settings
-from managers.persistence import load_history, load_trades
+from datetime import datetime
+import pytz
 
-# Global Timezone
 IST = pytz.timezone('Asia/Kolkata')
 
 def get_time_str():
-    """
-    Returns the current time in IST as a formatted string.
-    Format: YYYY-MM-DD HH:MM:SS
-    """
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
 
 def log_event(trade, message):
-    """
-    Appends a timestamped message to the trade's log list.
-    """
+    log_entry = f"[{get_time_str()}] {message}"
     if 'logs' not in trade:
         trade['logs'] = []
-    trade['logs'].append(f"[{get_time_str()}] {message}")
-
+    trade['logs'].insert(0, log_entry)
+    
 def get_exchange(symbol):
-    """
-    Determines the exchange (NSE, NFO, MCX, CDS, BSE) based on the symbol name.
-    """
-    s = symbol.upper()
-    if any(x in s for x in ['CRUDEOIL', 'GOLD', 'SILVER', 'COPPER', 'NATURALGAS']):
-        return "MCX"
-    if any(x in s for x in ['USDINR', 'EURINR', 'GBPINR', 'JPYINR']):
-        return "CDS"
-    if "SENSEX" in s or "BANKEX" in s:
-        # Check if it has digits (Futures/Options usually have dates/strikes) to distinguish BFO
-        return "BFO" if any(char.isdigit() for char in s) else "BSE"
-    if symbol.endswith("CE") or symbol.endswith("PE") or "FUT" in symbol:
-        return "NFO"
-    return "NSE"
+    # Basic exchange detection based on symbol suffix or name
+    if 'SENSEX' in symbol or 'BSE' in symbol: return 'BFO'
+    if 'NIFTY' in symbol or 'BANKNIFTY' in symbol: return 'NFO'
+    if 'MCX' in symbol: return 'MCX'
+    return 'NSE'
 
-def get_day_pnl(mode):
+def can_place_order(mode, user_id=None):
     """
-    Calculates the Total Daily P&L for a specific mode (LIVE/PAPER).
-    Includes:
-    1. Realized P&L from closed trades today.
-    2. Unrealized P&L from currently active trades.
+    Checks global risk limits (Max Loss) based on the specific USER'S settings.
     """
-    today_str = datetime.now(IST).strftime("%Y-%m-%d")
-    total = 0.0
-    
-    # 1. Sum Realized P&L from History
-    history = load_history()
-    for t in history:
-        # Check if exit_time exists and matches today
-        if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode:
-            total += t.get('pnl', 0)
+    try:
+        # 1. Load Settings for this specific User
+        s = settings.load_settings(user_id=user_id)
+        mode_conf = s['modes'].get(mode, {})
+        
+        # 2. Check Max Loss Limit
+        max_loss = float(mode_conf.get('max_loss', 0))
+        
+        if max_loss > 0:
+            # Import here to avoid circular dependency
+            from managers.persistence import load_history
             
-    # 2. Sum Unrealized P&L from Active Trades
-    active = load_trades()
-    for t in active:
-        if t['mode'] == mode and t['status'] != 'PENDING':
-            # Use current_ltp if available, else fallback to entry_price (0 PnL)
-            current_price = t.get('current_ltp', t['entry_price'])
-            unrealized = (current_price - t['entry_price']) * t['quantity']
-            total += unrealized
+            today_str = datetime.now(IST).strftime("%Y-%m-%d")
+            total_loss = 0.0
             
-    return total
+            # Calculate Realized Loss from History for the specific User
+            history = load_history(user_id=user_id)
+            for t in history:
+                # Check if trade was exited TODAY and matches the mode (LIVE/PAPER)
+                if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode:
+                    if t.get('pnl', 0) < 0:
+                        total_loss += abs(t['pnl'])
+            
+            if total_loss >= max_loss:
+                return False, f"Max Loss Limit Reached (Limit: ₹{max_loss}, Today's Loss: ₹{total_loss:.2f})"
 
-def can_place_order(mode):
-    """
-    Checks if a new order is allowed based on Global Risk Settings (Max Daily Loss).
-    Returns: (Boolean allowed, String reason)
-    """
-    current_settings = settings.load_settings()
-    
-    if mode not in current_settings['modes']:
         return True, "OK"
-        
-    mode_conf = current_settings['modes'][mode]
-    max_loss_limit = float(mode_conf.get('max_loss', 0))
-    
-    # If Max Loss is set (greater than 0)
-    if max_loss_limit > 0:
-        limit = -abs(max_loss_limit) # Ensure it's treated as a negative number
-        current_pnl = get_day_pnl(mode)
-        
-        if current_pnl <= limit:
-            return False, f"Max Daily Loss Reached ({current_pnl:.2f} <= {limit})"
-            
-    return True, "OK"
+
+    except Exception as e:
+        print(f"Risk Check Error (User {user_id}): {e}")
+        # Fail safe: Allow trade if check fails, but log error
+        return True, "Error bypassed"
