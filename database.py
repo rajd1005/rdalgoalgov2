@@ -71,6 +71,8 @@ class ActiveTrade(db.Model):
 
 class TradeHistory(db.Model):
     id = db.Column(db.BigInteger, primary_key=True)
+    # [FIX] Added user_id column for indexed filtering (Solves Critical Bottleneck)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True, nullable=True)
     data = db.Column(db.Text, nullable=False) 
 
 class RiskState(db.Model):
