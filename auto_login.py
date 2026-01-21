@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    V8 Update: Enforced JS Clicks and Scroll-Into-View to fix 'Stuck Button' loops.
+    V9 Update: Adds Staleness Checks and prioritizes Standard Clicks to fix React event issues.
     """
     driver = None
     
@@ -113,7 +113,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                 logger.error(f"TOTP Step Error: {e}")
                 return None, f"TOTP Error: {str(e)}"
 
-        # --- STEP E: SMART POLLING LOOP (Universal Clicker) ---
+        # --- STEP E: SMART POLLING LOOP ---
         logger.info("Entering Smart Polling Loop (Max 60s)...")
         
         start_time = time.time()
@@ -132,49 +132,52 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                     request_token = parse_qs(parsed.query).get('request_token', [None])[0]
                     return request_token, None
 
-                # 2. FAILURE: Check for Page Errors
+                # 2. FAILURE: Check for Errors
                 if "Invalid TOTP" in page_source or "Incorrect password" in page_source:
                     error_msg = "Login Failed: Invalid TOTP or Password detected."
                     logger.error(f"❌ {error_msg}")
                     return None, error_msg
 
-                # 3. ACTION: Force Click Action Buttons
+                # 3. ACTION: Find Action Buttons
+                # We specifically look for submit buttons or the orange Zerodha buttons
                 buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.button-orange")
                 
-                button_clicked = False
+                action_taken = False
                 for btn in buttons:
                     if btn.is_displayed() and btn.is_enabled():
                         text = btn.text.lower()
                         if any(x in text for x in ['continue', 'authorize', 'allow', 'approve', 'login']):
-                            logger.info(f"🔘 Stuck Button Detected: '{btn.text}'")
+                            logger.info(f"🔘 Found Button: '{btn.text}' on page: {driver.title}")
                             
-                            # FORCE CLICK VIA JS (Bypasses Overlays/Non-Interactivity)
+                            # METHOD A: Standard Click (Best for React)
                             try:
-                                # Scroll into view first
-                                driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                                time.sleep(0.5)
-                                # Hard Click
+                                btn.click()
+                                logger.info("   -> Standard Click sent.")
+                            except Exception:
+                                # METHOD B: JS Click (Fallback)
                                 driver.execute_script("arguments[0].click();", btn)
-                                logger.info("⚡ Executed JS Force-Click.")
-                                button_clicked = True
-                            except Exception as e:
-                                logger.warning(f"Click failed: {e}")
-
-                            # WAIT FOR EFFECT
-                            time.sleep(3) 
+                                logger.info("   -> JS Force-Click sent (Standard failed).")
                             
-                            # Break loop to re-check URL (Don't spam click)
-                            break 
+                            # CRITICAL: Wait for staleness (Page Load)
+                            # This ensures we don't spam-click the same button instantly
+                            try:
+                                WebDriverWait(driver, 8).until(EC.staleness_of(btn))
+                                logger.info("   -> Page transition detected (Button disappeared).")
+                            except Exception:
+                                logger.warning("   -> Warning: Page did not transition after 8s.")
+                            
+                            action_taken = True
+                            break # Re-evaluate page state
                 
-                if button_clicked:
-                    continue # Restart main loop to check URL again
+                if action_taken:
+                    continue # Loop immediately to check new URL
 
                 # 4. ROBUST RETRY: Check Empty TOTP
                 totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
                 if totp_inputs and totp_inputs[0].is_displayed():
                     curr_val = totp_inputs[0].get_attribute("value")
                     if not curr_val:
-                        logger.warning("⚠️ TOTP field detected empty. Re-filling...")
+                        logger.warning("⚠️ TOTP field is empty. Re-filling...")
                         refill_totp = pyotp.TOTP(TOTP_SECRET)
                         totp_inputs[0].send_keys(refill_totp.now())
                         time.sleep(0.5)
