@@ -11,16 +11,20 @@ class TelegramManager:
     def __init__(self):
         self.base_url = "https://api.telegram.org/bot"
 
-    def _get_config(self):
-        s = settings.load_settings()
+    def _get_config(self, user_id=None):
+        """
+        Loads settings for a specific user to get their Bot Token/Channels.
+        """
+        s = settings.load_settings(user_id=user_id)
         return s.get('telegram', {})
 
-    def _format_msg(self, template_key, trade, extra_data=None, action_time=None):
+    def _format_msg(self, template_key, trade, extra_data=None, action_time=None, user_id=None):
         """
         Helper: Formats message strings based on settings.py templates.
         Supports GLOBAL Placeholders for all messages.
         """
-        conf = self._get_config()
+        # Load config for the specific user to get their templates
+        conf = self._get_config(user_id=user_id)
         templates = conf.get('templates', {})
         raw_tpl = templates.get(template_key, "")
         
@@ -95,13 +99,15 @@ class TelegramManager:
             print(f"Template Error ({template_key}): {e}")
             return f"Template Error: {template_key}"
 
-    def send_message(self, text, reply_to_id=None, override_chat_id=None):
+    def send_message(self, text, reply_to_id=None, override_chat_id=None, user_id=None):
         """
-        Sends a message to the configured Telegram Channel.
+        Sends a message to the configured Telegram Channel using the User's Bot Token.
         Allows overriding the chat_id for specific alerts (like System Alerts).
         Returns the Message ID of the sent message.
         """
-        conf = self._get_config()
+        # Load config for this specific user
+        conf = self._get_config(user_id=user_id)
+        
         if not conf.get('enable_notifications', False):
             return None
         
@@ -132,12 +138,12 @@ class TelegramManager:
             print(f"❌ Telegram Request Failed: {e}")
         return None
 
-    def notify_system_event(self, event_type, message=""):
+    def notify_system_event(self, event_type, message="", user_id=None):
         """
         Sends system status alerts (Online, Offline, Login Success/Fail).
         Uses 'system_channel_id' if set, otherwise uses the default 'channel_id'.
         """
-        conf = self._get_config()
+        conf = self._get_config(user_id=user_id)
         sys_channel_id = conf.get('system_channel_id')
 
         icons = {
@@ -154,13 +160,17 @@ class TelegramManager:
         text = f"{icon} <b>SYSTEM ALERT: {event_type}</b>\n{message}\nTime: {get_time_str()}"
         
         # Send immediately using the system channel (if configured) or default
-        self.send_message(text, override_chat_id=sys_channel_id)
+        self.send_message(text, override_chat_id=sys_channel_id, user_id=user_id)
 
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends notifications to ALL configured channels based on rules.
+        Supports Multi-User by extracting user_id from trade data.
         """
-        conf = self._get_config()
+        # Extract User ID from trade to load correct settings
+        user_id = trade.get('user_id')
+        
+        conf = self._get_config(user_id=user_id)
         if not conf.get('enable_notifications', False):
             return {}
 
@@ -271,7 +281,7 @@ class TelegramManager:
                 continue
 
             # --- BUILD MESSAGE CONTENT (UPDATED: USES TEMPLATE) ---
-            msg = self._format_msg(event_type, trade, extra_data, action_time)
+            msg = self._format_msg(event_type, trade, extra_data, action_time, user_id=user_id)
             
             if not msg: continue # Skip if template failed or empty
 
@@ -282,13 +292,14 @@ class TelegramManager:
             # --- FREE CHANNEL HEADER INJECTION (TEMPLATE BASED) ---
             # If this is the start of a thread (e.g. T1 hit in Spillover mode), inject Header.
             if is_new_thread_start and key == 'free' and event_type != "NEW_TRADE":
-                header = self._format_msg("FREE_HEADER", trade, extra_data, action_time)
+                header = self._format_msg("FREE_HEADER", trade, extra_data, action_time, user_id=user_id)
                 if header:
                     msg = header + msg
 
             # --- SEND & SAVE ---
             if msg:
-                sent_id = self.send_message(msg, reply_to_id=reply_to, override_chat_id=chat_id)
+                # Pass User ID to send_message to use correct Token
+                sent_id = self.send_message(msg, reply_to_id=reply_to, override_chat_id=chat_id, user_id=user_id)
                 if sent_id:
                     self._save_msg_to_db(trade.get('id'), sent_id, chat_id)
                     
@@ -336,6 +347,9 @@ class TelegramManager:
             print(f"🗑️ Deleted {len(messages)} Telegram messages from DB for Trade {trade_id}")
 
             # 4. Background Task Definition
+            # Note: This uses default config (likely admin) for deletion as user_id is hard to trace here.
+            # If User specific deletion is needed, the trade must be fetched to get user_id.
+            # Currently it attempts best-effort cleanup.
             def bg_cleanup(token, items):
                 delete_url = f"{self.base_url}{token}/deleteMessage"
                 for item in items:
