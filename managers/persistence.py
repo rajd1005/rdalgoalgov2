@@ -1,8 +1,24 @@
 import json
 import threading
+from collections import defaultdict
 from database import db, ActiveTrade, TradeHistory, RiskState, TelegramMessage
 
-# Global Lock for thread safety
+# --- Granular Locking (Multi-User Fix) ---
+# Dictionary to hold a separate lock for each user_id
+_user_locks = defaultdict(threading.Lock)
+
+def get_user_lock(user_id):
+    """
+    Returns the specific lock for a user to ensure thread safety
+    without blocking other users (Granular Locking).
+    """
+    if user_id is None:
+        return _user_locks['system']
+    return _user_locks[user_id]
+
+# Global Lock (Retained for backward compatibility with trade_manager.py)
+# NOTE: External modules using this will still face serialization bottlenecks 
+# until they are updated to use get_user_lock(user_id).
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence (Multi-User) ---
@@ -66,9 +82,10 @@ def save_trades(trades, user_id):
     """
     Saves trades ONLY for the current user safely.
     Deletes existing rows for this user ID and inserts the new list.
-    Does NOT affect other users' data.
+    Uses Granular Locking to prevent blocking other users.
     """
-    with TRADE_LOCK:
+    # Use user-specific lock instead of global TRADE_LOCK
+    with get_user_lock(user_id):
         try:
             # 1. Delete ONLY this user's active trades
             ActiveTrade.query.filter_by(user_id=user_id).delete()
@@ -109,9 +126,12 @@ def load_history(user_id):
 def delete_trade(trade_id, user_id):
     """
     Deletes a closed trade if it belongs to the user.
+    Uses Granular Locking.
     """
     from managers.telegram_manager import bot as telegram_bot
-    with TRADE_LOCK:
+    
+    # Use user-specific lock
+    with get_user_lock(user_id):
         try:
             row = TradeHistory.query.filter_by(id=int(trade_id)).first()
             if row:
