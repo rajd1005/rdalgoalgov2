@@ -46,7 +46,7 @@ def load_trades(user_id):
         # [DEBUG] Reset session to force fresh read
         db.session.remove() 
         
-        # FIX: Efficient DB-side filtering
+        # Efficient DB-side filtering
         rows = ActiveTrade.query.filter_by(user_id=user_id).all()
         user_trades = []
         
@@ -77,7 +77,7 @@ def save_trades(trades, user_id):
             for t in trades:
                 t['user_id'] = user_id # Ensure ID is stamped in JSON too
                 
-                # FIX: Insert with user_id column populated
+                # Insert with user_id column populated
                 new_row = ActiveTrade(user_id=user_id, data=json.dumps(t))
                 db.session.add(new_row)
             
@@ -86,27 +86,22 @@ def save_trades(trades, user_id):
             print(f"[DEBUG] Save Trades Error (User {user_id}): {e}")
             db.session.rollback()
 
-# --- Trade History Persistence (Multi-User) ---
+# --- Trade History Persistence (OPTIMIZED) ---
 def load_history(user_id):
     """
-    Loads trade history filtered by user_id.
+    Loads trade history efficiently using DB Index.
+    Filters by user_id at the database level to prevent memory overload.
     """
     try:
-        db.session.commit() # Ensure fresh
+        db.session.commit() # Ensure fresh data
         
-        # Load all history (TradeHistory ID is unique per trade, but we need to check contents)
-        all_records = TradeHistory.query.order_by(TradeHistory.id.desc()).all()
-        user_history = []
+        # [FIX] Filter by user_id column directly in DB query
+        # Added limit(200) to prevent memory overflow on huge histories
+        records = TradeHistory.query.filter_by(user_id=user_id)\
+                                      .order_by(TradeHistory.id.desc())\
+                                      .limit(200).all()
         
-        for r in all_records:
-            try:
-                data = json.loads(r.data)
-                if str(data.get('user_id')) == str(user_id):
-                    user_history.append(data)
-            except:
-                pass
-                
-        return user_history
+        return [json.loads(r.data) for r in records]
     except Exception as e:
         print(f"Load History Error (User {user_id}): {e}")
         return []
@@ -120,9 +115,16 @@ def delete_trade(trade_id, user_id):
         try:
             row = TradeHistory.query.filter_by(id=int(trade_id)).first()
             if row:
-                data = json.loads(row.data)
-                # Security Check: Does trade belong to user?
-                if str(data.get('user_id')) == str(user_id):
+                # Security Check: Verify ownership via Column OR JSON (Backwards compatibility)
+                is_owner = False
+                if row.user_id is not None:
+                    is_owner = (str(row.user_id) == str(user_id))
+                else:
+                    # Fallback for old records without column data
+                    data = json.loads(row.data)
+                    is_owner = (str(data.get('user_id')) == str(user_id))
+
+                if is_owner:
                     telegram_bot.delete_trade_messages(trade_id)
                     db.session.delete(row)
                     db.session.commit()
@@ -137,13 +139,18 @@ def delete_trade(trade_id, user_id):
 
 def save_to_history_db(trade_data, user_id):
     """
-    Saves a closed trade to history, ensuring user_id is attached.
+    Saves a closed trade to history, ensuring user_id is populated in Column AND JSON.
     """
     try:
-        # Stamp ownership
         trade_data['user_id'] = user_id
         
-        db.session.merge(TradeHistory(id=trade_data['id'], data=json.dumps(trade_data)))
+        # [FIX] Populate user_id column for indexed searching
+        record = TradeHistory(
+            id=trade_data['id'], 
+            user_id=user_id, 
+            data=json.dumps(trade_data)
+        )
+        db.session.merge(record)
         db.session.commit()
     except Exception as e:
         print(f"Save History DB Error: {e}")
