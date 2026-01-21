@@ -8,7 +8,8 @@ db = SQLAlchemy()
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
-    password = db.Column(db.String(150), nullable=False) # Store Hashed Passwords
+    # UPDATED: Increased length from 150 to 255 to fit Scrypt hashes
+    password = db.Column(db.String(255), nullable=False) 
     is_admin = db.Column(db.Boolean, default=False)
     
     # Subscription Management
