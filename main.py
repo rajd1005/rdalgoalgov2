@@ -14,7 +14,7 @@ from kiteconnect import KiteConnect
 from sqlalchemy import text 
 import config
 
-# --- REFACTORED IMPORTS ---
+# --- IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops, email_sender
 from managers.telegram_manager import bot as telegram_bot
 import smart_trader
@@ -47,12 +47,13 @@ with app.app_context():
         db.session.rollback()
 
     try:
-        # 3. Add Email, Blocked Status, and OTP Columns
+        # 3. Add Email, Blocked Status, OTP, and Manager Columns
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR(150)'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6)'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMP'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_login_date DATE'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_manager BOOLEAN DEFAULT FALSE'))
         db.session.commit()
         print("✅ Database Patched: Schema Updated Successfully")
     except Exception as e:
@@ -180,9 +181,15 @@ def login():
                 flash("⛔ Access Revoked by Admin.")
                 return render_template('login.html')
             
-            # --- OTP LOGIC FOR NEW SESSION/DAY ---
+            # Special Check for Managers: Redirect to Admin Panel immediately
+            if user.is_manager:
+                login_user(user, remember=remember)
+                return redirect('/admin')
+
+            # --- OTP LOGIC FOR TRADERS ---
             today = date.today()
-            if not user.is_admin and (user.last_login_date != today):
+            # Admins & Managers skip OTP (based on user request), others need it once per day
+            if not user.is_admin and not user.is_manager and (user.last_login_date != today):
                 otp = str(random.randint(100000, 999999))
                 user.otp_code = otp
                 user.otp_expiry = datetime.now() + timedelta(minutes=10)
@@ -205,7 +212,7 @@ def login():
                 session['remember_me'] = remember
                 return redirect(url_for('verify_otp'))
             
-            # Direct Login (Same day or Admin)
+            # Direct Login
             if not user.is_active_sub:
                 flash("❌ Subscription/Trial Expired. Contact Admin.")
             else:
@@ -316,14 +323,18 @@ def magic_login(token, uid):
 @app.route('/admin')
 @login_required
 def admin_panel():
-    if not current_user.is_admin: return "Access Denied", 403
+    # Allow Super Admin AND Managers
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
+    
     users = User.query.all()
     
-    # Load SMTP Config
-    smtp_conf = SystemConfig.query.filter_by(key="smtp_config").first()
-    smtp_data = json.loads(smtp_conf.value) if smtp_conf else {}
+    # Load SMTP Config (Only for Admin, hide from Manager)
+    smtp_data = {}
+    if current_user.is_admin:
+        smtp_conf = SystemConfig.query.filter_by(key="smtp_config").first()
+        smtp_data = json.loads(smtp_conf.value) if smtp_conf else {}
     
-    # Load Email Templates
+    # Load Email Templates (Visible to both)
     tpl_conf = SystemConfig.query.filter_by(key="email_templates").first()
     tpl_data = {}
     if tpl_conf:
@@ -333,6 +344,8 @@ def admin_panel():
             'otp_body': raw_tpl.get('otp', {}).get('body'),
             'reset_subject': raw_tpl.get('reset', {}).get('subject'),
             'reset_body': raw_tpl.get('reset', {}).get('body'),
+            'welcome_subject': raw_tpl.get('welcome', {}).get('subject'),
+            'welcome_body': raw_tpl.get('welcome', {}).get('body'),
         }
         
     return render_template('admin.html', users=users, smtp=smtp_data, templates=tpl_data)
@@ -340,7 +353,7 @@ def admin_panel():
 @app.route('/admin/save_settings', methods=['POST'])
 @login_required
 def admin_save_settings():
-    """Consolidated route for SMTP + Templates"""
+    # Only Super Admin can save global settings
     if not current_user.is_admin: return "Access Denied", 403
     
     # 1. Save SMTP Config
@@ -373,6 +386,10 @@ def admin_save_settings():
         "reset": {
             "subject": request.form.get('tpl_reset_subject'),
             "body": request.form.get('tpl_reset_body')
+        },
+        "welcome": {
+            "subject": request.form.get('tpl_welcome_subject'),
+            "body": request.form.get('tpl_welcome_body')
         }
     }
     
@@ -390,12 +407,19 @@ def admin_save_settings():
 @app.route('/admin/add_user', methods=['POST'])
 @login_required
 def add_user():
-    if not current_user.is_admin: return "Access Denied", 403
+    # Admins and Managers can add users
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
     
     email = request.form.get('email')
     password = request.form.get('password')
-    days = int(request.form.get('days', 7))
+    days = int(request.form.get('days', 30))
     is_trial = request.form.get('is_trial') == 'on'
+    is_manager_role = request.form.get('is_manager') == 'on'
+    
+    # Restrict Manager creation to Admins only
+    if is_manager_role and not current_user.is_admin:
+        flash("Only Admins can create Managers.")
+        return redirect('/admin')
     
     if User.query.filter_by(username=email).first():
         flash("User already exists")
@@ -404,17 +428,38 @@ def add_user():
     hashed = generate_password_hash(password)
     expiry = datetime.now() + timedelta(days=days)
     
-    new_user = User(username=email, email=email, password=hashed, subscription_end=expiry, is_trial=is_trial)
+    new_user = User(username=email, email=email, password=hashed, subscription_end=expiry, is_trial=is_trial, is_manager=is_manager_role)
     db.session.add(new_user)
     db.session.commit()
     
-    flash(f"User {email} created!")
+    # --- SEND WELCOME EMAIL ---
+    try:
+        # Generate Magic Link
+        token = secrets.token_urlsafe(16)
+        magic_link = url_for('magic_login', token=token, uid=new_user.id, _external=True)
+        
+        # Load Template
+        tpl = get_email_template('welcome')
+        subject = tpl.get('subject', "Welcome to RD Algo")
+        body_raw = tpl.get('body', "<h3>Welcome!</h3><p>User: {email}<br>Pass: {password}</p><p>Expires: {expiry}</p><p><a href='{magic_link}'>Login Link</a></p>")
+        
+        # Inject Variables
+        body = body_raw.replace('{email}', email)\
+                       .replace('{password}', password)\
+                       .replace('{magic_link}', magic_link)\
+                       .replace('{expiry}', expiry.strftime('%Y-%m-%d'))
+                       
+        email_sender.send_email(email, subject, body)
+        flash(f"User {email} created & Welcome Email sent!")
+    except Exception as e:
+        flash(f"User created, but email failed: {e}")
+        
     return redirect('/admin')
 
 @app.route('/admin/edit_user', methods=['POST'])
 @login_required
 def admin_edit_user():
-    if not current_user.is_admin: return "Access Denied", 403
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
     
     uid = request.form.get('user_id')
     new_email = request.form.get('email')
@@ -441,7 +486,7 @@ def admin_edit_user():
 @app.route('/admin/toggle_access/<int:uid>')
 @login_required
 def toggle_access(uid):
-    if not current_user.is_admin: return "Access Denied", 403
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
     user = User.query.get(uid)
     if user:
         if user.is_admin:
@@ -458,7 +503,7 @@ def toggle_access(uid):
 @app.route('/admin/generate_link/<int:uid>')
 @login_required
 def generate_link(uid):
-    if not current_user.is_admin: return "Access Denied", 403
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
     token = secrets.token_urlsafe(16)
     link = url_for('magic_login', token=token, uid=uid, _external=True)
     return jsonify({"link": link})
@@ -466,7 +511,7 @@ def generate_link(uid):
 @app.route('/admin/reset_password', methods=['POST'])
 @login_required
 def admin_reset_password():
-    if not current_user.is_admin: return "Access Denied", 403
+    if not (current_user.is_admin or current_user.is_manager): return "Access Denied", 403
     
     user_id = request.form.get('user_id')
     new_password = request.form.get('new_password')
@@ -484,6 +529,10 @@ def admin_reset_password():
 @app.route('/')
 @login_required
 def home():
+    # Redirect Managers to Admin Panel (No Dashboard Access)
+    if current_user.is_manager:
+        return redirect('/admin')
+
     if current_user.is_blocked:
         logout_user()
         return redirect('/login')
@@ -759,6 +808,7 @@ def api_import_trade():
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         selected_channel = data.get('target_channel', 'main')
         target_channels = [selected_channel] 
+        # Pass User ID
         result = replay_engine.import_past_trade(
             session['kite'], final_sym, data['entry_time'], int(data['qty']), float(data['price']), 
             float(data['sl']), [float(t) for t in data['targets']],
@@ -820,6 +870,7 @@ def api_simulate_scenario():
     data = request.json
     trade_id = data.get('trade_id')
     config = data.get('config')
+    # Pass User ID
     result = replay_engine.simulate_trade_scenario(session['kite'], trade_id, config, user_id=current_user.id)
     return jsonify(result)
 
@@ -877,6 +928,7 @@ def place_trade():
         selected_channel = request.form.get('target_channel')
         if selected_channel in ['vip', 'free', 'z2h']: target_channels.append(selected_channel)
         
+        # Check permissions with User ID
         can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER", user_id=current_user.id)
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
@@ -892,6 +944,7 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
         
+        # Load User Settings
         app_settings = settings.load_settings(user_id=current_user.id)
         
         def execute(ex_mode, ex_qty, ex_channels, overrides=None):
@@ -911,6 +964,7 @@ def place_trade():
                 use_trail = trailing_sl
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
+            # Pass User ID
             return trade_manager.create_trade_direct(session['kite'], ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, order_type, limit_price, use_target_controls, use_trail, use_sl_entry, use_exit_mult, target_channels=ex_channels, risk_ratios=use_ratios, user_id=current_user.id)
         
         target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
@@ -931,6 +985,7 @@ def place_trade():
                         symbol_override['ratios'] = new_ratios
                         symbol_override['custom_targets'] = []
         if mode_input == "SHADOW":
+            # Pass User ID
             can_live, reason = common.can_place_order("LIVE", user_id=current_user.id)
             if not can_live:
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
@@ -973,6 +1028,7 @@ def place_trade():
             if res_paper['status'] == 'success': flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
             else: flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
         else:
+            # Pass User ID
             can_trade, reason = common.can_place_order(mode_input, user_id=current_user.id)
             if not can_trade:
                 flash(f"⛔ Trade Blocked: {reason}")
