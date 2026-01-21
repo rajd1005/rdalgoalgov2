@@ -24,9 +24,12 @@
   <div class="container">
     <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-shield-alt me-2"></i>RD Algo Admin</a>
     <div class="d-flex gap-2">
-        <button class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">
-            <i class="fas fa-cog me-1"></i> Settings
+        {% if current_user.is_admin %}
+        <button class="btn btn-warning btn-sm shadow-sm" data-bs-toggle="modal" data-bs-target="#settingsModal">
+            <i class="fas fa-cog me-1"></i> Global Settings
         </button>
+        {% endif %}
+        
         <a href="/" class="btn btn-outline-secondary btn-sm"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
         <a href="/logout" class="btn btn-danger btn-sm"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
     </div>
@@ -34,12 +37,11 @@
 </nav>
 
 <div class="container">
-    
     {% with messages = get_flashed_messages() %}
         {% if messages %}
             {% for message in messages %}
             <div class="alert alert-info alert-dismissible fade show border-0 shadow-sm" role="alert">
-                {{ message }}
+                <i class="fas fa-info-circle me-2"></i>{{ message }}
                 <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
             </div>
             {% endfor %}
@@ -48,7 +50,7 @@
 
     <div class="row">
         <div class="col-lg-4 mb-4">
-            <div class="card h-100">
+            <div class="card h-100 shadow-sm">
                 <div class="card-header text-uppercase small">
                     <i class="fas fa-user-plus me-1"></i> Create New User
                 </div>
@@ -62,10 +64,10 @@
                             </div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label small text-muted">Password</label>
+                            <label class="form-label small text-muted">Initial Password</label>
                             <div class="input-group">
                                 <span class="input-group-text"><i class="fas fa-lock"></i></span>
-                                <input type="text" class="form-control" name="password" placeholder="Initial Password" required>
+                                <input type="text" class="form-control" name="password" placeholder="Password123" required>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -75,14 +77,25 @@
                                 <option value="30" selected>30 Days (1 Month)</option>
                                 <option value="90">90 Days (3 Months)</option>
                                 <option value="180">6 Months</option>
-                                <option value="365">365 Days (1 Year)</option>
-                                <option value="3650">Lifetime (10 Years)</option>
+                                <option value="365">1 Year</option>
+                                <option value="3650">Lifetime</option>
                             </select>
                         </div>
-                        <div class="mb-4 form-check">
+                        <div class="mb-2 form-check">
                             <input type="checkbox" class="form-check-input" name="is_trial" id="isTrial">
                             <label class="form-check-label small" for="isTrial">Mark as Trial Account</label>
                         </div>
+                        
+                        {% if current_user.is_admin %}
+                        <div class="mb-4 form-check bg-light p-2 rounded border">
+                            <input type="checkbox" class="form-check-input ms-0" name="is_manager" id="isManager">
+                            <label class="form-check-label small text-primary fw-bold ms-2" for="isManager">
+                                <i class="fas fa-user-shield me-1"></i> Create as Manager
+                            </label>
+                            <div class="form-text small mt-0 ps-4" style="font-size: 0.75rem;">Managers can access Admin Panel but NOT the Trading Dashboard.</div>
+                        </div>
+                        {% endif %}
+
                         <div class="d-grid">
                             <button type="submit" class="btn btn-primary fw-bold"><i class="fas fa-plus-circle me-1"></i> Create User</button>
                         </div>
@@ -99,7 +112,7 @@
                     <div class="d-flex align-items-center gap-2">
                         <div class="input-group input-group-sm" style="width: 250px;">
                             <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
-                            <input type="text" class="form-control border-start-0 ps-0" id="userSearchInput" onkeyup="searchUsers()" placeholder="Search by Email...">
+                            <input type="text" class="form-control border-start-0 ps-0" id="userSearchInput" onkeyup="searchUsers()" placeholder="Search Email...">
                         </div>
                         <span class="badge bg-primary rounded-pill">{{ users|length }} Users</span>
                     </div>
@@ -120,22 +133,22 @@
                                 {% for u in users %}
                                 <tr>
                                     <td class="ps-3 text-muted">#{{ u.id }}</td>
-                                    <td class="fw-bold text-dark">{{ u.username }}</td>
+                                    <td class="fw-bold text-dark">
+                                        {{ u.username }}
+                                        {% if u.is_admin %} <span class="badge bg-dark ms-1" style="font-size:0.6rem;">ADMIN</span> {% endif %}
+                                        {% if u.is_manager %} <span class="badge bg-primary ms-1" style="font-size:0.6rem;">MANAGER</span> {% endif %}
+                                    </td>
                                     <td>
-                                        {% if u.is_admin %}
-                                            <span class="badge bg-dark">ADMIN</span>
+                                        {% if u.is_blocked %}
+                                            <span class="badge bg-danger">BLOCKED</span>
+                                        {% elif u.is_active_sub %}
+                                            <span class="badge bg-success bg-opacity-10 text-success"><i class="fas fa-check-circle me-1"></i>Active</span>
                                         {% else %}
-                                            {% if u.is_blocked %}
-                                                <span class="badge bg-danger">BLOCKED</span>
-                                            {% elif u.is_active_sub %}
-                                                <span class="badge bg-success bg-opacity-10 text-success"><i class="fas fa-check-circle me-1"></i>Active</span>
-                                            {% else %}
-                                                <span class="badge bg-warning bg-opacity-10 text-warning"><i class="fas fa-clock me-1"></i>Expired</span>
-                                            {% endif %}
-                                            
-                                            {% if u.is_trial %}
-                                                <span class="badge bg-info bg-opacity-10 text-info ms-1">Trial</span>
-                                            {% endif %}
+                                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="fas fa-clock me-1"></i>Expired</span>
+                                        {% endif %}
+                                        
+                                        {% if u.is_trial %}
+                                            <span class="badge bg-info bg-opacity-10 text-info ms-1">Trial</span>
                                         {% endif %}
                                     </td>
                                     <td class="small text-muted font-monospace">
@@ -163,7 +176,7 @@
                                         {% endif %}
 
                                         <button class="btn btn-sm btn-outline-primary" onclick="generateLink({{ u.id }})" title="Generate Magic Login Link">
-                                            <i class="fas fa-link"></i> Link
+                                            <i class="fas fa-link"></i>
                                         </button>
                                     </td>
                                 </tr>
@@ -187,12 +200,12 @@
       <div class="modal-body p-0">
         <form action="/admin/save_settings" method="POST">
             <div class="d-flex align-items-start">
-                <div class="nav flex-column nav-pills me-3 bg-light h-100 p-3" id="v-pills-tab" role="tablist" style="width: 200px; min-height: 400px;">
+                <div class="nav flex-column nav-pills me-3 bg-light h-100 p-3" role="tablist" style="width: 200px; min-height: 450px;">
                     <button class="nav-link active text-start mb-2" data-bs-toggle="pill" data-bs-target="#tab-email-config" type="button"><i class="fas fa-server me-2"></i> Email Config</button>
                     <button class="nav-link text-start mb-2" data-bs-toggle="pill" data-bs-target="#tab-templates" type="button"><i class="fas fa-envelope-open-text me-2"></i> Templates</button>
                 </div>
                 
-                <div class="tab-content w-100 p-4" id="v-pills-tabContent">
+                <div class="tab-content w-100 p-4">
                     
                     <div class="tab-pane fade show active" id="tab-email-config">
                         <h6 class="text-uppercase text-muted small fw-bold border-bottom pb-2 mb-3">SMTP / API Configuration</h6>
@@ -208,7 +221,7 @@
                             <div class="col-md-8">
                                 <label class="form-label small text-muted">SMTP Server / API Host</label>
                                 <input type="text" class="form-control" name="server" placeholder="smtp.hostinger.com" value="{{ smtp.server }}">
-                                <div class="form-text small">Use 'resend' or 'sendgrid' here to enable API mode.</div>
+                                <div class="form-text small">Use <b>resend</b> or <b>sendgrid</b> here to enable API mode.</div>
                             </div>
                             <div class="col-md-4">
                                 <label class="form-label small text-muted">Port</label>
@@ -222,24 +235,43 @@
                     </div>
 
                     <div class="tab-pane fade" id="tab-templates">
-                        <h6 class="text-uppercase text-muted small fw-bold border-bottom pb-2 mb-3">Action Templates</h6>
+                        <h6 class="text-uppercase text-muted small fw-bold border-bottom pb-2 mb-3">Email Templates</h6>
                         
                         <div class="mb-4">
-                            <label class="fw-bold small text-primary mb-1">1. Login OTP Email</label>
-                            <div class="input-group mb-2">
+                            <label class="fw-bold small text-success mb-1">1. New User Registration (Welcome)</label>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text small">Subject</span>
+                                <input type="text" class="form-control" name="tpl_welcome_subject" value="{{ templates.welcome_subject or 'Welcome to RD Algo' }}">
+                            </div>
+                            <textarea class="form-control font-monospace small" name="tpl_welcome_body" rows="4" placeholder="HTML Body">{{ templates.welcome_body or "<h3>Welcome!</h3><p>Username: {email}<br>Password: {password}</p><p>Expires: {expiry}</p><p><a href='{magic_link}'>Login Here</a></p>" }}</textarea>
+                            <div class="form-text small text-muted">Supported: {email}, {password}, {expiry}, {magic_link}</div>
+                        </div>
+
+                        <div class="mb-4">
+                            <label class="fw-bold small text-primary mb-1">2. Login OTP</label>
+                            <div class="input-group mb-1">
                                 <span class="input-group-text small">Subject</span>
                                 <input type="text" class="form-control" name="tpl_otp_subject" value="{{ templates.otp_subject or 'Login Verification OTP' }}">
                             </div>
-                            <textarea class="form-control font-monospace small" name="tpl_otp_body" rows="3" placeholder="HTML Content. Use {otp} as placeholder.">{{ templates.otp_body or '<h3>Your OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>' }}</textarea>
+                            <textarea class="form-control font-monospace small" name="tpl_otp_body" rows="2">{{ templates.otp_body or '<h3>Your OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>' }}</textarea>
                         </div>
 
-                        <div>
-                            <label class="fw-bold small text-danger mb-1">2. Forgot Password Email</label>
-                            <div class="input-group mb-2">
+                        <div class="mb-4">
+                            <label class="fw-bold small text-danger mb-1">3. Forgot Password</label>
+                            <div class="input-group mb-1">
                                 <span class="input-group-text small">Subject</span>
-                                <input type="text" class="form-control" name="tpl_reset_subject" value="{{ templates.reset_subject or 'Password Reset Request' }}">
+                                <input type="text" class="form-control" name="tpl_reset_subject" value="{{ templates.reset_subject or 'Reset Password Request' }}">
                             </div>
-                            <textarea class="form-control font-monospace small" name="tpl_reset_body" rows="3" placeholder="HTML Content. Use {otp} as placeholder.">{{ templates.reset_body or '<h3>Your Reset OTP is: <b>{otp}</b></h3><p>Valid for 15 minutes.</p>' }}</textarea>
+                            <textarea class="form-control font-monospace small" name="tpl_reset_body" rows="2">{{ templates.reset_body or '<h3>Your Reset OTP is: <b>{otp}</b></h3>' }}</textarea>
+                        </div>
+
+                        <div class="mb-2">
+                            <label class="fw-bold small text-warning mb-1">4. Expiry / Extension Notification</label>
+                            <div class="input-group mb-1">
+                                <span class="input-group-text small">Subject</span>
+                                <input type="text" class="form-control" name="tpl_expiry_subject" value="{{ templates.expiry_subject or 'Subscription Update' }}">
+                            </div>
+                            <textarea class="form-control font-monospace small" name="tpl_expiry_body" rows="2">{{ templates.expiry_body or '<h3>Account Updated</h3><p>Your new expiry date is: <b>{expiry}</b></p>' }}</textarea>
                         </div>
                     </div>
                 </div>
@@ -247,7 +279,7 @@
             
             <div class="modal-footer bg-light border-top-0">
                 <button type="button" class="btn btn-light" data-bs-dismiss="modal">Close</button>
-                <button type="submit" class="btn btn-primary fw-bold px-4">Save All Settings</button>
+                <button type="submit" class="btn btn-primary fw-bold px-4">Save Settings</button>
             </div>
         </form>
       </div>
@@ -298,9 +330,6 @@
                 <i class="fas fa-copy"></i> Copy
             </button>
         </div>
-        <div class="alert alert-light d-inline-block py-1 px-3 small mb-0 border">
-            <i class="fas fa-info-circle me-1"></i> This link bypasses the password check.
-        </div>
       </div>
     </div>
   </div>
@@ -339,19 +368,13 @@
     function generateLink(uid) {
         document.body.style.cursor = 'wait';
         fetch('/admin/generate_link/' + uid)
-        .then(response => {
-            if (!response.ok) throw new Error("Permission Denied");
-            return response.json();
-        })
-        .then(data => {
-            document.getElementById('magicLinkInput').value = data.link;
+        .then(r => r.json())
+        .then(d => {
+            document.getElementById('magicLinkInput').value = d.link;
             linkModal.show();
             document.body.style.cursor = 'default';
         })
-        .catch(err => {
-            alert('Error generating link: ' + err);
-            document.body.style.cursor = 'default';
-        });
+        .catch(e => alert(e));
     }
 
     function openPasswordModal(uid, username) {
@@ -371,36 +394,19 @@
         const copyText = document.getElementById("magicLinkInput");
         copyText.select();
         copyText.setSelectionRange(0, 99999);
-        navigator.clipboard.writeText(copyText.value).then(() => {
-            const btn = document.querySelector('#linkModal .btn-primary');
-            const originalHtml = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
-            btn.classList.remove('btn-primary');
-            btn.classList.add('btn-success');
-            setTimeout(() => {
-                btn.innerHTML = originalHtml;
-                btn.classList.add('btn-primary');
-                btn.classList.remove('btn-success');
-            }, 2000);
-        });
+        navigator.clipboard.writeText(copyText.value);
+        alert("Copied!");
     }
 
     function searchUsers() {
-      var input, filter, table, tr, td, i, txtValue;
-      input = document.getElementById("userSearchInput");
-      filter = input.value.toUpperCase();
-      table = document.getElementById("userTable");
-      tr = table.getElementsByTagName("tr");
-      for (i = 0; i < tr.length; i++) {
-        td = tr[i].getElementsByTagName("td")[1];
+      var input = document.getElementById("userSearchInput");
+      var filter = input.value.toUpperCase();
+      var tr = document.getElementById("userTable").getElementsByTagName("tr");
+      for (var i = 0; i < tr.length; i++) {
+        var td = tr[i].getElementsByTagName("td")[1];
         if (td) {
-          txtValue = td.textContent || td.innerText;
-          if (txtValue.toUpperCase().indexOf(filter) > -1) {
-            tr[i].style.display = "";
-          } else {
-            tr[i].style.display = "none";
-          }
-        }       
+          tr[i].style.display = (td.textContent || td.innerText).toUpperCase().indexOf(filter) > -1 ? "" : "none";
+        }
       }
     }
 </script>
