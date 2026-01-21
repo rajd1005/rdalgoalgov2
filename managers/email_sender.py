@@ -11,6 +11,7 @@ from database import db, SystemConfig
 orig_getaddrinfo = socket.getaddrinfo
 
 def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    # Forces IPv4 to fix Docker/IPv6 networking issues
     return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
 def get_smtp_config():
@@ -23,33 +24,41 @@ def get_smtp_config():
         print(f"Error fetching SMTP config: {e}")
     return None
 
-def attempt_send(server_host, port, user, password, msg, timeout=10):
+def attempt_send(server_host, port, user, password, msg, timeout=20):
     """
     Internal helper to try sending email on a specific port.
-    Uses strict socket timeouts to prevent Gunicorn Worker Death.
     """
     server = None
     try:
-        print(f"📧 [DEBUG] Attempting Connection: {server_host}:{port} (Timeout: {timeout}s)...")
+        # 1. Resolve IP first to debug DNS issues
+        try:
+            ip = socket.gethostbyname(server_host)
+            print(f"📧 [DEBUG] Resolved {server_host} -> {ip}")
+        except:
+            print(f"⚠️ [WARN] Could not resolve {server_host}")
+
+        print(f"📧 [DEBUG] Connecting to {server_host}:{port} (Timeout: {timeout}s)...")
         
-        # Create Secure Context
+        # 2. Create Secure Context
         context = ssl.create_default_context()
         
-        # Enforce Global Socket Timeout (Fixes DNS hanging issues)
+        # 3. Enforce Socket Timeout
         socket.setdefaulttimeout(timeout)
         
+        # 4. Connect based on Port
         if int(port) == 465:
             server = smtplib.SMTP_SSL(server_host, port, context=context, timeout=timeout)
         else:
             server = smtplib.SMTP(server_host, port, timeout=timeout)
-            # server.set_debuglevel(1) 
+            # server.set_debuglevel(1) # Enable for verbose protocol logs
             server.ehlo()
             try:
                 server.starttls(context=context)
                 server.ehlo()
             except Exception as tls_err:
-                print(f"⚠️ [WARN] STARTTLS skipped/failed on {port}: {tls_err}")
+                print(f"⚠️ [WARN] STARTTLS skipped on {port}: {tls_err}")
 
+        # 5. Login & Send
         server.login(user, password)
         server.send_message(msg)
         server.quit()
@@ -65,9 +74,8 @@ def attempt_send(server_host, port, user, password, msg, timeout=10):
 
 def send_email(to_email, subject, body_html):
     """
-    Sends email with Auto-Fallback logic and strict timeout controls.
+    Sends email with Smart Fallback: User Port -> 465 -> 587 -> 2525.
     """
-    # 1. Reset Timeout to Default (to avoid affecting other app parts)
     original_timeout = socket.getdefaulttimeout()
     
     try:
@@ -75,7 +83,6 @@ def send_email(to_email, subject, body_html):
         if not config:
             return {"status": "error", "message": "SMTP Config missing in Admin Panel."}
 
-        # Extract Settings
         smtp_server = config.get('server')
         user_email = config.get('email')
         user_pass = config.get('password')
@@ -98,34 +105,33 @@ def send_email(to_email, subject, body_html):
         # --- APPLY IPv4 PATCH ---
         socket.getaddrinfo = getaddrinfo_ipv4
 
-        # ATTEMPT 1: User Configured Port
-        start_time = time.time()
-        success, error = attempt_send(smtp_server, primary_port, user_email, user_pass, msg)
-        
-        if success:
-            return {"status": "success"}
-        
-        # Check elapsed time. If first attempt took > 15s, don't try fallback (save the worker).
-        elapsed = time.time() - start_time
-        if elapsed > 15:
-             return {"status": "error", "message": f"Connection Timed Out on {primary_port}. Aborted Fallback to prevent crash."}
+        # DEFINE PORTS TO TRY
+        # Priority: Configured Port -> 465 (SSL) -> 587 (TLS) -> 2525 (Alternative)
+        ports_to_try = []
+        if primary_port not in ports_to_try: ports_to_try.append(primary_port)
+        if 465 not in ports_to_try: ports_to_try.append(465)
+        if 587 not in ports_to_try: ports_to_try.append(587)
+        if 2525 not in ports_to_try: ports_to_try.append(2525)
 
-        # ATTEMPT 2: Fallback Port
-        fallback_port = 587 if primary_port == 465 else 465
-        print(f"🔄 [RETRY] Switching to Fallback Port: {fallback_port}...")
-        
-        success_fb, error_fb = attempt_send(smtp_server, fallback_port, user_email, user_pass, msg)
-        
-        if success_fb:
-            print(f"✅ [SUCCESS] Email Sent via Fallback Port {fallback_port}.")
-            return {"status": "success"}
-        
-        return {"status": "error", "message": f"All ports failed (Firewall?). Primary: {error} | Fallback: {error_fb}"}
+        last_error = ""
+
+        for port in ports_to_try:
+            print(f"🔄 [INFO] Trying SMTP Port: {port}...")
+            success, error = attempt_send(smtp_server, port, user_email, user_pass, msg)
+            if success:
+                print(f"✅ [SUCCESS] Email Sent via Port {port}!")
+                return {"status": "success"}
+            last_error = error
+            # If authentication failed, don't try other ports (password is wrong)
+            if "Authentication" in error or "Auth" in error:
+                return {"status": "error", "message": "Authentication Failed. Check Email/Password."}
+
+        return {"status": "error", "message": f"All ports blocked by Firewall. Last Error: {last_error}"}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
         
     finally:
-        # CRITICAL: Restore original socket behavior
+        # Restore Original Socket Settings
         socket.getaddrinfo = orig_getaddrinfo
         socket.setdefaulttimeout(original_timeout)
