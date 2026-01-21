@@ -9,27 +9,56 @@
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
     
     <style>
-        /* Admin Specific Overrides */
+        /* LIGHT THEME OVERRIDES */
         body {
-            background-color: #121212;
-            color: #e0e0e0;
+            background-color: #f4f6f9;
+            color: #333;
+        }
+        .navbar {
+            background-color: #ffffff !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        .navbar-brand, .nav-link, .navbar-text {
+            color: #333 !important;
         }
         .card {
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            background-color: #ffffff;
+            border: 1px solid #e0e0e0;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            color: #333;
         }
-        .table-dark {
-            background-color: #1e1e1e;
-            --bs-table-bg: #1e1e1e;
+        .card-header {
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #e0e0e0;
+            color: #555;
+            font-weight: 600;
+        }
+        .table {
+            color: #333;
+        }
+        .table thead th {
+            background-color: #f8f9fa;
+            color: #666;
+            border-bottom: 2px solid #dee2e6;
+        }
+        .form-control, .form-select {
+            background-color: #fff;
+            border: 1px solid #ced4da;
+            color: #495057;
+        }
+        .form-control:focus {
+            border-color: #80bdff;
+            box-shadow: 0 0 0 0.2rem rgba(0,123,255,.25);
         }
     </style>
 </head>
 <body>
 
-<nav class="navbar navbar-expand-lg navbar-dark bg-secondary mb-4 shadow-sm">
+<nav class="navbar navbar-expand-lg navbar-light mb-4">
   <div class="container">
-    <a class="navbar-brand fw-bold" href="#"><i class="fas fa-shield-alt me-2"></i>RD Algo Admin</a>
+    <a class="navbar-brand fw-bold text-primary" href="#"><i class="fas fa-shield-alt me-2"></i>RD Algo Admin</a>
     <div class="d-flex gap-2">
-        <a href="/" class="btn btn-outline-light btn-sm"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
+        <a href="/" class="btn btn-outline-secondary btn-sm"><i class="fas fa-tachometer-alt me-1"></i> Dashboard</a>
         <a href="/logout" class="btn btn-danger btn-sm"><i class="fas fa-sign-out-alt me-1"></i> Logout</a>
     </div>
   </div>
@@ -50,23 +79,23 @@
 
     <div class="row">
         <div class="col-lg-4 mb-4">
-            <div class="card bg-dark text-white border-secondary h-100">
-                <div class="card-header border-secondary fw-bold text-uppercase text-muted small">
+            <div class="card h-100">
+                <div class="card-header text-uppercase small">
                     <i class="fas fa-user-plus me-1"></i> Create New User
                 </div>
                 <div class="card-body">
                     <form action="/admin/add_user" method="POST">
                         <div class="mb-3">
                             <label class="form-label small text-muted">Username</label>
-                            <input type="text" class="form-control bg-secondary text-white border-0" name="username" placeholder="e.g. trader01" required>
+                            <input type="text" class="form-control" name="username" placeholder="e.g. trader01" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small text-muted">Password</label>
-                            <input type="text" class="form-control bg-secondary text-white border-0" name="password" placeholder="Initial Password" required>
+                            <input type="text" class="form-control" name="password" placeholder="Initial Password" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small text-muted">Subscription Plan</label>
-                            <select class="form-select bg-secondary text-white border-0" name="days">
+                            <select class="form-select" name="days">
                                 <option value="7">7 Days (Trial)</option>
                                 <option value="30" selected>30 Days (1 Month)</option>
                                 <option value="90">90 Days (3 Months)</option>
@@ -76,7 +105,7 @@
                             </select>
                         </div>
                         <div class="mb-4 form-check">
-                            <input type="checkbox" class="form-check-input bg-secondary border-secondary" name="is_trial" id="isTrial">
+                            <input type="checkbox" class="form-check-input" name="is_trial" id="isTrial">
                             <label class="form-check-label small" for="isTrial">Mark as Trial Account</label>
                         </div>
                         <div class="d-grid">
@@ -88,15 +117,15 @@
         </div>
 
         <div class="col-lg-8">
-            <div class="card bg-dark text-white border-secondary shadow-lg">
-                <div class="card-header border-secondary d-flex justify-content-between align-items-center">
+            <div class="card shadow-sm">
+                <div class="card-header d-flex justify-content-between align-items-center bg-white">
                     <span class="fw-bold text-uppercase text-muted small"><i class="fas fa-users me-1"></i> User Management</span>
                     <span class="badge bg-primary rounded-pill">{{ users|length }} Users</span>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-dark table-hover mb-0 align-middle">
-                            <thead class="text-muted small text-uppercase">
+                        <table class="table table-hover mb-0 align-middle">
+                            <thead class="bg-light text-uppercase small text-muted">
                                 <tr>
                                     <th class="ps-3">ID</th>
                                     <th>User</th>
@@ -110,30 +139,33 @@
                                 {% for u in users %}
                                 <tr>
                                     <td class="ps-3 text-muted">#{{ u.id }}</td>
-                                    <td class="fw-bold text-white">{{ u.username }}</td>
+                                    <td class="fw-bold text-dark">{{ u.username }}</td>
                                     <td>
                                         {% if u.is_admin %}
-                                            <span class="badge bg-danger bg-opacity-75">ADMIN</span>
+                                            <span class="badge bg-danger bg-opacity-10 text-danger">ADMIN</span>
                                         {% else %}
-                                            <span class="badge bg-secondary bg-opacity-50">TRADER</span>
+                                            <span class="badge bg-secondary bg-opacity-10 text-secondary">TRADER</span>
                                         {% endif %}
                                     </td>
                                     <td>
                                         {% if u.is_active_sub %}
-                                            <span class="badge bg-success bg-opacity-75"><i class="fas fa-check-circle me-1"></i>Active</span>
+                                            <span class="badge bg-success bg-opacity-10 text-success"><i class="fas fa-check-circle me-1"></i>Active</span>
                                         {% else %}
-                                            <span class="badge bg-warning text-dark bg-opacity-75"><i class="fas fa-clock me-1"></i>Expired</span>
+                                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="fas fa-clock me-1"></i>Expired</span>
                                         {% endif %}
                                         
                                         {% if u.is_trial %}
-                                            <span class="badge bg-info text-dark bg-opacity-75 ms-1">Trial</span>
+                                            <span class="badge bg-info bg-opacity-10 text-info ms-1">Trial</span>
                                         {% endif %}
                                     </td>
                                     <td class="small text-muted font-monospace">
                                         {{ u.subscription_end.strftime('%Y-%m-%d') if u.subscription_end else 'N/A' }}
                                     </td>
                                     <td class="text-end pe-3">
-                                        <button class="btn btn-sm btn-outline-warning" onclick="generateLink({{ u.id }})" title="Generate Magic Login Link">
+                                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="openPasswordModal({{ u.id }}, '{{ u.username }}')" title="Change Password">
+                                            <i class="fas fa-key"></i>
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" onclick="generateLink({{ u.id }})" title="Generate Magic Login Link">
                                             <i class="fas fa-link"></i> Link
                                         </button>
                                     </td>
@@ -150,22 +182,22 @@
 
 <div class="modal fade" id="linkModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
-    <div class="modal-content bg-dark text-white border-secondary shadow-lg">
-      <div class="modal-header border-secondary">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-bottom-0">
         <h5 class="modal-title"><i class="fas fa-magic text-warning me-2"></i>Magic Login Link</h5>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body text-center">
         <p class="text-muted mb-3">Share this link with the user for instant login access:</p>
         
         <div class="input-group mb-3">
-            <input type="text" class="form-control bg-secondary text-white border-0 font-monospace text-center" id="magicLinkInput" readonly style="font-size: 0.9rem;">
-            <button class="btn btn-warning text-dark fw-bold" onclick="copyLink()">
+            <input type="text" class="form-control bg-light border text-center font-monospace" id="magicLinkInput" readonly style="font-size: 0.9rem;">
+            <button class="btn btn-primary fw-bold" onclick="copyLink()">
                 <i class="fas fa-copy"></i> Copy
             </button>
         </div>
         
-        <div class="alert alert-secondary d-inline-block py-1 px-3 small mb-0 border-0">
+        <div class="alert alert-light d-inline-block py-1 px-3 small mb-0 border">
             <i class="fas fa-info-circle me-1"></i> This link bypasses the password check.
         </div>
       </div>
@@ -173,12 +205,37 @@
   </div>
 </div>
 
+<div class="modal fade" id="passwordModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-bottom-0">
+        <h5 class="modal-title"><i class="fas fa-key text-primary me-2"></i>Reset Password</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form action="/admin/reset_password" method="POST">
+          <div class="modal-body">
+            <p class="text-muted mb-3">Set a new password for user: <strong id="resetUsername" class="text-dark"></strong></p>
+            <input type="hidden" name="user_id" id="resetUserId">
+            
+            <div class="mb-3">
+                <input type="text" class="form-control form-control-lg text-center" name="new_password" placeholder="Enter New Password" required autocomplete="off">
+            </div>
+          </div>
+          <div class="modal-footer border-top-0 justify-content-center pb-4">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-primary px-4 fw-bold">Update Password</button>
+          </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
     const linkModal = new bootstrap.Modal(document.getElementById('linkModal'));
+    const passwordModal = new bootstrap.Modal(document.getElementById('passwordModal'));
     
     function generateLink(uid) {
-        // Show loading state
         document.body.style.cursor = 'wait';
         
         fetch('/admin/generate_link/' + uid)
@@ -197,21 +254,27 @@
         });
     }
 
+    function openPasswordModal(uid, username) {
+        document.getElementById('resetUserId').value = uid;
+        document.getElementById('resetUsername').textContent = username;
+        passwordModal.show();
+    }
+
     function copyLink() {
         const copyText = document.getElementById("magicLinkInput");
         copyText.select();
-        copyText.setSelectionRange(0, 99999); // Mobile compatibility
+        copyText.setSelectionRange(0, 99999);
         
         navigator.clipboard.writeText(copyText.value).then(() => {
-            const btn = document.querySelector('#linkModal .btn-warning');
+            const btn = document.querySelector('#linkModal .btn-primary');
             const originalHtml = btn.innerHTML;
             btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
-            btn.classList.remove('btn-warning', 'text-dark');
+            btn.classList.remove('btn-primary');
             btn.classList.add('btn-success');
             
             setTimeout(() => {
                 btn.innerHTML = originalHtml;
-                btn.classList.add('btn-warning', 'text-dark');
+                btn.classList.add('btn-primary');
                 btn.classList.remove('btn-success');
             }, 2000);
         });
