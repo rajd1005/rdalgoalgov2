@@ -215,6 +215,24 @@ def generate_link(uid):
     link = url_for('magic_login', token=token, uid=uid, _external=True)
     return jsonify({"link": link})
 
+@app.route('/admin/reset_password', methods=['POST'])
+@login_required
+def admin_reset_password():
+    if not current_user.is_admin: return "Access Denied", 403
+    
+    user_id = request.form.get('user_id')
+    new_password = request.form.get('new_password')
+    
+    user = User.query.get(user_id)
+    if user:
+        user.password = generate_password_hash(new_password)
+        db.session.commit()
+        flash(f"✅ Password updated for {user.username}")
+    else:
+        flash("❌ User not found")
+        
+    return redirect('/admin')
+
 @app.route('/')
 @login_required
 def home():
