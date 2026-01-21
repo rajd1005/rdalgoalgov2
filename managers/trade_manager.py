@@ -6,20 +6,17 @@ from managers.common import get_time_str, log_event
 from managers import broker_ops
 from managers.telegram_manager import bot as telegram_bot
 
-def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, target_channels=None, risk_ratios=None):
+def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom_targets, order_type, limit_price=0, target_controls=None, trailing_sl=0, sl_to_entry=0, exit_multiplier=1, target_channels=None, risk_ratios=None, user_id=None):
     """
-    Creates a new trade (Live or Paper). 
+    Creates a new trade (Live or Paper) for a specific user.
     Handles initial broker orders (if Live), calculates targets, and saves the trade to the DB.
-    Accepts 'target_channels' list (e.g., ['main', 'vip']) to filter notifications.
-    Now accepts 'risk_ratios' (list of 3 floats) to override default [0.5, 1, 2] target calculation.
-    INCLUDES DEBUG LOGGING.
     """
-    print(f"\n[DEBUG] --- START CREATE TRADE ({mode}) ---")
+    print(f"\n[DEBUG] --- START CREATE TRADE ({mode}) User: {user_id} ---")
     print(f"[DEBUG] Symbol: {specific_symbol}, Qty: {quantity}")
     
     try:
         with TRADE_LOCK:
-            trades = load_trades()
+            trades = load_trades(user_id=user_id)
             current_ts = int(time.time())
             
             # --- FIX: ROBUST DUPLICATE CHECK ---
@@ -108,8 +105,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                     return {"status": "error", "message": f"Broker Rejected: {e}"}
 
             # Calculate Targets
-            # Use custom targets if provided (valid T1 > 0), else calculate ratio-based defaults
-            # [UPDATED] Use dynamic risk ratios if provided, otherwise default to [0.5, 1.0, 2.0]
+            # Use dynamic risk ratios if provided, otherwise default to [0.5, 1.0, 2.0]
             use_ratios = risk_ratios if risk_ratios else [0.5, 1.0, 2.0]
             targets = custom_targets if len(custom_targets) == 3 and custom_targets[0] > 0 else [entry_price + (sl_points * x) for x in use_ratios]
             
@@ -163,7 +159,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             logs.insert(0, f"[{get_time_str()}] Trade Added. Status: {status}")
             
             record = {
-                "id": new_id, # <--- USE THE UNIQUE ID
+                "id": new_id,
                 "entry_time": get_time_str(), 
                 "symbol": specific_symbol, 
                 "exchange": exchange,
@@ -186,7 +182,8 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
                 "made_high": entry_price, 
                 "current_ltp": current_ltp, 
                 "trigger_dir": trigger_dir, 
-                "logs": logs
+                "logs": logs,
+                "user_id": user_id # Stamp User ID
             }
             
             # --- SEND TELEGRAM NOTIFICATION ---
@@ -201,7 +198,7 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
             print(f"[DEBUG] Appending trade to list. Previous count: {len(trades)}")
             trades.append(record)
             print(f"[DEBUG] Saving list. New count: {len(trades)}")
-            save_trades(trades)
+            save_trades(trades, user_id=user_id)
             print(f"[DEBUG] Trade Creation Successful.")
             return {"status": "success", "trade": record}
             
@@ -209,13 +206,13 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
         print(f"[DEBUG] EXCEPTION in Create Trade: {e}")
         return {"status": "error", "message": str(e)}
 
-def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_price=None, target_controls=None, sl_to_entry=0, exit_multiplier=1):
+def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_price=None, target_controls=None, sl_to_entry=0, exit_multiplier=1, user_id=None):
     """
     Updates the protection parameters (SL, Targets, Trailing) for an existing trade.
     Also syncs the changes to the broker if the trade is LIVE.
     """
     with TRADE_LOCK:
-        trades = load_trades()
+        trades = load_trades(user_id=user_id)
         updated = False
         
         for t in trades:
@@ -297,16 +294,16 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
                 break
                 
         if updated:
-            save_trades(trades)
+            save_trades(trades, user_id=user_id)
             return True
         return False
 
-def manage_trade_position(kite, trade_id, action, lot_size, lots_count):
+def manage_trade_position(kite, trade_id, action, lot_size, lots_count, user_id=None):
     """
     Manages position sizing: Adding lots (Averaging) or Partial Exits.
     """
     with TRADE_LOCK:
-        trades = load_trades()
+        trades = load_trades(user_id=user_id)
         updated = False
         
         for t in trades:
@@ -351,7 +348,7 @@ def manage_trade_position(kite, trade_id, action, lot_size, lots_count):
                     if t['quantity'] > qty_delta:
                         # 1. Reduce Broker SL Qty First
                         if t['mode'] == 'LIVE': 
-                            broker_ops.manage_broker_sl(kite, t, qty_delta)
+                            broker_ops.manage_broker_sl(kite, t, qty_delta, user_id=user_id)
                         
                         t['quantity'] -= qty_delta
                         log_event(t, f"Partial Exit {qty_delta} Qty @ {ltp}")
@@ -377,17 +374,17 @@ def manage_trade_position(kite, trade_id, action, lot_size, lots_count):
                 break
                 
         if updated: 
-            save_trades(trades)
+            save_trades(trades, user_id=user_id)
         return True
     return False
 
-def promote_to_live(kite, trade_id):
+def promote_to_live(kite, trade_id, user_id=None):
     """
     Promotes a PAPER trade to LIVE execution.
     Places a Market Buy order and a Stop Loss order immediately.
     """
     with TRADE_LOCK:
-        trades = load_trades()
+        trades = load_trades(user_id=user_id)
         for t in trades:
             if t['id'] == int(trade_id) and t['mode'] == "PAPER":
                 try:
@@ -426,19 +423,19 @@ def promote_to_live(kite, trade_id):
                     # Notify Promotion
                     telegram_bot.notify_trade_event(t, "UPDATE", "Promoted to LIVE")
                     
-                    save_trades(trades)
+                    save_trades(trades, user_id=user_id)
                     return True
                 except: 
                     return False
         return False
 
-def close_trade_manual(kite, trade_id):
+def close_trade_manual(kite, trade_id, user_id=None):
     """
     Manually closes a trade via the UI.
     Squares off position (if Live), cancels SL, and moves to history.
     """
     with TRADE_LOCK:
-        trades = load_trades()
+        trades = load_trades(user_id=user_id)
         active_list = []
         found = False
         
@@ -464,7 +461,7 @@ def close_trade_manual(kite, trade_id):
                 
                 # Handle Live Execution
                 if t['mode'] == "LIVE" and t['status'] != "PENDING":
-                    broker_ops.manage_broker_sl(kite, t, cancel_completely=True)
+                    broker_ops.manage_broker_sl(kite, t, cancel_completely=True, user_id=user_id)
                     try: 
                         broker_ops.place_order(
                             kite, 
@@ -478,10 +475,10 @@ def close_trade_manual(kite, trade_id):
                         )
                     except: pass
                 
-                broker_ops.move_to_history(t, exit_reason, exit_p)
+                broker_ops.move_to_history(t, exit_reason, exit_p, user_id=user_id)
             else:
                 active_list.append(t)
         
         if found: 
-            save_trades(active_list)
+            save_trades(active_list, user_id=user_id)
         return found
