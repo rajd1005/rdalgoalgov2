@@ -20,7 +20,8 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
             return {"status": "error", "message": f"Date Parse Error: {e}"}
 
         try:
-            s_cfg = settings.load_settings()
+            # Load User-Specific Settings for Exit Time
+            s_cfg = settings.load_settings(user_id=user_id)
             exit_time_conf = s_cfg['modes']['PAPER'].get('universal_exit_time', "15:25")
             exit_H, exit_M = map(int, exit_time_conf.split(':'))
         except: exit_H, exit_M = 15, 25
