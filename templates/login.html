@@ -9,38 +9,45 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     
     <style>
+        /* LIGHT THEME FOR LOGIN PAGE */
         body {
-            background-color: #121212;
-            color: #e0e0e0;
+            background-color: #f0f2f5;
+            color: #333;
             height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            margin: 0;
         }
         .login-card {
             width: 100%;
             max-width: 400px;
-            background-color: #1e1e1e;
-            border: 1px solid #333;
+            background-color: #ffffff;
+            border: 1px solid #e1e4e8;
             border-radius: 12px;
-            padding: 2rem;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            padding: 2.5rem;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
         }
         .form-control {
-            background-color: #2d2d2d;
-            border: 1px solid #444;
-            color: #fff;
+            background-color: #fff;
+            border: 1px solid #ced4da;
+            color: #333;
+            padding: 0.75rem;
         }
         .form-control:focus {
-            background-color: #333;
+            background-color: #fff;
             border-color: #0d6efd;
-            color: #fff;
-            box-shadow: none;
+            box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
         }
         .input-group-text {
-            background-color: #2d2d2d;
-            border: 1px solid #444;
-            color: #888;
+            background-color: #f8f9fa;
+            border: 1px solid #ced4da;
+            color: #6c757d;
+        }
+        .brand-icon {
+            color: #0d6efd;
+            font-size: 2rem;
+            margin-bottom: 1rem;
         }
     </style>
 </head>
@@ -48,14 +55,15 @@
 
 <div class="login-card">
     <div class="text-center mb-4">
-        <h2 class="fw-bold text-primary"><i class="fas fa-chart-line"></i> RD Algo</h2>
-        <p class="text-muted">Multi-User Trading Terminal</p>
+        <i class="fas fa-chart-line brand-icon"></i>
+        <h3 class="fw-bold text-dark">RD Algo</h3>
+        <p class="text-muted small">Multi-User Trading Terminal</p>
     </div>
 
     {% with messages = get_flashed_messages() %}
         {% if messages %}
             {% for message in messages %}
-            <div class="alert alert-danger py-2 text-center border-0" role="alert">
+            <div class="alert alert-danger py-2 text-center border-0 small shadow-sm" role="alert">
                 <i class="fas fa-exclamation-circle me-2"></i>{{ message }}
             </div>
             {% endfor %}
@@ -80,13 +88,13 @@
         </div>
 
         <div class="d-grid">
-            <button type="submit" class="btn btn-primary btn-lg fw-bold">
+            <button type="submit" class="btn btn-primary btn-lg fw-bold shadow-sm">
                 Login <i class="fas fa-sign-in-alt ms-2"></i>
             </button>
         </div>
     </form>
 
-    <div class="text-center mt-4">
+    <div class="text-center mt-4 border-top pt-3">
         <p class="text-muted small mb-0">&copy; RD Algo Systems</p>
     </div>
 </div>
