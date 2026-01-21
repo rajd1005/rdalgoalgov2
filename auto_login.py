@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    V5 Update: Added JS Force-Click and TOTP Refill logic to fix stuck loops.
+    V6 Update: Universal Button Clicker to handle Authorize/Continue/Submit screens robustly.
     """
     driver = None
     
@@ -110,69 +110,58 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                 logger.error(f"TOTP Step Error: {e}")
                 return None, f"TOTP Error: {str(e)}"
 
-        # --- STEP E: SMART POLLING LOOP (Redirect / Authorize / Error / Retry) ---
+        # --- STEP E: SMART POLLING LOOP (Universal Clicker) ---
         logger.info("Entering Smart Polling Loop (Max 60s)...")
         
         start_time = time.time()
         max_duration = 60 
         
         while time.time() - start_time < max_duration:
-            current_url = driver.current_url
-            page_source = driver.page_source
-            
-            # 1. SUCCESS: Check for Redirect Token
-            if "request_token=" in current_url:
-                logger.info("✅ Redirect URL Captured!")
-                from urllib.parse import urlparse, parse_qs
-                parsed = urlparse(current_url)
-                request_token = parse_qs(parsed.query).get('request_token', [None])[0]
-                return request_token, None
-
-            # 2. FAILURE: Check for Errors
-            if "Invalid TOTP" in page_source or "Incorrect password" in page_source:
-                error_msg = "Login Failed: Invalid TOTP or Password shown on screen."
-                logger.error(f"❌ {error_msg}")
-                return None, error_msg
-
-            # 3. ACTION: Check for "Authorize" Button
-            if "Authorize" in page_source:
-                try:
-                    auth_btn = driver.find_element(By.XPATH, "//button[contains(@class, 'button-orange') or contains(text(), 'Authorize')]")
-                    driver.execute_script("arguments[0].click();", auth_btn) # Force Click
-                    logger.info("🔘 'Authorize' Button Clicked.")
-                    time.sleep(3) 
-                    continue
-                except Exception:
-                    pass 
-
-            # 4. ROBUST RETRY: Check if stuck on TOTP Page
             try:
-                # Is the input field still visible?
-                totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
+                current_url = driver.current_url
                 
-                if totp_inputs and totp_inputs[0].is_displayed():
-                    # Is it empty? (Page might have cleared it)
-                    curr_val = totp_inputs[0].get_attribute("value")
-                    
-                    if not curr_val:
-                        logger.warning("⚠️ TOTP field found empty. Re-filling...")
-                        refill_totp = pyotp.TOTP(TOTP_SECRET)
-                        totp_inputs[0].send_keys(refill_totp.now())
-                        time.sleep(0.5)
-                    
-                    # Try clicking submit again using JS (Force Click)
-                    submit_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit']")
-                    if submit_btns and submit_btns[0].is_displayed():
-                        btn_text = submit_btns[0].text
-                        logger.info(f"🔄 Force-Clicking '{btn_text}' button...")
-                        driver.execute_script("arguments[0].click();", submit_btns[0])
-                        
-                        # Wait longer between retries to avoid spamming
-                        time.sleep(3) 
-            except Exception as e:
-                pass
+                # 1. SUCCESS: Check for Redirect Token
+                if "request_token=" in current_url:
+                    logger.info("✅ Redirect URL Captured!")
+                    from urllib.parse import urlparse, parse_qs
+                    parsed = urlparse(current_url)
+                    request_token = parse_qs(parsed.query).get('request_token', [None])[0]
+                    return request_token, None
 
-            time.sleep(1) # Poll interval
+                # 2. FAILURE: Check for Page Errors
+                page_source = driver.page_source
+                if "Invalid TOTP" in page_source or "Incorrect password" in page_source:
+                    error_msg = "Login Failed: Invalid TOTP or Password detected."
+                    logger.error(f"❌ {error_msg}")
+                    return None, error_msg
+
+                # 3. ACTION: Universal Button Clicker
+                # Finds ANY visible 'submit' button or 'orange' button (Zerodha standard)
+                buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.button-orange")
+                
+                clicked = False
+                for btn in buttons:
+                    if btn.is_displayed():
+                        text = btn.text.lower()
+                        # Click if it looks like a progress button
+                        if any(x in text for x in ['continue', 'authorize', 'allow', 'approve', 'login']):
+                            logger.info(f"🔘 Stuck State Detected. Force-Clicking button: '{btn.text}'")
+                            driver.execute_script("arguments[0].click();", btn)
+                            clicked = True
+                            break # Click one at a time
+                
+                if clicked:
+                    time.sleep(3) # Wait for page load
+                    continue
+
+                # 4. DIAGNOSTIC: Log page title if really stuck
+                if time.time() - start_time > 45:
+                    logger.warning(f"Still stuck. Page Title: {driver.title}")
+
+            except Exception as e:
+                pass # Ignore transient errors during page loads
+
+            time.sleep(1.5) # Poll interval
 
         # Timeout
         logger.error(f"Timeout. Final URL: {driver.current_url}")
