@@ -31,13 +31,25 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
     
-    # --- [CRITICAL FIX] AUTO-UPDATE DATABASE SCHEMA ---
+    # --- [CRITICAL DATABASE MIGRATIONS] ---
     try:
+        # 1. Fix Password Column Length (Legacy Support)
         db.session.execute(text('ALTER TABLE "user" ALTER COLUMN password TYPE VARCHAR(255)'))
         db.session.commit()
+    except:
+        db.session.rollback()
+
+    try:
+        # 2. Fix Missing user_id in AppSetting (The Error You Are Seeing)
+        # This checks if the column is missing and adds it if necessary
+        db.session.execute(text('ALTER TABLE app_setting ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
+        db.session.commit()
+        print("✅ Database Patched: 'user_id' column added to 'app_setting'")
     except Exception as e:
         db.session.rollback()
-    # --------------------------------------------------
+        # Print only if it's a real error, ignore if it's just "already exists" on non-Postgres DBs
+        print(f"⚠️ DB Patch Note: {e}")
+    # --------------------------------------
 
 # Initialize Login Manager
 login_manager = LoginManager()
