@@ -65,6 +65,8 @@ class AppSetting(db.Model):
 
 class ActiveTrade(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    # Linked to User ID for Multi-User Isolation (Critical Fix)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True)
     data = db.Column(db.Text, nullable=False) 
 
 class TradeHistory(db.Model):
