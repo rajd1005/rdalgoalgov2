@@ -86,12 +86,18 @@
                 <div class="card-body">
                     <form action="/admin/add_user" method="POST">
                         <div class="mb-3">
-                            <label class="form-label small text-muted">Username</label>
-                            <input type="text" class="form-control" name="username" placeholder="e.g. trader01" required>
+                            <label class="form-label small text-muted">Email ID (Login Username)</label>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-envelope"></i></span>
+                                <input type="email" class="form-control" name="email" placeholder="user@example.com" required>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small text-muted">Password</label>
-                            <input type="text" class="form-control" name="password" placeholder="Initial Password" required>
+                            <div class="input-group">
+                                <span class="input-group-text"><i class="fas fa-lock"></i></span>
+                                <input type="text" class="form-control" name="password" placeholder="Initial Password" required>
+                            </div>
                         </div>
                         <div class="mb-3">
                             <label class="form-label small text-muted">Subscription Plan</label>
@@ -120,16 +126,22 @@
             <div class="card shadow-sm">
                 <div class="card-header d-flex justify-content-between align-items-center bg-white">
                     <span class="fw-bold text-uppercase text-muted small"><i class="fas fa-users me-1"></i> User Management</span>
-                    <span class="badge bg-primary rounded-pill">{{ users|length }} Users</span>
+                    
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="input-group input-group-sm" style="width: 250px;">
+                            <span class="input-group-text bg-white border-end-0"><i class="fas fa-search text-muted"></i></span>
+                            <input type="text" class="form-control border-start-0 ps-0" id="userSearchInput" onkeyup="searchUsers()" placeholder="Search by Email...">
+                        </div>
+                        <span class="badge bg-primary rounded-pill">{{ users|length }} Users</span>
+                    </div>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
-                        <table class="table table-hover mb-0 align-middle">
+                        <table class="table table-hover mb-0 align-middle" id="userTable">
                             <thead class="bg-light text-uppercase small text-muted">
                                 <tr>
                                     <th class="ps-3">ID</th>
-                                    <th>User</th>
-                                    <th>Role</th>
+                                    <th>Email / Username</th>
                                     <th>Status</th>
                                     <th>Expires</th>
                                     <th class="text-end pe-3">Actions</th>
@@ -142,20 +154,19 @@
                                     <td class="fw-bold text-dark">{{ u.username }}</td>
                                     <td>
                                         {% if u.is_admin %}
-                                            <span class="badge bg-danger bg-opacity-10 text-danger">ADMIN</span>
+                                            <span class="badge bg-dark">ADMIN</span>
                                         {% else %}
-                                            <span class="badge bg-secondary bg-opacity-10 text-secondary">TRADER</span>
-                                        {% endif %}
-                                    </td>
-                                    <td>
-                                        {% if u.is_active_sub %}
-                                            <span class="badge bg-success bg-opacity-10 text-success"><i class="fas fa-check-circle me-1"></i>Active</span>
-                                        {% else %}
-                                            <span class="badge bg-warning bg-opacity-10 text-warning"><i class="fas fa-clock me-1"></i>Expired</span>
-                                        {% endif %}
-                                        
-                                        {% if u.is_trial %}
-                                            <span class="badge bg-info bg-opacity-10 text-info ms-1">Trial</span>
+                                            {% if u.is_blocked %}
+                                                <span class="badge bg-danger">BLOCKED</span>
+                                            {% elif u.is_active_sub %}
+                                                <span class="badge bg-success bg-opacity-10 text-success"><i class="fas fa-check-circle me-1"></i>Active</span>
+                                            {% else %}
+                                                <span class="badge bg-warning bg-opacity-10 text-warning"><i class="fas fa-clock me-1"></i>Expired</span>
+                                            {% endif %}
+                                            
+                                            {% if u.is_trial %}
+                                                <span class="badge bg-info bg-opacity-10 text-info ms-1">Trial</span>
+                                            {% endif %}
                                         {% endif %}
                                     </td>
                                     <td class="small text-muted font-monospace">
@@ -165,6 +176,19 @@
                                         <button class="btn btn-sm btn-outline-secondary me-1" onclick="openPasswordModal({{ u.id }}, '{{ u.username }}')" title="Change Password">
                                             <i class="fas fa-key"></i>
                                         </button>
+                                        
+                                        {% if not u.is_admin %}
+                                            {% if u.is_blocked %}
+                                                <a href="/admin/toggle_access/{{ u.id }}" class="btn btn-sm btn-outline-success me-1" title="Unblock User">
+                                                    <i class="fas fa-check"></i>
+                                                </a>
+                                            {% else %}
+                                                <a href="/admin/toggle_access/{{ u.id }}" class="btn btn-sm btn-outline-danger me-1" title="Revoke Access (Block)">
+                                                    <i class="fas fa-ban"></i>
+                                                </a>
+                                            {% endif %}
+                                        {% endif %}
+
                                         <button class="btn btn-sm btn-outline-primary" onclick="generateLink({{ u.id }})" title="Generate Magic Login Link">
                                             <i class="fas fa-link"></i> Link
                                         </button>
@@ -214,7 +238,7 @@
       </div>
       <form action="/admin/reset_password" method="POST">
           <div class="modal-body">
-            <p class="text-muted mb-3">Set a new password for user: <strong id="resetUsername" class="text-dark"></strong></p>
+            <p class="text-muted mb-3">Set a new password for: <strong id="resetUsername" class="text-dark"></strong></p>
             <input type="hidden" name="user_id" id="resetUserId">
             
             <div class="mb-3">
@@ -278,6 +302,27 @@
                 btn.classList.remove('btn-success');
             }, 2000);
         });
+    }
+
+    // SEARCH FUNCTION
+    function searchUsers() {
+      var input, filter, table, tr, td, i, txtValue;
+      input = document.getElementById("userSearchInput");
+      filter = input.value.toUpperCase();
+      table = document.getElementById("userTable");
+      tr = table.getElementsByTagName("tr");
+      for (i = 0; i < tr.length; i++) {
+        // Index 1 is the "Email/Username" column
+        td = tr[i].getElementsByTagName("td")[1];
+        if (td) {
+          txtValue = td.textContent || td.innerText;
+          if (txtValue.toUpperCase().indexOf(filter) > -1) {
+            tr[i].style.display = "";
+          } else {
+            tr[i].style.display = "none";
+          }
+        }       
+      }
     }
 </script>
 
