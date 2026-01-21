@@ -81,6 +81,8 @@ class RiskState(db.Model):
 
 class TelegramMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    # [NEW] Link message to user for isolation
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), index=True, nullable=True)
     trade_id = db.Column(db.String(50), nullable=False, index=True)
     message_id = db.Column(db.Integer, nullable=False)
     chat_id = db.Column(db.String(50), nullable=False)
