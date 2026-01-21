@@ -20,7 +20,7 @@ from managers.telegram_manager import bot as telegram_bot
 import smart_trader
 import settings
 from database import db, AppSetting, User
-import auto_login 
+# Auto-login import removed
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
@@ -58,7 +58,10 @@ def get_user_session(user_id):
 
 # --- USER SPECIFIC LOGIN LOGIC ---
 def start_user_session(user_id):
-    """Initiates login process for a specific user"""
+    """
+    Initializes the Kite Object for manual login.
+    AUTO-LOGIN REMOVED: This function no longer triggers Selenium.
+    """
     with app.app_context():
         user = User.query.get(user_id)
         if not user: return
@@ -72,44 +75,17 @@ def start_user_session(user_id):
             session['error'] = 'Credentials Missing'
             return
 
-        # 2. Init Kite
+        # 2. Init Kite Object (Required for generating Manual Login URL)
         try:
             k = KiteConnect(api_key=creds['api_key'])
             session['kite'] = k 
-            
-            # 3. Perform Auto Login
-            token, error = auto_login.perform_auto_login(k, user_specific_creds=creds) 
-            gc.collect()
-
-            if token:
-                try:
-                    data = k.generate_session(token, api_secret=creds['api_secret'])
-                    k.set_access_token(data["access_token"])
-                    
-                    smart_trader.fetch_instruments(k) 
-                    
-                    session['active'] = True
-                    session['state'] = 'IDLE'
-                    session['error'] = None # Clear errors on success
-                    
-                    telegram_bot.notify_system_event("LOGIN_SUCCESS", f"User {user.username}: Auto-Login Successful.")
-                    print(f"✅ User {user.username}: Session Generated")
-                    
-                except Exception as e:
-                    session['active'] = False
-                    session['state'] = 'FAILED'
-                    session['error'] = f"Session Gen Error: {str(e)}"
-                    telegram_bot.notify_system_event("LOGIN_FAIL", f"User {user.username}: Session Gen Failed: {e}")
-            else:
-                session['active'] = False
-                session['state'] = 'FAILED'
-                session['error'] = f"Auto-Login Failed: {error}"
-                telegram_bot.notify_system_event("LOGIN_FAIL", f"User {user.username}: Auto-Login Failed: {error}")
+            session['state'] = 'OFFLINE' # Ready for manual login
+            session['error'] = None
+            print(f"✅ User {user.username}: Kite Object Initialized (Waiting for Manual Login)")
 
         except Exception as e:
-            session['active'] = False
             session['state'] = 'FAILED'
-            session['error'] = f"Critical Error: {str(e)}"
+            session['error'] = f"Kite Init Error: {str(e)}"
             print(f"❌ User {user.username} Critical Error: {e}")
 
 def stop_user_session(user_id):
@@ -120,7 +96,7 @@ def stop_user_session(user_id):
 # --- BACKGROUND MONITOR (MULTI-USER) ---
 def background_monitor():
     with app.app_context():
-        print("🖥️ Multi-User Background Monitor Started")
+        print("🖥️ Multi-User Background Monitor Started (Manual Mode)")
         time.sleep(5)
         
         while True:
@@ -129,11 +105,11 @@ def background_monitor():
             for uid in active_ids:
                 session = user_sessions[uid]
                 
-                # Skip if Paused, Setting up, or FAILED (Stop the Loop!)
-                if session['state'] in ['PAUSED', 'SETUP', 'FAILED', 'WORKING']:
+                # Only monitor ACTIVE sessions
+                if not session['active']:
                     continue
 
-                if session['active'] and session['kite']:
+                if session['kite']:
                     try:
                         if not hasattr(session['kite'], "mock_instruments"):
                             if not session['kite'].access_token: raise Exception("No Token")
@@ -145,19 +121,9 @@ def background_monitor():
                         if "Token is invalid" in err or "access_token" in err:
                             print(f"⚠️ User {uid} Connection Lost: {err}")
                             session['active'] = False
-                            session['state'] = 'IDLE' # Reset to IDLE to trigger ONE retry
+                            session['state'] = 'OFFLINE' # Reset to Offline
                         else:
                             print(f"⚠️ User {uid} Risk Loop Warning: {err}")
-
-                # Auto-Reconnect Logic
-                # Only retry if state is IDLE (meaning it WAS working or should be working)
-                if not session['active']:
-                    if session['state'] == 'IDLE':
-                        print(f"🔄 User {uid}: Monitor Initiating Auto-Login...")
-                        session['state'] = 'WORKING' # Set immediately to prevent double threads
-                        t = threading.Thread(target=start_user_session, args=(uid,))
-                        t.start()
-                    # Note: We do NOT retry 'FAILED'. User must fix it manually.
 
             time.sleep(1)
 
@@ -254,6 +220,11 @@ def generate_link(uid):
 def home():
     session = get_user_session(current_user.id)
     
+    # Check if we need to initialize the session (first load)
+    if not session['kite'] and not session['error']:
+        start_user_session(current_user.id)
+        session = get_user_session(current_user.id)
+
     if session['active'] and session['kite']:
         trades = persistence.load_trades(user_id=current_user.id)
         for t in trades: 
@@ -298,15 +269,10 @@ def api_save_credentials():
         )
         db.session.commit()
         
-        session = get_user_session(current_user.id)
-        session['state'] = 'WORKING' # Set state first
-        session['error'] = None
+        # Re-initialize Kite object with new credentials
+        start_user_session(current_user.id)
         
-        # Start Login in Background
-        t = threading.Thread(target=start_user_session, args=(current_user.id,))
-        t.start()
-        
-        flash("✅ Credentials Saved! Auto-Login starting...")
+        flash("✅ Credentials Saved! Please click Login.")
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
@@ -329,7 +295,7 @@ def reset_connection():
 @login_required
 def resume_login():
     session = get_user_session(current_user.id)
-    session['state'] = 'IDLE' # Triggers monitor to retry once
+    session['state'] = 'OFFLINE'
     return jsonify({"status": "success"})
 
 @app.route('/callback')
