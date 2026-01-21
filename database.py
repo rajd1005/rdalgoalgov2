@@ -7,19 +7,24 @@ db = SQLAlchemy()
 
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    username = db.Column(db.String(150), unique=True, nullable=False) # Acts as Email/Login ID
-    email = db.Column(db.String(150), unique=True, nullable=True)     # Explicit Email storage
+    username = db.Column(db.String(150), unique=True, nullable=False) # Acts as the primary Login ID (Email)
+    email = db.Column(db.String(150), unique=True, nullable=True)     # Explicit Email column for notifications
     password = db.Column(db.String(255), nullable=False) 
     is_admin = db.Column(db.Boolean, default=False)
     
-    # Access Control
-    is_blocked = db.Column(db.Boolean, default=False) # New: Revoke Access
+    # Access Control (Revoke Access)
+    is_blocked = db.Column(db.Boolean, default=False)
     
     # Subscription Management
     subscription_end = db.Column(db.DateTime, nullable=True)
     is_trial = db.Column(db.Boolean, default=False)
     
-    # Zerodha Credentials
+    # Security: OTP & Session Tracking
+    otp_code = db.Column(db.String(6), nullable=True)
+    otp_expiry = db.Column(db.DateTime, nullable=True)
+    last_login_date = db.Column(db.Date, nullable=True) # Used to trigger OTP once per day
+    
+    # Zerodha Credentials (Stored as JSON)
     zerodha_creds = db.Column(db.Text, nullable=True) 
     
     def set_creds(self, api_key, api_secret, totp, uid, pwd):
@@ -41,8 +46,18 @@ class User(UserMixin, db.Model):
         if self.is_admin: return True
         return self.subscription_end and self.subscription_end > datetime.now()
 
+class SystemConfig(db.Model):
+    """
+    Stores global system configurations like SMTP settings.
+    Key-Value pair storage.
+    """
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(50), unique=True, nullable=False)
+    value = db.Column(db.Text, nullable=False)
+
 class AppSetting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    # Linked to User ID for Multi-User Isolation
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) 
     data = db.Column(db.Text, nullable=False) 
 
@@ -55,7 +70,7 @@ class TradeHistory(db.Model):
     data = db.Column(db.Text, nullable=False) 
 
 class RiskState(db.Model):
-    id = db.Column(db.String(50), primary_key=True) 
+    id = db.Column(db.String(50), primary_key=True) # Composite ID: "user_id_mode"
     data = db.Column(db.Text, nullable=False) 
 
 class TelegramMessage(db.Model):
