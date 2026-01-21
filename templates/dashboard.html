@@ -48,6 +48,7 @@
                         <label class="form-label fw-bold small">User ID</label>
                         <input type="text" class="form-control" name="user_id" placeholder="Ex: DV4043" value="{{ creds.user_id }}">
                     </div>
+                    
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label fw-bold small">API Key</label>
@@ -88,13 +89,17 @@
                     </a>
                 </div>
                 
-                {% if current_user.is_admin %}
-                <div class="mt-4 border-top pt-3">
+                <div class="mt-4 border-top pt-3 d-flex justify-content-center gap-3">
+                    {% if current_user.is_admin %}
                     <a href="/admin" class="btn btn-sm btn-outline-warning">
-                        <i class="fas fa-shield-alt"></i> Go to Admin Panel
+                        <i class="fas fa-shield-alt"></i> Admin Panel
+                    </a>
+                    {% endif %}
+                    
+                    <a href="/logout" class="btn btn-sm btn-outline-danger">
+                        <i class="fas fa-power-off"></i> Total Logout
                     </a>
                 </div>
-                {% endif %}
             </div>
 
             <div id="editCredsView" class="text-start" style="display: none; max-width: 500px; margin: 0 auto;">
@@ -116,6 +121,7 @@
                         <label class="form-label fw-bold small">User ID</label>
                         <input type="text" class="form-control" name="user_id" value="{{ creds.user_id }}">
                     </div>
+                    
                     <div class="row">
                         <div class="col-md-6 mb-3">
                             <label class="form-label fw-bold small">API Key</label>
@@ -155,8 +161,12 @@
             </a>
             {% endif %}
 
-            <a href="/reset_connection" class="btn btn-outline-light fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; border-color: rgba(255,255,255,0.3);" title="Logout / Edit Credentials">
-                <i class="fas fa-sign-out-alt"></i>
+            <a href="/reset_connection" class="btn btn-outline-light fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; border-color: rgba(255,255,255,0.3);" title="Disconnect / Pause Bot">
+                <i class="fas fa-pause"></i>
+            </a>
+
+            <a href="/logout" class="btn btn-danger fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px;" title="Total Logout">
+                <i class="fas fa-power-off"></i>
             </a>
 
             <button class="btn btn-secondary fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px;" data-bs-toggle="modal" data-bs-target="#importModal">📥 Import</button>
@@ -194,7 +204,7 @@
             data[item.name] = item.value;
         });
 
-        // VALIDATION UPDATED: Only check User ID and API Keys
+        // VALIDATION: Only check User ID and API Keys (Password/TOTP not needed for manual login)
         if(!data.user_id || !data.api_key || !data.api_secret) {
             alert("Please fill in User ID, API Key, and API Secret.");
             return;
