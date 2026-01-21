@@ -1,10 +1,9 @@
 import time
-import os
 import pyotp
-from urllib.parse import parse_qs, urlparse
+import logging
+from kiteconnect import KiteConnect
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
@@ -12,134 +11,124 @@ from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 import config
 
-def perform_auto_login(kite_instance):
-    print("🔄 Starting Auto-Login Sequence...")
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def perform_auto_login(kite_instance, user_specific_creds=None):
+    """
+    Performs auto-login using Selenium with Multi-User support.
     
-    # --- CONFIGURE CHROME OPTIONS FOR STABILITY ---
-    chrome_options = Options()
-    # Use 'new' headless mode for better compatibility with modern websites
-    chrome_options.add_argument("--headless=new") 
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-notifications")
-    chrome_options.add_argument("--ignore-certificate-errors")
-    
-    # ANTI-BOT DETECTION FLAGS
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-    
+    Args:
+        kite_instance: The user's KiteConnect object.
+        user_specific_creds (dict): Dictionary containing 'user_id', 'password', 'totp'.
+    """
     driver = None
+    
+    # --- 1. RESOLVE CREDENTIALS ---
+    # Prioritize passed credentials (Multi-User), fallback to Config (Single-User/Legacy)
+    if user_specific_creds:
+        USER_ID = user_specific_creds.get('user_id')
+        PASSWORD = user_specific_creds.get('password')
+        TOTP_SECRET = user_specific_creds.get('totp')
+    else:
+        # Fallback for backward compatibility
+        USER_ID = config.ZERODHA_USER_ID
+        PASSWORD = config.ZERODHA_PASSWORD
+        TOTP_SECRET = config.TOTP_SECRET
+
+    if not USER_ID or not PASSWORD or not TOTP_SECRET:
+        return None, "Missing Credentials"
+
     try:
-        # Install/Update Driver automatically
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        
-        # Mask WebDriver property to avoid bot detection scripts
-        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-            "source": """
-                Object.defineProperty(navigator, 'webdriver', {
-                    get: () => undefined
-                })
-            """
-        })
-        
         login_url = kite_instance.login_url()
-        print(f"➡️ Navigating to Login URL...")
-        driver.get(login_url)
-        wait = WebDriverWait(driver, 30) # Increased wait time for slow network
+        logger.info(f"Starting Auto-Login for User: {USER_ID}")
 
-        # --- STEP 1: USER ID ---
-        print("➡️ Step 1: Entering User ID...")
-        try:
-            # Wait for User ID input to be interactive
-            user_id_field = wait.until(EC.element_to_be_clickable((By.ID, "userid")))
-            user_id_field.clear()
-            user_id_field.send_keys(config.ZERODHA_USER_ID)
-            user_id_field.send_keys(Keys.ENTER)
-            time.sleep(1.5) # Allow DOM transition
-        except Exception as e:
-            return None, f"Failed at User ID Step: {str(e)}"
-
-        # --- STEP 2: PASSWORD ---
-        print("➡️ Step 2: Entering Password...")
-        try:
-            # Wait for Password input
-            password_field = wait.until(EC.element_to_be_clickable((By.ID, "password")))
-            password_field.clear()
-            password_field.send_keys(config.ZERODHA_PASSWORD)
-            password_field.send_keys(Keys.ENTER)
-            time.sleep(2) # Allow network request
-        except Exception as e:
-            return None, f"Failed at Password Step: {str(e)}"
-
-        # --- STEP 3: TOTP ---
-        print("➡️ Step 3: Handling TOTP...")
-        try:
-            # Wait for EITHER the TOTP input OR an error message
-            try:
-                # Check for explicit error message first (e.g., 'Invalid password')
-                error_msg = driver.find_elements(By.CSS_SELECTOR, ".su-message.error, .error-message")
-                if error_msg and error_msg[0].is_displayed():
-                    return None, f"Login Error: {error_msg[0].text}"
-            except: pass
-
-            # Look for the TOTP input field (Type can vary, usually 'text' or 'number' inside the 2FA form)
-            totp_input = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "input[type='text'], input[type='number'], input[placeholder='TOTP']")))
-            
-            if not config.TOTP_SECRET:
-                return None, "TOTP_SECRET is missing in config."
-                
-            totp_now = pyotp.TOTP(config.TOTP_SECRET).now()
-            print(f"   🔑 Generated TOTP: {totp_now}")
-            
-            # Click first to ensure focus, then type
-            totp_input.click()
-            totp_input.clear()
-            totp_input.send_keys(totp_now)
-            totp_input.send_keys(Keys.ENTER)
-            time.sleep(2)
-            
-        except Exception as e:
-            if "App Code" in driver.page_source:
-                return None, "Error: Zerodha is asking for Mobile App Code, but System is configured for TOTP."
-            return None, f"Failed at TOTP Step: {str(e)}"
-
-        # --- STEP 4: VERIFY SUCCESS ---
-        print("⏳ Waiting for Redirect/Dashboard...")
+        # --- 2. CONFIGURE CHROME OPTIONS ---
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")  # Run in background
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--window-size=1920,1080")
         
-        start_time = time.time()
-        while time.time() - start_time < 20: # Wait up to 20 seconds
-            current_url = driver.current_url
+        # --- 3. INITIALIZE DRIVER ---
+        driver = webdriver.Chrome(
+            service=Service(ChromeDriverManager().install()), 
+            options=chrome_options
+        )
+        
+        # --- 4. LOGIN FLOW ---
+        driver.get(login_url)
+        wait = WebDriverWait(driver, 15)
+
+        # Step A: Enter User ID
+        user_id_field = wait.until(EC.presence_of_element_located((By.ID, "userid")))
+        user_id_field.send_keys(USER_ID)
+        
+        # Step B: Enter Password
+        password_field = wait.until(EC.presence_of_element_located((By.ID, "password")))
+        password_field.send_keys(PASSWORD)
+        
+        # Step C: Click Login Button
+        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+        login_btn.click()
+        
+        # Step D: Handle TOTP (2FA)
+        try:
+            # Wait for TOTP field to appear (it might be labeled 'userid' again in DOM or specific class)
+            # Zerodha sometimes reuses IDs. Using input with minlength=6 covers most 2FA inputs.
+            totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
-            # Check 1: Request Token in URL (Successful Redirect)
-            if "request_token=" in current_url:
-                parsed = urlparse(current_url)
-                request_token = parse_qs(parsed.query).get('request_token', [None])[0]
-                if request_token:
-                    print(f"✅ Success! Token Captured: {request_token[:6]}...")
-                    return request_token, None
+            # Generate TOTP
+            totp = pyotp.TOTP(TOTP_SECRET)
+            token_code = totp.now()
             
-            # Removed Check 2 (Dashboard Skip) to force token capture
+            totp_field.send_keys(token_code)
+            
+            # Wait for redirection/submission
+            # Sometimes need to click continue, sometimes auto-submits. Check for button.
+            try:
+                # Attempt to click continue if it exists and is clickable
+                continue_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                continue_btn.click()
+            except:
+                pass # Auto-submit might have happened
                 
-            # Check 3: Error on screen
-            # FIX: Use driver.page_source instead of just page_source
-            if "Incorrect password" in driver.page_source or "Invalid TOTP" in driver.page_source:
-                return None, "Login Failed: Invalid Credentials detected."
+        except Exception as e:
+            logger.error(f"TOTP Step Error: {e}")
+            return None, f"TOTP Error: {str(e)}"
 
-            time.sleep(0.1)
+        # --- 5. CAPTURE REQUEST TOKEN ---
+        # Wait for the redirect to our callback URL
+        # We look for 'request_token' in the current URL
+        
+        def check_url_for_token(d):
+            return "request_token=" in d.current_url
 
-        return None, "Login Timed Out. Could not detect Success."
+        try:
+            wait.until(check_url_for_token)
+        except Exception:
+            # If timeout, check if we are on an error page or still on login
+            return None, f"Redirect Timeout. Current URL: {driver.current_url}"
+
+        current_url = driver.current_url
+        logger.info("Redirect URL Captured.")
+
+        # Extract Token
+        from urllib.parse import urlparse, parse_qs
+        parsed = urlparse(current_url)
+        request_token = parse_qs(parsed.query).get('request_token', [None])[0]
+
+        if request_token:
+            return request_token, None
+        else:
+            return None, "Token not found in redirect URL"
 
     except Exception as e:
-        print(f"❌ Critical Selenium Error: {e}")
+        logger.error(f"Auto-Login Exception: {e}")
         return None, str(e)
         
     finally:
         if driver:
-            try:
-                driver.quit()
-            except: pass
+            driver.quit()
