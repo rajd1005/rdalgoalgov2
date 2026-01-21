@@ -13,12 +13,11 @@ def get_user_lock(user_id):
     without blocking other users (Granular Locking).
     """
     if user_id is None:
+        # Fallback for system operations or unassigned users
         return _user_locks['system']
     return _user_locks[user_id]
 
-# Global Lock (Retained for backward compatibility with trade_manager.py)
-# NOTE: External modules using this will still face serialization bottlenecks 
-# until they are updated to use get_user_lock(user_id).
+# Global Lock (Retained for backward compatibility with imports)
 TRADE_LOCK = threading.Lock()
 
 # --- Risk State Persistence (Multi-User) ---
@@ -69,6 +68,8 @@ def load_trades(user_id):
         for r in rows:
             try:
                 t_data = json.loads(r.data)
+                # Ensure the loaded data has the user_id (integrity check)
+                t_data['user_id'] = user_id
                 user_trades.append(t_data)
             except:
                 continue
@@ -126,7 +127,7 @@ def load_history(user_id):
 def delete_trade(trade_id, user_id):
     """
     Deletes a closed trade if it belongs to the user.
-    Uses Granular Locking.
+    Uses Granular Locking and cleans up Telegram messages.
     """
     from managers.telegram_manager import bot as telegram_bot
     
@@ -145,7 +146,9 @@ def delete_trade(trade_id, user_id):
                     is_owner = (str(data.get('user_id')) == str(user_id))
 
                 if is_owner:
-                    telegram_bot.delete_trade_messages(trade_id)
+                    # [UPDATE] Pass user_id to ensure correct Bot Token is used for deletion
+                    telegram_bot.delete_trade_messages(trade_id, user_id=user_id)
+                    
                     db.session.delete(row)
                     db.session.commit()
                     return True
