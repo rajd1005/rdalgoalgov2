@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    V9 Update: Adds Staleness Checks and prioritizes Standard Clicks to fix React event issues.
+    V10 Update: Implements 'Input Refresh' and 'Form Submission' to fix Zombie Buttons.
     """
     driver = None
     
@@ -92,20 +92,14 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         except Exception as e:
             return None, f"Failed clicking Login: {str(e)}"
         
-        # Step D: Handle TOTP (2FA)
+        # Step D: Handle TOTP (2FA) - Initial Entry
         try:
-            # Wait for field
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
-            
-            # Generate Code
             totp = pyotp.TOTP(TOTP_SECRET)
             token_code = totp.now()
-            
-            # Submit Code
             totp_field.send_keys(token_code)
             logger.info(f"TOTP Entered ({token_code}). Submitting...")
             totp_field.send_keys(Keys.ENTER)
-            
         except Exception as e:
             if "request_token" in driver.current_url:
                 logger.info("Redirected before TOTP entry.")
@@ -138,50 +132,55 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                     logger.error(f"❌ {error_msg}")
                     return None, error_msg
 
-                # 3. ACTION: Find Action Buttons
-                # We specifically look for submit buttons or the orange Zerodha buttons
+                # 3. ACTION: Handle Buttons (Authorize / Continue)
                 buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.button-orange")
                 
-                action_taken = False
+                stuck_detected = False
                 for btn in buttons:
                     if btn.is_displayed() and btn.is_enabled():
                         text = btn.text.lower()
                         if any(x in text for x in ['continue', 'authorize', 'allow', 'approve', 'login']):
-                            logger.info(f"🔘 Found Button: '{btn.text}' on page: {driver.title}")
+                            logger.info(f"🔘 Found Button: '{btn.text}'")
                             
-                            # METHOD A: Standard Click (Best for React)
+                            # Attempt Click
                             try:
                                 btn.click()
-                                logger.info("   -> Standard Click sent.")
-                            except Exception:
-                                # METHOD B: JS Click (Fallback)
+                            except:
                                 driver.execute_script("arguments[0].click();", btn)
-                                logger.info("   -> JS Force-Click sent (Standard failed).")
                             
-                            # CRITICAL: Wait for staleness (Page Load)
-                            # This ensures we don't spam-click the same button instantly
+                            # Wait for effect
                             try:
-                                WebDriverWait(driver, 8).until(EC.staleness_of(btn))
-                                logger.info("   -> Page transition detected (Button disappeared).")
-                            except Exception:
-                                logger.warning("   -> Warning: Page did not transition after 8s.")
-                            
-                            action_taken = True
-                            break # Re-evaluate page state
+                                WebDriverWait(driver, 5).until(EC.staleness_of(btn))
+                                logger.info("   -> Page transition detected.")
+                                break # Button is gone, restart loop to check URL
+                            except:
+                                logger.warning("   -> Button stuck (Page didn't reload).")
+                                stuck_detected = True
                 
-                if action_taken:
-                    continue # Loop immediately to check new URL
-
-                # 4. ROBUST RETRY: Check Empty TOTP
-                totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
-                if totp_inputs and totp_inputs[0].is_displayed():
-                    curr_val = totp_inputs[0].get_attribute("value")
-                    if not curr_val:
-                        logger.warning("⚠️ TOTP field is empty. Re-filling...")
-                        refill_totp = pyotp.TOTP(TOTP_SECRET)
-                        totp_inputs[0].send_keys(refill_totp.now())
-                        time.sleep(0.5)
-                        totp_inputs[0].send_keys(Keys.ENTER)
+                # 4. RECOVERY: If button was clicked but didn't disappear -> REFRESH INPUT
+                if stuck_detected:
+                    logger.info("⚡ State Stuck. Refreshing TOTP Input...")
+                    totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
+                    if totp_inputs and totp_inputs[0].is_displayed():
+                        try:
+                            # Clear and Re-type
+                            totp_inputs[0].send_keys(Keys.CONTROL + "a")
+                            totp_inputs[0].send_keys(Keys.DELETE)
+                            time.sleep(0.5)
+                            
+                            new_code = pyotp.TOTP(TOTP_SECRET).now()
+                            totp_inputs[0].send_keys(new_code)
+                            logger.info(f"   -> Re-entered TOTP: {new_code}")
+                            
+                            # Try Parent Form Submit (Stronger than button click)
+                            try:
+                                form = totp_inputs[0].find_element(By.XPATH, "./ancestor::form")
+                                driver.execute_script("arguments[0].submit();", form)
+                                logger.info("   -> Force-submitted parent form.")
+                            except:
+                                totp_inputs[0].send_keys(Keys.ENTER)
+                        except Exception as e:
+                            logger.warning(f"Refresh failed: {e}")
 
             except Exception as e:
                 pass 
