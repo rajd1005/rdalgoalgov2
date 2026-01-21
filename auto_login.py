@@ -4,6 +4,7 @@ import logging
 from kiteconnect import KiteConnect
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys  # Added for ENTER key
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    Includes Anti-Detection, Extended Timeouts, and Authorization handling.
+    V3 Update: Added ENTER key submission and Error Text detection.
     """
     driver = None
     
@@ -39,7 +40,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         login_url = kite_instance.login_url()
         logger.info(f"Starting Auto-Login for User: {USER_ID}")
 
-        # --- 2. CONFIGURE CHROME OPTIONS (ANTI-DETECTION) ---
+        # --- 2. CONFIGURE CHROME OPTIONS ---
         chrome_options = Options()
         chrome_options.add_argument("--headless=new") 
         chrome_options.add_argument("--no-sandbox")
@@ -47,7 +48,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         
-        # Hide Automation Flags
+        # Anti-Detection
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -93,45 +94,54 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # Step D: Handle TOTP (2FA)
         try:
+            # Wait for field
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
+            # Generate Code
             totp = pyotp.TOTP(TOTP_SECRET)
             token_code = totp.now()
             
+            # ENTER CODE + HIT ENTER (More robust than clicking)
             totp_field.send_keys(token_code)
-            logger.info(f"TOTP Entered ({token_code}).")
+            totp_field.send_keys(Keys.ENTER)
+            logger.info(f"TOTP Entered & Submitted ({token_code}).")
             
-            # Note: Zerodha often auto-submits. We try to click continue just in case.
+            # Brief wait for page response
+            time.sleep(2)
+            
+            # [CHECK FOR ERRORS ON PAGE]
+            page_text = driver.page_source
+            if "Invalid TOTP" in page_text or "Incorrect" in page_text:
+                logger.error("❌ Login Failed: Invalid TOTP or Password detected on screen.")
+                return None, "Login Failed: Invalid TOTP/Password shown on Zerodha page."
+
+            # Fallback: Click continue if still on page
             try:
-                time.sleep(1) 
-                # Look for submit button specifically in the TOTP form container
-                continue_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                continue_btn.click()
+                if "twofa" in driver.current_url:
+                    logger.info("Still on TOTP page, trying explicit click...")
+                    continue_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                    continue_btn.click()
             except:
-                pass 
+                pass
                 
         except Exception as e:
             if "request_token" in driver.current_url:
-                logger.info("Redirected before TOTP entry (Session might be active).")
+                logger.info("Redirected before TOTP entry (Session likely active).")
             else:
                 logger.error(f"TOTP Step Error: {e}")
                 return None, f"TOTP Error: {str(e)}"
 
-        # --- STEP E: HANDLE "AUTHORIZE" SCREEN (CRITICAL FIX) ---
+        # --- STEP E: HANDLE "AUTHORIZE" SCREEN ---
         try:
-            # Brief wait to see if Authorize screen appears (Looking for "Authorize" text or typical button)
-            # The authorize button usually has class 'button-orange' or similar, but structure varies.
-            # We look for the container.
-            time.sleep(3) # Wait for page transition
-            
-            if "Authorize" in driver.page_source:
-                logger.info("Authorize Screen Detected. Attempting to click...")
-                # Try to find the generic 'Authorize' button (usually the primary submit button on that page)
-                auth_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Authorize')]")
-                auth_btn.click()
-                logger.info("Clicked Authorize.")
+            time.sleep(3)
+            # Check for Authorize button if we haven't redirected yet
+            if "request_token" not in driver.current_url:
+                if "Authorize" in driver.page_source:
+                    logger.info("Authorize Screen Detected. Clicking...")
+                    auth_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Authorize')]")
+                    auth_btn.click()
         except Exception as e:
-            logger.info(f"No Authorize screen or click failed (might not be needed): {e}")
+            pass
 
         # --- 5. CAPTURE REQUEST TOKEN ---
         logger.info("Waiting for Redirect...")
@@ -142,14 +152,25 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         try:
             wait.until(check_url_for_token)
         except Exception:
-            # Log the URL we got stuck on for debugging
-            logger.error(f"Stuck URL: {driver.current_url}")
-            return None, f"Redirect Timeout. Stuck at: {driver.title} | {driver.current_url}"
+            # Enhanced Error Logging
+            error_msg = "Redirect Timeout."
+            if "login" in driver.current_url:
+                error_msg += " Stuck on Login Page."
+            
+            # Check for visible error messages again
+            try:
+                error_elem = driver.find_element(By.CLASS_NAME, "error")
+                if error_elem:
+                    error_msg += f" Page Error: {error_elem.text}"
+            except:
+                pass
+                
+            logger.error(f"{error_msg} URL: {driver.current_url}")
+            return None, error_msg
 
         current_url = driver.current_url
         logger.info("Redirect URL Captured.")
 
-        # Extract Token
         from urllib.parse import urlparse, parse_qs
         parsed = urlparse(current_url)
         request_token = parse_qs(parsed.query).get('request_token', [None])[0]
