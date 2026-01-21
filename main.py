@@ -17,7 +17,6 @@ import config
 # --- REFACTORED IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops, email_sender
 from managers.telegram_manager import bot as telegram_bot
-# --------------------------
 import smart_trader
 import settings
 from database import db, AppSetting, User, SystemConfig
@@ -34,21 +33,21 @@ with app.app_context():
     
     # --- [DATABASE MIGRATIONS] ---
     try:
-        # 1. Fix Password Column Length (Legacy Support)
+        # 1. Fix Password Column Length
         db.session.execute(text('ALTER TABLE "user" ALTER COLUMN password TYPE VARCHAR(255)'))
         db.session.commit()
     except:
         db.session.rollback()
 
     try:
-        # 2. Fix Missing user_id in AppSetting (Multi-User Settings)
+        # 2. Fix Missing user_id in AppSetting
         db.session.execute(text('ALTER TABLE app_setting ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
         db.session.commit()
     except:
         db.session.rollback()
 
     try:
-        # 3. Add Email, Blocked Status, and OTP Columns (User Management)
+        # 3. Add Email, Blocked Status, and OTP Columns
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR(150)'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6)'))
@@ -82,7 +81,6 @@ def get_user_session(user_id):
 def start_user_session(user_id):
     """
     Initializes the Kite Object for manual login.
-    AUTO-LOGIN REMOVED: This function no longer triggers Selenium.
     """
     with app.app_context():
         user = User.query.get(user_id)
@@ -91,13 +89,11 @@ def start_user_session(user_id):
         session = get_user_session(user_id)
         creds = user.get_creds()
 
-        # 1. Check Credentials
         if not creds or not creds.get('user_id'):
             session['state'] = 'SETUP'
             session['error'] = 'Credentials Missing'
             return
 
-        # 2. Init Kite Object (Required for generating Manual Login URL)
         try:
             k = KiteConnect(api_key=creds['api_key'])
             session['kite'] = k 
@@ -126,19 +122,13 @@ def background_monitor():
             
             for uid in active_ids:
                 session = user_sessions[uid]
-                
-                # Only monitor ACTIVE sessions
-                if not session['active']:
-                    continue
+                if not session['active']: continue
 
                 if session['kite']:
                     try:
                         if not hasattr(session['kite'], "mock_instruments"):
                             if not session['kite'].access_token: raise Exception("No Token")
-                        
-                        # UPDATED: Pass user_id to risk engine for isolated management
                         risk_engine.update_risk_engine(session['kite'], user_id=uid)
-                        
                     except Exception as e:
                         err = str(e)
                         if "Token is invalid" in err or "access_token" in err:
@@ -147,8 +137,18 @@ def background_monitor():
                             session['state'] = 'OFFLINE' # Reset to Offline
                         else:
                             print(f"⚠️ User {uid} Risk Loop Warning: {err}")
-
             time.sleep(1)
+
+# --- HELPER: EMAIL TEMPLATES ---
+def get_email_template(key_type):
+    """Helper to fetch email template from DB"""
+    try:
+        row = SystemConfig.query.filter_by(key="email_templates").first()
+        if row:
+            data = json.loads(row.value)
+            return data.get(key_type, {})
+    except: pass
+    return {}
 
 # --- AUTH ROUTES ---
 
@@ -158,7 +158,6 @@ def login():
         return redirect(url_for('home'))
         
     if request.method == 'POST':
-        # Form field is named 'username' but acts as Email ID now
         username_input = request.form.get('username') 
         password = request.form.get('password')
         remember = request.form.get('remember') == 'on'
@@ -177,29 +176,31 @@ def login():
         # Standard User Login
         user = User.query.filter_by(username=username_input).first()
         if user and check_password_hash(user.password, password):
-            # Check for Blocks/Revoked Access
             if user.is_blocked:
                 flash("⛔ Access Revoked by Admin.")
                 return render_template('login.html')
             
             # --- OTP LOGIC FOR NEW SESSION/DAY ---
             today = date.today()
-            # If not Admin AND (First login of the day OR New Session)
             if not user.is_admin and (user.last_login_date != today):
-                # Generate OTP
                 otp = str(random.randint(100000, 999999))
                 user.otp_code = otp
                 user.otp_expiry = datetime.now() + timedelta(minutes=10)
                 db.session.commit()
                 
-                # Send Email
-                email_res = email_sender.send_email(user.email, "RD Algo Login OTP", f"<h3>Your Login OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>")
+                # Fetch Template
+                tpl = get_email_template('otp')
+                subject = tpl.get('subject', "RD Algo Login OTP")
+                body = tpl.get('body', f"<h3>Your Login OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>")
+                body = body.replace('{otp}', otp)
+                
+                email_res = email_sender.send_email(user.email, subject, body)
                 
                 if email_res['status'] == 'error':
                     flash(f"Error sending OTP: {email_res['message']}. Please contact Admin.")
                     return render_template('login.html')
                 
-                # Store ID in session temporarily for verification step
+                # Store ID in session temporarily
                 session['temp_login_id'] = user.id
                 session['remember_me'] = remember
                 return redirect(url_for('verify_otp'))
@@ -226,14 +227,13 @@ def verify_otp():
         
         if user and user.otp_code == otp_input and user.otp_expiry > datetime.now():
             # Success
-            user.otp_code = None # Clear OTP
+            user.otp_code = None 
             user.last_login_date = date.today()
             db.session.commit()
             
             remember = session.get('remember_me', False)
             login_user(user, remember=remember)
             
-            # Cleanup Session
             session.pop('temp_login_id', None)
             session.pop('remember_me', None)
             
@@ -255,7 +255,13 @@ def forgot_password():
             user.otp_expiry = datetime.now() + timedelta(minutes=15)
             db.session.commit()
             
-            email_sender.send_email(user.email, "Reset Password OTP", f"<h3>Your Reset OTP is: <b>{otp}</b></h3><p>Valid for 15 minutes.</p>")
+            # Fetch Template
+            tpl = get_email_template('reset')
+            subject = tpl.get('subject', "Reset Password OTP")
+            body = tpl.get('body', f"<h3>Your Reset OTP is: <b>{otp}</b></h3><p>Valid for 15 minutes.</p>")
+            body = body.replace('{otp}', otp)
+            
+            email_sender.send_email(user.email, subject, body)
             
             session['reset_user_id'] = user.id
             return redirect(url_for('reset_password_otp'))
@@ -312,32 +318,73 @@ def magic_login(token, uid):
 def admin_panel():
     if not current_user.is_admin: return "Access Denied", 403
     users = User.query.all()
+    
     # Load SMTP Config
     smtp_conf = SystemConfig.query.filter_by(key="smtp_config").first()
     smtp_data = json.loads(smtp_conf.value) if smtp_conf else {}
-    return render_template('admin.html', users=users, smtp=smtp_data)
+    
+    # Load Email Templates
+    tpl_conf = SystemConfig.query.filter_by(key="email_templates").first()
+    tpl_data = {}
+    if tpl_conf:
+        raw_tpl = json.loads(tpl_conf.value)
+        tpl_data = {
+            'otp_subject': raw_tpl.get('otp', {}).get('subject'),
+            'otp_body': raw_tpl.get('otp', {}).get('body'),
+            'reset_subject': raw_tpl.get('reset', {}).get('subject'),
+            'reset_body': raw_tpl.get('reset', {}).get('body'),
+        }
+        
+    return render_template('admin.html', users=users, smtp=smtp_data, templates=tpl_data)
 
-@app.route('/admin/save_smtp', methods=['POST'])
+@app.route('/admin/save_settings', methods=['POST'])
 @login_required
-def admin_save_smtp():
+def admin_save_settings():
+    """Consolidated route for SMTP + Templates"""
     if not current_user.is_admin: return "Access Denied", 403
     
-    data = {
+    # 1. Save SMTP Config
+    smtp_data = {
         "server": request.form.get('server'),
         "port": request.form.get('port'),
         "email": request.form.get('email'),
-        "password": request.form.get('password')
+        "password": request.form.get('password'),
+        "sender_name": request.form.get('sender_name')
     }
     
+    # Auto-detect API mode
+    if 'resend' in smtp_data['server'].lower(): smtp_data['provider'] = 'resend'
+    elif 'sendgrid' in smtp_data['server'].lower(): smtp_data['provider'] = 'sendgrid'
+    else: smtp_data['provider'] = 'smtp'
+
     conf = SystemConfig.query.filter_by(key="smtp_config").first()
     if not conf:
-        conf = SystemConfig(key="smtp_config", value=json.dumps(data))
+        conf = SystemConfig(key="smtp_config", value=json.dumps(smtp_data))
         db.session.add(conf)
     else:
-        conf.value = json.dumps(data)
+        conf.value = json.dumps(smtp_data)
+        
+    # 2. Save Templates
+    tpl_data = {
+        "otp": {
+            "subject": request.form.get('tpl_otp_subject'),
+            "body": request.form.get('tpl_otp_body')
+        },
+        "reset": {
+            "subject": request.form.get('tpl_reset_subject'),
+            "body": request.form.get('tpl_reset_body')
+        }
+    }
+    
+    tpl_conf = SystemConfig.query.filter_by(key="email_templates").first()
+    if not tpl_conf:
+        tpl_conf = SystemConfig(key="email_templates", value=json.dumps(tpl_data))
+        db.session.add(tpl_conf)
+    else:
+        tpl_conf.value = json.dumps(tpl_data)
     
     db.session.commit()
-    flash("✅ SMTP Configuration Saved")
+    flash("✅ Global Settings Saved!")
     return redirect('/admin')
 
 @app.route('/admin/add_user', methods=['POST'])
@@ -345,13 +392,11 @@ def admin_save_smtp():
 def add_user():
     if not current_user.is_admin: return "Access Denied", 403
     
-    # Updated: Use Email as the primary Username
     email = request.form.get('email')
     password = request.form.get('password')
     days = int(request.form.get('days', 7))
     is_trial = request.form.get('is_trial') == 'on'
     
-    # Check duplicate
     if User.query.filter_by(username=email).first():
         flash("User already exists")
         return redirect('/admin')
@@ -359,7 +404,6 @@ def add_user():
     hashed = generate_password_hash(password)
     expiry = datetime.now() + timedelta(days=days)
     
-    # Create User with Email
     new_user = User(username=email, email=email, password=hashed, subscription_end=expiry, is_trial=is_trial)
     db.session.add(new_user)
     db.session.commit()
@@ -374,11 +418,10 @@ def admin_edit_user():
     
     uid = request.form.get('user_id')
     new_email = request.form.get('email')
-    new_expiry = request.form.get('expiry') # Format YYYY-MM-DD
+    new_expiry = request.form.get('expiry') # YYYY-MM-DD
     
     user = User.query.get(uid)
     if user:
-        # Update Email/Username
         if new_email and new_email != user.username:
             if User.query.filter_by(username=new_email).first():
                 flash("❌ Email already exists")
@@ -386,16 +429,13 @@ def admin_edit_user():
             user.username = new_email
             user.email = new_email
             
-        # Update Expiry
         if new_expiry:
             try:
                 user.subscription_end = datetime.strptime(new_expiry, '%Y-%m-%d')
-            except:
-                pass # Ignore bad date format
+            except: pass
             
         db.session.commit()
         flash(f"✅ User {user.username} updated.")
-        
     return redirect('/admin')
 
 @app.route('/admin/toggle_access/<int:uid>')
@@ -411,7 +451,6 @@ def toggle_access(uid):
             db.session.commit()
             status = "blocked" if user.is_blocked else "activated"
             flash(f"User {user.username} {status}.")
-            # Terminate active session if blocked
             if user.is_blocked:
                 stop_user_session(user.id)
     return redirect('/admin')
@@ -445,14 +484,12 @@ def admin_reset_password():
 @app.route('/')
 @login_required
 def home():
-    # Security Check: Force logout if user is blocked during session
     if current_user.is_blocked:
         logout_user()
         return redirect('/login')
 
     session = get_user_session(current_user.id)
     
-    # Check if we need to initialize the session (first load)
     if not session['kite'] and not session['error']:
         start_user_session(current_user.id)
         session = get_user_session(current_user.id)
@@ -500,10 +537,7 @@ def api_save_credentials():
             pwd=data.get("password")
         )
         db.session.commit()
-        
-        # Re-initialize Kite object with new credentials
         start_user_session(current_user.id)
-        
         flash("✅ Credentials Saved! Please click Login.")
         return jsonify({"status": "success"})
     except Exception as e:
@@ -540,17 +574,13 @@ def callback():
         try:
             session = get_user_session(current_user.id)
             creds = current_user.get_creds()
-            
             if not session['kite']:
                 session['kite'] = KiteConnect(api_key=creds['api_key'])
-                
             data = session['kite'].generate_session(t, api_secret=creds['api_secret'])
             session['kite'].set_access_token(data["access_token"])
-            
             session['active'] = True
             session['state'] = 'IDLE'
             smart_trader.fetch_instruments(session['kite'])
-            
             flash("✅ System Online")
         except Exception as e:
             flash(f"Login Error: {e}")
@@ -561,7 +591,6 @@ def callback():
 @app.route('/api/settings/load')
 @login_required
 def api_settings_load():
-    # Pass Current User ID to load their specific settings
     s = settings.load_settings(user_id=current_user.id)
     try:
         today_str = time.strftime("%Y-%m-%d")
@@ -582,7 +611,6 @@ def api_settings_load():
 @app.route('/api/settings/save', methods=['POST'])
 @login_required
 def api_settings_save():
-    # Pass Current User ID to save their specific settings
     if settings.save_settings_file(request.json, user_id=current_user.id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
@@ -652,7 +680,6 @@ def api_indices():
 @login_required
 def api_search():
     session = get_user_session(current_user.id)
-    # Pass User ID to load their allowed exchanges
     current_settings = settings.load_settings(user_id=current_user.id)
     allowed = current_settings.get('exchanges', None)
     return jsonify(smart_trader.search_symbols(session['kite'], request.args.get('q', ''), allowed))
@@ -680,7 +707,6 @@ def api_panic_exit():
     session = get_user_session(current_user.id)
     if not session['active']:
         return jsonify({"status": "error", "message": "Bot not connected"})
-    # Pass User ID to panic exit
     if broker_ops.panic_exit_all(session['kite'], user_id=current_user.id):
         flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
@@ -733,7 +759,6 @@ def api_import_trade():
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         selected_channel = data.get('target_channel', 'main')
         target_channels = [selected_channel] 
-        # Pass User ID
         result = replay_engine.import_past_trade(
             session['kite'], final_sym, data['entry_time'], int(data['qty']), float(data['price']), 
             float(data['sl']), [float(t) for t in data['targets']],
@@ -795,7 +820,6 @@ def api_simulate_scenario():
     data = request.json
     trade_id = data.get('trade_id')
     config = data.get('config')
-    # Pass User ID
     result = replay_engine.simulate_trade_scenario(session['kite'], trade_id, config, user_id=current_user.id)
     return jsonify(result)
 
@@ -853,7 +877,6 @@ def place_trade():
         selected_channel = request.form.get('target_channel')
         if selected_channel in ['vip', 'free', 'z2h']: target_channels.append(selected_channel)
         
-        # Check permissions with User ID
         can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER", user_id=current_user.id)
         
         custom_targets = [t1, t2, t3] if t1 > 0 else []
@@ -869,7 +892,6 @@ def place_trade():
             flash("❌ Symbol Generation Failed")
             return redirect('/')
         
-        # Load User Settings
         app_settings = settings.load_settings(user_id=current_user.id)
         
         def execute(ex_mode, ex_qty, ex_channels, overrides=None):
@@ -889,7 +911,6 @@ def place_trade():
                 use_trail = trailing_sl
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
-            # Pass User ID
             return trade_manager.create_trade_direct(session['kite'], ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, order_type, limit_price, use_target_controls, use_trail, use_sl_entry, use_exit_mult, target_channels=ex_channels, risk_ratios=use_ratios, user_id=current_user.id)
         
         target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
@@ -910,7 +931,6 @@ def place_trade():
                         symbol_override['ratios'] = new_ratios
                         symbol_override['custom_targets'] = []
         if mode_input == "SHADOW":
-            # Pass User ID
             can_live, reason = common.can_place_order("LIVE", user_id=current_user.id)
             if not can_live:
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
@@ -953,7 +973,6 @@ def place_trade():
             if res_paper['status'] == 'success': flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
             else: flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
         else:
-            # Pass User ID
             can_trade, reason = common.can_place_order(mode_input, user_id=current_user.id)
             if not can_trade:
                 flash(f"⛔ Trade Blocked: {reason}")
