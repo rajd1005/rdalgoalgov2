@@ -4,9 +4,10 @@ import threading
 import time
 import gc 
 import secrets
+import random
 import requests
-from datetime import datetime, timedelta
-from flask import Flask, render_template, request, redirect, flash, jsonify, url_for
+from datetime import datetime, timedelta, date
+from flask import Flask, render_template, request, redirect, flash, jsonify, url_for, session
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from kiteconnect import KiteConnect
@@ -14,11 +15,12 @@ from sqlalchemy import text
 import config
 
 # --- REFACTORED IMPORTS ---
-from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
+from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops, email_sender
 from managers.telegram_manager import bot as telegram_bot
+# --------------------------
 import smart_trader
 import settings
-from database import db, AppSetting, User
+from database import db, AppSetting, User, SystemConfig
 # import auto_login  <-- DISABLED AUTO LOGIN
 
 app = Flask(__name__)
@@ -30,7 +32,7 @@ db.init_app(app)
 with app.app_context():
     db.create_all()
     
-    # --- [CRITICAL DATABASE MIGRATIONS] ---
+    # --- [DATABASE MIGRATIONS] ---
     try:
         # 1. Fix Password Column Length (Legacy Support)
         db.session.execute(text('ALTER TABLE "user" ALTER COLUMN password TYPE VARCHAR(255)'))
@@ -46,9 +48,12 @@ with app.app_context():
         db.session.rollback()
 
     try:
-        # 3. Add Email and Blocked Status Columns (User Management)
+        # 3. Add Email, Blocked Status, and OTP Columns (User Management)
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR(150)'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS otp_code VARCHAR(6)'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS otp_expiry TIMESTAMP'))
+        db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_login_date DATE'))
         db.session.commit()
         print("✅ Database Patched: Schema Updated Successfully")
     except Exception as e:
@@ -145,7 +150,7 @@ def background_monitor():
 
             time.sleep(1)
 
-# --- ROUTES ---
+# --- AUTH ROUTES ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -156,6 +161,7 @@ def login():
         # Form field is named 'username' but acts as Email ID now
         username_input = request.form.get('username') 
         password = request.form.get('password')
+        remember = request.form.get('remember') == 'on'
         
         # Admin Bypass
         if username_input == "admin" and password == config.ADMIN_PASSWORD:
@@ -165,7 +171,7 @@ def login():
                 user = User(username="admin", password=hashed, is_admin=True)
                 db.session.add(user)
                 db.session.commit()
-            login_user(user)
+            login_user(user, remember=remember)
             return redirect(url_for('home'))
 
         # Standard User Login
@@ -174,15 +180,112 @@ def login():
             # Check for Blocks/Revoked Access
             if user.is_blocked:
                 flash("⛔ Access Revoked by Admin.")
-            elif not user.is_active_sub:
+                return render_template('login.html')
+            
+            # --- OTP LOGIC FOR NEW SESSION/DAY ---
+            today = date.today()
+            # If not Admin AND (First login of the day OR New Session)
+            if not user.is_admin and (user.last_login_date != today):
+                # Generate OTP
+                otp = str(random.randint(100000, 999999))
+                user.otp_code = otp
+                user.otp_expiry = datetime.now() + timedelta(minutes=10)
+                db.session.commit()
+                
+                # Send Email
+                email_res = email_sender.send_email(user.email, "RD Algo Login OTP", f"<h3>Your Login OTP is: <b>{otp}</b></h3><p>Valid for 10 minutes.</p>")
+                
+                if email_res['status'] == 'error':
+                    flash(f"Error sending OTP: {email_res['message']}. Please contact Admin.")
+                    return render_template('login.html')
+                
+                # Store ID in session temporarily for verification step
+                session['temp_login_id'] = user.id
+                session['remember_me'] = remember
+                return redirect(url_for('verify_otp'))
+            
+            # Direct Login (Same day or Admin)
+            if not user.is_active_sub:
                 flash("❌ Subscription/Trial Expired. Contact Admin.")
             else:
-                login_user(user)
+                login_user(user, remember=remember)
                 return redirect(url_for('home'))
         else:
             flash("❌ Invalid Credentials")
             
     return render_template('login.html') 
+
+@app.route('/verify_otp', methods=['GET', 'POST'])
+def verify_otp():
+    if 'temp_login_id' not in session:
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        otp_input = request.form.get('otp')
+        user = User.query.get(session['temp_login_id'])
+        
+        if user and user.otp_code == otp_input and user.otp_expiry > datetime.now():
+            # Success
+            user.otp_code = None # Clear OTP
+            user.last_login_date = date.today()
+            db.session.commit()
+            
+            remember = session.get('remember_me', False)
+            login_user(user, remember=remember)
+            
+            # Cleanup Session
+            session.pop('temp_login_id', None)
+            session.pop('remember_me', None)
+            
+            return redirect(url_for('home'))
+        else:
+            flash("❌ Invalid or Expired OTP")
+            
+    return render_template('otp_verify.html')
+
+@app.route('/forgot_password', methods=['GET', 'POST'])
+def forgot_password():
+    if request.method == 'POST':
+        email = request.form.get('email')
+        user = User.query.filter_by(username=email).first() # Username is Email
+        
+        if user:
+            otp = str(random.randint(100000, 999999))
+            user.otp_code = otp
+            user.otp_expiry = datetime.now() + timedelta(minutes=15)
+            db.session.commit()
+            
+            email_sender.send_email(user.email, "Reset Password OTP", f"<h3>Your Reset OTP is: <b>{otp}</b></h3><p>Valid for 15 minutes.</p>")
+            
+            session['reset_user_id'] = user.id
+            return redirect(url_for('reset_password_otp'))
+        else:
+            flash("❌ Email not found")
+            
+    return render_template('forgot_password.html')
+
+@app.route('/reset_password_otp', methods=['GET', 'POST'])
+def reset_password_otp():
+    if 'reset_user_id' not in session:
+        return redirect(url_for('login'))
+    
+    if request.method == 'POST':
+        otp = request.form.get('otp')
+        new_pass = request.form.get('password')
+        user = User.query.get(session['reset_user_id'])
+        
+        if user and user.otp_code == otp and user.otp_expiry > datetime.now():
+            user.password = generate_password_hash(new_pass)
+            user.otp_code = None
+            db.session.commit()
+            
+            session.pop('reset_user_id', None)
+            flash("✅ Password Reset Successfully! Login now.")
+            return redirect(url_for('login'))
+        else:
+            flash("❌ Invalid OTP")
+            
+    return render_template('otp_verify.html', mode="reset")
 
 @app.route('/logout')
 @login_required
@@ -202,12 +305,40 @@ def magic_login(token, uid):
         return redirect(url_for('home'))
     return "Invalid Link"
 
+# --- ADMIN ROUTES ---
+
 @app.route('/admin')
 @login_required
 def admin_panel():
     if not current_user.is_admin: return "Access Denied", 403
     users = User.query.all()
-    return render_template('admin.html', users=users)
+    # Load SMTP Config
+    smtp_conf = SystemConfig.query.filter_by(key="smtp_config").first()
+    smtp_data = json.loads(smtp_conf.value) if smtp_conf else {}
+    return render_template('admin.html', users=users, smtp=smtp_data)
+
+@app.route('/admin/save_smtp', methods=['POST'])
+@login_required
+def admin_save_smtp():
+    if not current_user.is_admin: return "Access Denied", 403
+    
+    data = {
+        "server": request.form.get('server'),
+        "port": request.form.get('port'),
+        "email": request.form.get('email'),
+        "password": request.form.get('password')
+    }
+    
+    conf = SystemConfig.query.filter_by(key="smtp_config").first()
+    if not conf:
+        conf = SystemConfig(key="smtp_config", value=json.dumps(data))
+        db.session.add(conf)
+    else:
+        conf.value = json.dumps(data)
+    
+    db.session.commit()
+    flash("✅ SMTP Configuration Saved")
+    return redirect('/admin')
 
 @app.route('/admin/add_user', methods=['POST'])
 @login_required
@@ -216,7 +347,7 @@ def add_user():
     
     # Updated: Use Email as the primary Username
     email = request.form.get('email')
-    password = request.form['password']
+    password = request.form.get('password')
     days = int(request.form.get('days', 7))
     is_trial = request.form.get('is_trial') == 'on'
     
@@ -234,6 +365,37 @@ def add_user():
     db.session.commit()
     
     flash(f"User {email} created!")
+    return redirect('/admin')
+
+@app.route('/admin/edit_user', methods=['POST'])
+@login_required
+def admin_edit_user():
+    if not current_user.is_admin: return "Access Denied", 403
+    
+    uid = request.form.get('user_id')
+    new_email = request.form.get('email')
+    new_expiry = request.form.get('expiry') # Format YYYY-MM-DD
+    
+    user = User.query.get(uid)
+    if user:
+        # Update Email/Username
+        if new_email and new_email != user.username:
+            if User.query.filter_by(username=new_email).first():
+                flash("❌ Email already exists")
+                return redirect('/admin')
+            user.username = new_email
+            user.email = new_email
+            
+        # Update Expiry
+        if new_expiry:
+            try:
+                user.subscription_end = datetime.strptime(new_expiry, '%Y-%m-%d')
+            except:
+                pass # Ignore bad date format
+            
+        db.session.commit()
+        flash(f"✅ User {user.username} updated.")
+        
     return redirect('/admin')
 
 @app.route('/admin/toggle_access/<int:uid>')
