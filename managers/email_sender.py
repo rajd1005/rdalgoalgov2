@@ -23,10 +23,10 @@ def get_smtp_config():
         print(f"Error fetching SMTP config: {e}")
     return None
 
-def attempt_send(server_host, port, user, password, msg, timeout=20):
+def attempt_send(server_host, port, user, password, msg, timeout=5):
     """
     Internal helper to try sending email on a specific port.
-    Returns: (Success Boolean, Error Message)
+    TIMEOUT REDUCED TO 5 SECONDS to prevent Gunicorn Worker Timeout.
     """
     server = None
     try:
@@ -114,7 +114,7 @@ def send_email(to_email, subject, body_html):
             return {"status": "success"}
         
         # Both Failed
-        return {"status": "error", "message": f"All ports failed. Primary: {error} | Fallback: {error_fb}"}
+        return {"status": "error", "message": f"Connection Failed. Firewall might be blocking ports 465/587."}
 
     except Exception as e:
         return {"status": "error", "message": str(e)}
