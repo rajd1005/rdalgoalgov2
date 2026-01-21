@@ -10,7 +10,7 @@ from flask import Flask, render_template, request, redirect, flash, jsonify, url
 from flask_login import LoginManager, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from kiteconnect import KiteConnect
-from sqlalchemy import text # Required for the DB Fix
+from sqlalchemy import text 
 import config
 
 # --- REFACTORED IMPORTS ---
@@ -32,17 +32,11 @@ with app.app_context():
     db.create_all()
     
     # --- [CRITICAL FIX] AUTO-UPDATE DATABASE SCHEMA ---
-    # This block automatically fixes the "value too long" error by resizing the column
     try:
-        # Try to resize the password column to 255 chars
         db.session.execute(text('ALTER TABLE "user" ALTER COLUMN password TYPE VARCHAR(255)'))
         db.session.commit()
-        print("✅ Database Auto-Fix: Password column successfully resized to 255 characters.")
     except Exception as e:
-        # This will fail silently if the table is already correct or if using SQLite (which doesn't strictly enforce length)
-        # We catch it to prevent startup crashes on fresh installs
         db.session.rollback()
-        print(f"ℹ️ Database Check: Schema up to date or patch not needed. ({e})")
     # --------------------------------------------------
 
 # Initialize Login Manager
@@ -55,11 +49,9 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 # --- GLOBAL SESSION STORAGE (Multi-User) ---
-# Structure: { user_id: { 'kite': KiteObject, 'active': bool, 'state': str, 'error': str } }
 user_sessions = {}
 
 def get_user_session(user_id):
-    """Helper to safely get a user's session dict"""
     if user_id not in user_sessions:
         user_sessions[user_id] = {'kite': None, 'active': False, 'state': 'OFFLINE', 'error': None}
     return user_sessions[user_id]
@@ -80,9 +72,6 @@ def start_user_session(user_id):
             session['error'] = 'Credentials Missing'
             return
 
-        session['state'] = 'WORKING'
-        session['error'] = None
-        
         # 2. Init Kite
         try:
             k = KiteConnect(api_key=creds['api_key'])
@@ -97,31 +86,33 @@ def start_user_session(user_id):
                     data = k.generate_session(token, api_secret=creds['api_secret'])
                     k.set_access_token(data["access_token"])
                     
-                    # Fetch instruments
                     smart_trader.fetch_instruments(k) 
                     
                     session['active'] = True
                     session['state'] = 'IDLE'
+                    session['error'] = None # Clear errors on success
                     
                     telegram_bot.notify_system_event("LOGIN_SUCCESS", f"User {user.username}: Auto-Login Successful.")
                     print(f"✅ User {user.username}: Session Generated")
                     
                 except Exception as e:
+                    session['active'] = False
                     session['state'] = 'FAILED'
-                    session['error'] = str(e)
+                    session['error'] = f"Session Gen Error: {str(e)}"
                     telegram_bot.notify_system_event("LOGIN_FAIL", f"User {user.username}: Session Gen Failed: {e}")
             else:
+                session['active'] = False
                 session['state'] = 'FAILED'
-                session['error'] = error
+                session['error'] = f"Auto-Login Failed: {error}"
                 telegram_bot.notify_system_event("LOGIN_FAIL", f"User {user.username}: Auto-Login Failed: {error}")
 
         except Exception as e:
+            session['active'] = False
             session['state'] = 'FAILED'
-            session['error'] = str(e)
+            session['error'] = f"Critical Error: {str(e)}"
             print(f"❌ User {user.username} Critical Error: {e}")
 
 def stop_user_session(user_id):
-    """Stops the bot for a specific user"""
     if user_id in user_sessions:
         user_sessions[user_id]['active'] = False
         user_sessions[user_id]['state'] = 'PAUSED'
@@ -138,7 +129,8 @@ def background_monitor():
             for uid in active_ids:
                 session = user_sessions[uid]
                 
-                if session['state'] in ['PAUSED', 'SETUP']:
+                # Skip if Paused, Setting up, or FAILED (Stop the Loop!)
+                if session['state'] in ['PAUSED', 'SETUP', 'FAILED', 'WORKING']:
                     continue
 
                 if session['active'] and session['kite']:
@@ -146,7 +138,6 @@ def background_monitor():
                         if not hasattr(session['kite'], "mock_instruments"):
                             if not session['kite'].access_token: raise Exception("No Token")
                         
-                        # Run Risk Engine for this user
                         risk_engine.update_risk_engine(session['kite'], user_id=uid)
                         
                     except Exception as e:
@@ -154,22 +145,23 @@ def background_monitor():
                         if "Token is invalid" in err or "access_token" in err:
                             print(f"⚠️ User {uid} Connection Lost: {err}")
                             session['active'] = False
-                            session['state'] = 'FAILED'
+                            session['state'] = 'IDLE' # Reset to IDLE to trigger ONE retry
                         else:
                             print(f"⚠️ User {uid} Risk Loop Warning: {err}")
 
                 # Auto-Reconnect Logic
+                # Only retry if state is IDLE (meaning it WAS working or should be working)
                 if not session['active']:
-                    if session['state'] in ['IDLE', 'FAILED']:
+                    if session['state'] == 'IDLE':
                         print(f"🔄 User {uid}: Monitor Initiating Auto-Login...")
+                        session['state'] = 'WORKING' # Set immediately to prevent double threads
                         t = threading.Thread(target=start_user_session, args=(uid,))
                         t.start()
-                        session['state'] = 'WORKING' 
-                        time.sleep(2) 
+                    # Note: We do NOT retry 'FAILED'. User must fix it manually.
 
             time.sleep(1)
 
-# --- AUTH ROUTES ---
+# --- ROUTES ---
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -180,19 +172,16 @@ def login():
         username = request.form.get('username')
         password = request.form.get('password')
         
-        # Check for Admin via Config (Fallback)
         if username == "admin" and password == config.ADMIN_PASSWORD:
             user = User.query.filter_by(username="admin").first()
             if not user:
                 hashed = generate_password_hash(config.ADMIN_PASSWORD)
-                # This insert will now succeed because the column was resized on startup
                 user = User(username="admin", password=hashed, is_admin=True)
                 db.session.add(user)
                 db.session.commit()
             login_user(user)
             return redirect(url_for('home'))
 
-        # Check DB Users
         user = User.query.filter_by(username=username).first()
         if user and check_password_hash(user.password, password):
             if not user.is_active_sub:
@@ -220,8 +209,6 @@ def magic_login(token, uid):
         login_user(user)
         return redirect(url_for('home'))
     return "Invalid Link"
-
-# --- ADMIN ROUTES ---
 
 @app.route('/admin')
 @login_required
@@ -261,8 +248,6 @@ def generate_link(uid):
     token = secrets.token_urlsafe(16)
     link = url_for('magic_login', token=token, uid=uid, _external=True)
     return jsonify({"link": link})
-
-# --- DASHBOARD & TRADING ROUTES ---
 
 @app.route('/')
 @login_required
@@ -313,22 +298,18 @@ def api_save_credentials():
         )
         db.session.commit()
         
-        start_user_session(current_user.id)
         session = get_user_session(current_user.id)
-        session['state'] = 'WORKING'
+        session['state'] = 'WORKING' # Set state first
+        session['error'] = None
+        
+        # Start Login in Background
+        t = threading.Thread(target=start_user_session, args=(current_user.id,))
+        t.start()
         
         flash("✅ Credentials Saved! Auto-Login starting...")
         return jsonify({"status": "success"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
-
-@app.route('/secure', methods=['GET', 'POST'])
-def secure_login_page():
-    # Deprecated by new Login System, but kept for legacy external access
-    if request.method == 'POST':
-        if request.form.get('password') == config.ADMIN_PASSWORD:
-            return redirect('/')
-    return render_template('secure_login.html')
 
 @app.route('/api/status')
 @login_required
@@ -348,7 +329,7 @@ def reset_connection():
 @login_required
 def resume_login():
     session = get_user_session(current_user.id)
-    session['state'] = 'IDLE'
+    session['state'] = 'IDLE' # Triggers monitor to retry once
     return jsonify({"status": "success"})
 
 @app.route('/callback')
@@ -377,12 +358,11 @@ def callback():
             flash(f"Login Error: {e}")
     return redirect('/')
 
-# --- SETTINGS & TRADING (Context Aware) ---
+# --- SETTINGS & TRADING ROUTES ---
 
 @app.route('/api/settings/load')
 @login_required
 def api_settings_load():
-    # User-specific settings could be implemented here
     s = settings.load_settings()
     try:
         today_str = time.strftime("%Y-%m-%d")
@@ -403,7 +383,6 @@ def api_settings_load():
 @app.route('/api/settings/save', methods=['POST'])
 @login_required
 def api_settings_save():
-    # Ideally save to DB per user
     if settings.save_settings_file(request.json):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
@@ -486,8 +465,6 @@ def api_details():
 @app.route('/api/chain')
 @login_required
 def api_chain():
-    # session needed? chain is mostly public data but smart_trader might use kite
-    # assuming smart_trader.get_chain_data does NOT require kite instance (uses internal cache/scrape)
     return jsonify(smart_trader.get_chain_data(request.args.get('symbol'), request.args.get('expiry'), request.args.get('type'), float(request.args.get('ltp', 0))))
 
 @app.route('/api/specific_ltp')
