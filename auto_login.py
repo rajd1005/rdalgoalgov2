@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    Includes Anti-Detection and Extended Timeouts for Cloud execution.
+    Includes Anti-Detection, Extended Timeouts, and Authorization handling.
     """
     driver = None
     
@@ -41,18 +41,16 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
 
         # --- 2. CONFIGURE CHROME OPTIONS (ANTI-DETECTION) ---
         chrome_options = Options()
-        # Use 'new' headless mode for better stability
         chrome_options.add_argument("--headless=new") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         
-        # CRITICAL: Hide Automation Flags to bypass basic bot detection
+        # Hide Automation Flags
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
-        # Mimic a real user agent
         chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         # --- 3. INITIALIZE DRIVER ---
@@ -63,7 +61,6 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # --- 4. LOGIN FLOW ---
         driver.get(login_url)
-        # Increased Timeout to 45s for slow cloud containers
         wait = WebDriverWait(driver, 45) 
 
         logger.info("Page loaded. Attempting User ID...")
@@ -96,33 +93,45 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # Step D: Handle TOTP (2FA)
         try:
-            # Wait for TOTP field to appear
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
-            # Generate TOTP
             totp = pyotp.TOTP(TOTP_SECRET)
             token_code = totp.now()
             
             totp_field.send_keys(token_code)
             logger.info(f"TOTP Entered ({token_code}).")
             
-            # Note: Zerodha often auto-submits after TOTP. 
-            # We check for a submit button just in case, but don't fail if it's missing.
+            # Note: Zerodha often auto-submits. We try to click continue just in case.
             try:
-                time.sleep(1) # Brief pause for UI update
+                time.sleep(1) 
+                # Look for submit button specifically in the TOTP form container
                 continue_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
                 continue_btn.click()
             except:
-                pass # Usually auto-submits
+                pass 
                 
         except Exception as e:
-            # Check if we are already redirected (Success) before failing
             if "request_token" in driver.current_url:
                 logger.info("Redirected before TOTP entry (Session might be active).")
             else:
                 logger.error(f"TOTP Step Error: {e}")
-                # Debug: Print page title to see where we stuck
-                return None, f"TOTP Error: {str(e)} | Page: {driver.title}"
+                return None, f"TOTP Error: {str(e)}"
+
+        # --- STEP E: HANDLE "AUTHORIZE" SCREEN (CRITICAL FIX) ---
+        try:
+            # Brief wait to see if Authorize screen appears (Looking for "Authorize" text or typical button)
+            # The authorize button usually has class 'button-orange' or similar, but structure varies.
+            # We look for the container.
+            time.sleep(3) # Wait for page transition
+            
+            if "Authorize" in driver.page_source:
+                logger.info("Authorize Screen Detected. Attempting to click...")
+                # Try to find the generic 'Authorize' button (usually the primary submit button on that page)
+                auth_btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Authorize')]")
+                auth_btn.click()
+                logger.info("Clicked Authorize.")
+        except Exception as e:
+            logger.info(f"No Authorize screen or click failed (might not be needed): {e}")
 
         # --- 5. CAPTURE REQUEST TOKEN ---
         logger.info("Waiting for Redirect...")
@@ -134,7 +143,8 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
             wait.until(check_url_for_token)
         except Exception:
             # Log the URL we got stuck on for debugging
-            return None, f"Redirect Timeout. Stuck at: {driver.current_url}"
+            logger.error(f"Stuck URL: {driver.current_url}")
+            return None, f"Redirect Timeout. Stuck at: {driver.title} | {driver.current_url}"
 
         current_url = driver.current_url
         logger.info("Redirect URL Captured.")
