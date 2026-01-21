@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    V6 Update: Universal Button Clicker to handle Authorize/Continue/Submit screens robustly.
+    V7 Update: Adds 'Staleness Wait' to prevent infinite click loops on the 'Continue' button.
     """
     driver = None
     
@@ -94,11 +94,14 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # Step D: Handle TOTP (2FA)
         try:
+            # Wait for field
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
+            # Generate Code
             totp = pyotp.TOTP(TOTP_SECRET)
             token_code = totp.now()
             
+            # Submit Code
             totp_field.send_keys(token_code)
             logger.info(f"TOTP Entered ({token_code}). Submitting...")
             totp_field.send_keys(Keys.ENTER)
@@ -110,7 +113,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                 logger.error(f"TOTP Step Error: {e}")
                 return None, f"TOTP Error: {str(e)}"
 
-        # --- STEP E: SMART POLLING LOOP (Universal Clicker) ---
+        # --- STEP E: SMART POLLING LOOP ---
         logger.info("Entering Smart Polling Loop (Max 60s)...")
         
         start_time = time.time()
@@ -119,6 +122,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         while time.time() - start_time < max_duration:
             try:
                 current_url = driver.current_url
+                page_source = driver.page_source
                 
                 # 1. SUCCESS: Check for Redirect Token
                 if "request_token=" in current_url:
@@ -129,39 +133,64 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                     return request_token, None
 
                 # 2. FAILURE: Check for Page Errors
-                page_source = driver.page_source
                 if "Invalid TOTP" in page_source or "Incorrect password" in page_source:
                     error_msg = "Login Failed: Invalid TOTP or Password detected."
                     logger.error(f"❌ {error_msg}")
                     return None, error_msg
 
-                # 3. ACTION: Universal Button Clicker
-                # Finds ANY visible 'submit' button or 'orange' button (Zerodha standard)
+                # 3. ACTION: Find Action Buttons (Continue, Authorize, etc)
                 buttons = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.button-orange")
                 
-                clicked = False
+                button_clicked = False
                 for btn in buttons:
-                    if btn.is_displayed():
+                    if btn.is_displayed() and btn.is_enabled():
                         text = btn.text.lower()
-                        # Click if it looks like a progress button
+                        # Target specific keywords
                         if any(x in text for x in ['continue', 'authorize', 'allow', 'approve', 'login']):
-                            logger.info(f"🔘 Stuck State Detected. Force-Clicking button: '{btn.text}'")
-                            driver.execute_script("arguments[0].click();", btn)
-                            clicked = True
-                            break # Click one at a time
+                            logger.info(f"🔘 Action Button Found: '{btn.text}'")
+                            
+                            # Attempt Click
+                            try:
+                                btn.click()
+                            except:
+                                driver.execute_script("arguments[0].click();", btn)
+                            
+                            logger.info("Clicked. Waiting for page transition...")
+                            button_clicked = True
+                            
+                            # CRITICAL FIX: Wait for this button to disappear (Staleness)
+                            # This prevents the loop from clicking the same button 100 times while the page loads
+                            try:
+                                WebDriverWait(driver, 5).until(EC.staleness_of(btn))
+                                logger.info("Page loading/transition detected.")
+                            except:
+                                logger.warning("Page did not transition after click (Button still there).")
+                            
+                            break # Break inner loop to re-evaluate URL
                 
-                if clicked:
-                    time.sleep(3) # Wait for page load
-                    continue
+                if button_clicked:
+                    continue # Restart main loop to check URL again
 
-                # 4. DIAGNOSTIC: Log page title if really stuck
-                if time.time() - start_time > 45:
-                    logger.warning(f"Still stuck. Page Title: {driver.title}")
+                # 4. ROBUST RETRY: Empty TOTP Field?
+                # If we didn't find a button to click, maybe the input is empty
+                totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
+                if totp_inputs and totp_inputs[0].is_displayed():
+                    curr_val = totp_inputs[0].get_attribute("value")
+                    if not curr_val:
+                        logger.warning("⚠️ TOTP field is empty. Re-filling...")
+                        refill_totp = pyotp.TOTP(TOTP_SECRET)
+                        totp_inputs[0].send_keys(refill_totp.now())
+                        time.sleep(0.5)
+                        # Find submit button again
+                        submit_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit']")
+                        if submit_btns:
+                            submit_btns[0].click()
 
             except Exception as e:
-                pass # Ignore transient errors during page loads
+                # Ignore minor errors during page loads
+                pass 
 
-            time.sleep(1.5) # Poll interval
+            time.sleep(1) # Poll interval
 
         # Timeout
         logger.error(f"Timeout. Final URL: {driver.current_url}")
