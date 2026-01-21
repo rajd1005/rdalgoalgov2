@@ -20,7 +20,7 @@ from managers.telegram_manager import bot as telegram_bot
 import smart_trader
 import settings
 from database import db, AppSetting, User
-# Auto-login import removed
+# import auto_login  <-- DISABLED AUTO LOGIN
 
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
@@ -114,6 +114,7 @@ def background_monitor():
                         if not hasattr(session['kite'], "mock_instruments"):
                             if not session['kite'].access_token: raise Exception("No Token")
                         
+                        # UPDATED: Pass user_id to risk engine
                         risk_engine.update_risk_engine(session['kite'], user_id=uid)
                         
                     except Exception as e:
@@ -347,7 +348,8 @@ def callback():
 @app.route('/api/settings/load')
 @login_required
 def api_settings_load():
-    s = settings.load_settings()
+    # UPDATED: Load settings for the current user
+    s = settings.load_settings(user_id=current_user.id)
     try:
         today_str = time.strftime("%Y-%m-%d")
         trades = persistence.load_trades(user_id=current_user.id)
@@ -367,7 +369,8 @@ def api_settings_load():
 @app.route('/api/settings/save', methods=['POST'])
 @login_required
 def api_settings_save():
-    if settings.save_settings_file(request.json):
+    # UPDATED: Save settings for the current user
+    if settings.save_settings_file(request.json, user_id=current_user.id):
         return jsonify({"status": "success"})
     return jsonify({"status": "error"})
 
@@ -436,7 +439,8 @@ def api_indices():
 @login_required
 def api_search():
     session = get_user_session(current_user.id)
-    current_settings = settings.load_settings()
+    # UPDATED: Load User Settings for allowed exchanges
+    current_settings = settings.load_settings(user_id=current_user.id)
     allowed = current_settings.get('exchanges', None)
     return jsonify(smart_trader.search_symbols(session['kite'], request.args.get('q', ''), allowed))
 
@@ -463,7 +467,7 @@ def api_panic_exit():
     session = get_user_session(current_user.id)
     if not session['active']:
         return jsonify({"status": "error", "message": "Bot not connected"})
-    if broker_ops.panic_exit_all(session['kite']):
+    if broker_ops.panic_exit_all(session['kite'], user_id=current_user.id):
         flash("🚨 PANIC MODE EXECUTED. ALL TRADES CLOSED.")
         return jsonify({"status": "success"})
     return jsonify({"status": "error", "message": "Failed to execute panic mode"})
@@ -576,7 +580,7 @@ def api_simulate_scenario():
     data = request.json
     trade_id = data.get('trade_id')
     config = data.get('config')
-    result = replay_engine.simulate_trade_scenario(session['kite'], trade_id, config)
+    result = replay_engine.simulate_trade_scenario(session['kite'], trade_id, config, user_id=current_user.id)
     return jsonify(result)
 
 @app.route('/api/sync', methods=['POST'])
@@ -632,7 +636,10 @@ def place_trade():
         target_channels = ['main']
         selected_channel = request.form.get('target_channel')
         if selected_channel in ['vip', 'free', 'z2h']: target_channels.append(selected_channel)
-        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER")
+        
+        # CHECK PERMISSIONS (Passed user_id)
+        can_trade, reason = common.can_place_order("LIVE" if mode_input == "LIVE" else "PAPER", user_id=current_user.id)
+        
         custom_targets = [t1, t2, t3] if t1 > 0 else []
         target_controls = []
         for i in range(1, 4):
@@ -645,7 +652,10 @@ def place_trade():
         if not final_sym:
             flash("❌ Symbol Generation Failed")
             return redirect('/')
-        app_settings = settings.load_settings()
+        
+        # Load USER settings
+        app_settings = settings.load_settings(user_id=current_user.id)
+        
         def execute(ex_mode, ex_qty, ex_channels, overrides=None):
             use_sl_points = sl_points
             use_target_controls = target_controls
@@ -664,6 +674,7 @@ def place_trade():
                 use_sl_entry = sl_to_entry
                 use_exit_mult = exit_multiplier
             return trade_manager.create_trade_direct(session['kite'], ex_mode, final_sym, ex_qty, use_sl_points, use_custom_targets, order_type, limit_price, use_target_controls, use_trail, use_sl_entry, use_exit_mult, target_channels=ex_channels, risk_ratios=use_ratios, user_id=current_user.id)
+        
         target_mode_conf = "LIVE" if mode_input == "SHADOW" else mode_input
         mode_conf = app_settings['modes'].get(target_mode_conf, {})
         clean_sym = sym.split(':')[0].strip().upper()
@@ -682,7 +693,7 @@ def place_trade():
                         symbol_override['ratios'] = new_ratios
                         symbol_override['custom_targets'] = []
         if mode_input == "SHADOW":
-            can_live, reason = common.can_place_order("LIVE")
+            can_live, reason = common.can_place_order("LIVE", user_id=current_user.id)
             if not can_live:
                 flash(f"❌ Shadow Blocked: LIVE Mode is Disabled/Blocked ({reason})")
                 return redirect('/')
@@ -724,7 +735,7 @@ def place_trade():
             if res_paper['status'] == 'success': flash(f"👻 Shadow Executed: ✅ LIVE | ✅ PAPER")
             else: flash(f"⚠️ Shadow Partial: ✅ LIVE | ❌ PAPER Failed ({res_paper['message']})")
         else:
-            can_trade, reason = common.can_place_order(mode_input)
+            can_trade, reason = common.can_place_order(mode_input, user_id=current_user.id)
             if not can_trade:
                 flash(f"⛔ Trade Blocked: {reason}")
                 return redirect('/')
