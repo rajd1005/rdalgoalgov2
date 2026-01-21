@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    V4 Update: Implements Smart Polling Loop for robust Redirect/Authorize handling.
+    V5 Update: Added JS Force-Click and TOTP Refill logic to fix stuck loops.
     """
     driver = None
     
@@ -48,7 +48,7 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
         
-        # Anti-Detection Flags
+        # Anti-Detection
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -94,30 +94,27 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # Step D: Handle TOTP (2FA)
         try:
-            # Wait for field to appear
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
-            # Generate Code
             totp = pyotp.TOTP(TOTP_SECRET)
             token_code = totp.now()
             
-            # Submit Code
             totp_field.send_keys(token_code)
             logger.info(f"TOTP Entered ({token_code}). Submitting...")
             totp_field.send_keys(Keys.ENTER)
             
         except Exception as e:
             if "request_token" in driver.current_url:
-                logger.info("Redirected before TOTP entry (Session likely active).")
+                logger.info("Redirected before TOTP entry.")
             else:
                 logger.error(f"TOTP Step Error: {e}")
                 return None, f"TOTP Error: {str(e)}"
 
-        # --- STEP E: SMART POLLING LOOP (Redirect / Authorize / Error) ---
+        # --- STEP E: SMART POLLING LOOP (Redirect / Authorize / Error / Retry) ---
         logger.info("Entering Smart Polling Loop (Max 60s)...")
         
         start_time = time.time()
-        max_duration = 60 # seconds
+        max_duration = 60 
         
         while time.time() - start_time < max_duration:
             current_url = driver.current_url
@@ -131,37 +128,53 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
                 request_token = parse_qs(parsed.query).get('request_token', [None])[0]
                 return request_token, None
 
-            # 2. FAILURE: Check for Errors on Page
+            # 2. FAILURE: Check for Errors
             if "Invalid TOTP" in page_source or "Incorrect password" in page_source:
                 error_msg = "Login Failed: Invalid TOTP or Password shown on screen."
                 logger.error(f"❌ {error_msg}")
                 return None, error_msg
 
-            # 3. ACTION: Check for "Authorize" Button (First time login)
+            # 3. ACTION: Check for "Authorize" Button
             if "Authorize" in page_source:
                 try:
-                    # Look for the orange authorize button specifically
                     auth_btn = driver.find_element(By.XPATH, "//button[contains(@class, 'button-orange') or contains(text(), 'Authorize')]")
-                    auth_btn.click()
-                    logger.info("🔘 'Authorize' Button Detected & Clicked.")
-                    time.sleep(2) # Allow transition
-                    continue # Restart loop to check for redirect
+                    driver.execute_script("arguments[0].click();", auth_btn) # Force Click
+                    logger.info("🔘 'Authorize' Button Clicked.")
+                    time.sleep(3) 
+                    continue
                 except Exception:
-                    pass # Button might not be clickable yet
+                    pass 
 
-            # 4. RETRY: Check if stuck on TOTP Submit (Sometimes Enter key fails)
+            # 4. ROBUST RETRY: Check if stuck on TOTP Page
             try:
-                # If we still see the submit button, try clicking it
-                submit_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                if submit_btn.is_displayed():
-                    submit_btn.click()
-                    logger.info("🔄 Re-clicking Submit button...")
-            except:
+                # Is the input field still visible?
+                totp_inputs = driver.find_elements(By.CSS_SELECTOR, "input[type='text'][minlength='6']")
+                
+                if totp_inputs and totp_inputs[0].is_displayed():
+                    # Is it empty? (Page might have cleared it)
+                    curr_val = totp_inputs[0].get_attribute("value")
+                    
+                    if not curr_val:
+                        logger.warning("⚠️ TOTP field found empty. Re-filling...")
+                        refill_totp = pyotp.TOTP(TOTP_SECRET)
+                        totp_inputs[0].send_keys(refill_totp.now())
+                        time.sleep(0.5)
+                    
+                    # Try clicking submit again using JS (Force Click)
+                    submit_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit']")
+                    if submit_btns and submit_btns[0].is_displayed():
+                        btn_text = submit_btns[0].text
+                        logger.info(f"🔄 Force-Clicking '{btn_text}' button...")
+                        driver.execute_script("arguments[0].click();", submit_btns[0])
+                        
+                        # Wait longer between retries to avoid spamming
+                        time.sleep(3) 
+            except Exception as e:
                 pass
 
             time.sleep(1) # Poll interval
 
-        # If loop finishes without return
+        # Timeout
         logger.error(f"Timeout. Final URL: {driver.current_url}")
         return None, "Login Timeout: Zerodha did not redirect after 60 seconds."
 
