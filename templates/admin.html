@@ -77,6 +77,39 @@
         {% endif %}
     {% endwith %}
 
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow-sm border-warning">
+                <div class="card-header bg-warning bg-opacity-10 text-dark fw-bold">
+                    <i class="fas fa-mail-bulk me-2"></i> SMTP Email Configuration (Required for OTPs)
+                </div>
+                <div class="card-body">
+                    <form action="/admin/save_smtp" method="POST" class="row g-3 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label small text-muted">SMTP Server</label>
+                            <input type="text" class="form-control" name="server" placeholder="smtp.gmail.com" value="{{ smtp.server if smtp else '' }}">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small text-muted">Port</label>
+                            <input type="number" class="form-control" name="port" placeholder="587" value="{{ smtp.port if smtp else '' }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small text-muted">Email Address</label>
+                            <input type="email" class="form-control" name="email" placeholder="sender@email.com" value="{{ smtp.email if smtp else '' }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small text-muted">Password / App Password</label>
+                            <input type="password" class="form-control" name="password" placeholder="****" value="{{ smtp.password if smtp else '' }}">
+                        </div>
+                        <div class="col-md-1 d-grid">
+                            <button class="btn btn-dark"><i class="fas fa-save"></i></button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div class="row">
         <div class="col-lg-4 mb-4">
             <div class="card h-100">
@@ -173,6 +206,10 @@
                                         {{ u.subscription_end.strftime('%Y-%m-%d') if u.subscription_end else 'N/A' }}
                                     </td>
                                     <td class="text-end pe-3">
+                                        <button class="btn btn-sm btn-outline-info me-1" onclick="openEditModal('{{ u.id }}', '{{ u.username }}', '{{ u.subscription_end.strftime('%Y-%m-%d') if u.subscription_end else '' }}')" title="Edit User">
+                                            <i class="fas fa-edit"></i>
+                                        </button>
+
                                         <button class="btn btn-sm btn-outline-secondary me-1" onclick="openPasswordModal({{ u.id }}, '{{ u.username }}')" title="Change Password">
                                             <i class="fas fa-key"></i>
                                         </button>
@@ -202,6 +239,34 @@
             </div>
         </div>
     </div>
+</div>
+
+<div class="modal fade" id="editUserModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content border-0 shadow-lg">
+      <div class="modal-header border-bottom-0">
+        <h5 class="modal-title"><i class="fas fa-user-edit text-info me-2"></i>Edit User</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form action="/admin/edit_user" method="POST">
+          <div class="modal-body">
+            <input type="hidden" name="user_id" id="editUserId">
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-muted">Email / Username</label>
+                <input type="email" class="form-control" name="email" id="editUserEmail" required>
+            </div>
+            <div class="mb-3">
+                <label class="form-label small fw-bold text-muted">Subscription Expiry Date</label>
+                <input type="date" class="form-control" name="expiry" id="editUserExpiry">
+            </div>
+          </div>
+          <div class="modal-footer border-top-0 justify-content-center pb-4">
+            <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+            <button type="submit" class="btn btn-info px-4 fw-bold text-white">Save Changes</button>
+          </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <div class="modal fade" id="linkModal" tabindex="-1">
@@ -258,6 +323,7 @@
 <script>
     const linkModal = new bootstrap.Modal(document.getElementById('linkModal'));
     const passwordModal = new bootstrap.Modal(document.getElementById('passwordModal'));
+    const editUserModal = new bootstrap.Modal(document.getElementById('editUserModal'));
     
     function generateLink(uid) {
         document.body.style.cursor = 'wait';
@@ -282,6 +348,13 @@
         document.getElementById('resetUserId').value = uid;
         document.getElementById('resetUsername').textContent = username;
         passwordModal.show();
+    }
+
+    function openEditModal(uid, email, expiry) {
+        document.getElementById('editUserId').value = uid;
+        document.getElementById('editUserEmail').value = email;
+        document.getElementById('editUserExpiry').value = expiry;
+        editUserModal.show();
     }
 
     function copyLink() {
