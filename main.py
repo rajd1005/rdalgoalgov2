@@ -69,6 +69,18 @@ with app.app_context():
         print(f"⚠️ DB Patch Note: {e}")
     # --------------------------------------
 
+    # --- [FIX: HISTORY BOTTLENECK MIGRATION] ---
+    try:
+        # 5. Fix Missing user_id in TradeHistory and Create Index (CRITICAL PERFORMANCE FIX)
+        db.session.execute(text('ALTER TABLE trade_history ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
+        db.session.execute(text('CREATE INDEX IF NOT EXISTS idx_trade_history_user_id ON trade_history(user_id)'))
+        db.session.commit()
+        print("✅ TradeHistory Optimized: user_id Column & Index Added")
+    except Exception as e:
+        db.session.rollback()
+        print(f"⚠️ History Patch Note: {e}")
+    # -------------------------------------------
+
 # Initialize Login Manager
 login_manager = LoginManager()
 login_manager.init_app(app)
