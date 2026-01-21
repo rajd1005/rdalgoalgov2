@@ -8,7 +8,6 @@ db = SQLAlchemy()
 class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(150), unique=True, nullable=False)
-    # UPDATED: Increased length from 150 to 255 to fit Scrypt hashes
     password = db.Column(db.String(255), nullable=False) 
     is_admin = db.Column(db.Boolean, default=False)
     
@@ -16,7 +15,7 @@ class User(UserMixin, db.Model):
     subscription_end = db.Column(db.DateTime, nullable=True)
     is_trial = db.Column(db.Boolean, default=False)
     
-    # Zerodha Credentials (Encrypted/Stored as JSON)
+    # Zerodha Credentials
     zerodha_creds = db.Column(db.Text, nullable=True) 
     
     def set_creds(self, api_key, api_secret, totp, uid, pwd):
@@ -35,29 +34,27 @@ class User(UserMixin, db.Model):
 
     @property
     def is_active_sub(self):
-        """Check if subscription is valid"""
         if self.is_admin: return True
         return self.subscription_end and self.subscription_end > datetime.now()
 
 class AppSetting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    data = db.Column(db.Text, nullable=False) # Stores JSON string
+    # --- NEW: Link Settings to a User ---
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=True) 
+    data = db.Column(db.Text, nullable=False) 
 
 class ActiveTrade(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    data = db.Column(db.Text, nullable=False) # Stores JSON string
+    data = db.Column(db.Text, nullable=False) 
 
 class TradeHistory(db.Model):
-    # BigInteger to handle timestamp IDs safely
     id = db.Column(db.BigInteger, primary_key=True)
-    data = db.Column(db.Text, nullable=False) # Stores JSON string
+    data = db.Column(db.Text, nullable=False) 
 
 class RiskState(db.Model):
-    # Stores persistent state for Profit Locking (High PnL, Global SL)
-    id = db.Column(db.String(10), primary_key=True) # "LIVE" or "PAPER"
-    data = db.Column(db.Text, nullable=False) # JSON string
+    id = db.Column(db.String(50), primary_key=True) # Changed to 50 to fit "user_id_mode"
+    data = db.Column(db.Text, nullable=False) 
 
-# --- NEW TABLE: Telegram Message Tracking ---
 class TelegramMessage(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     trade_id = db.Column(db.String(50), nullable=False, index=True)
