@@ -55,6 +55,14 @@ with app.app_context():
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_login_date DATE'))
         db.session.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_manager BOOLEAN DEFAULT FALSE'))
         db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        
+    # --- FIX: NEW MIGRATION FOR ACTIVE TRADES ---
+    try:
+        # 4. Fix Missing user_id in ActiveTrade (CRITICAL FIX)
+        db.session.execute(text('ALTER TABLE active_trade ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES "user"(id)'))
+        db.session.commit()
         print("✅ Database Patched: Schema Updated Successfully")
     except Exception as e:
         db.session.rollback()
