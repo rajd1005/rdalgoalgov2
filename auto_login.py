@@ -18,21 +18,16 @@ logger = logging.getLogger(__name__)
 def perform_auto_login(kite_instance, user_specific_creds=None):
     """
     Performs auto-login using Selenium with Multi-User support.
-    
-    Args:
-        kite_instance: The user's KiteConnect object.
-        user_specific_creds (dict): Dictionary containing 'user_id', 'password', 'totp'.
+    Includes Anti-Detection and Extended Timeouts for Cloud execution.
     """
     driver = None
     
     # --- 1. RESOLVE CREDENTIALS ---
-    # Prioritize passed credentials (Multi-User), fallback to Config (Single-User/Legacy)
     if user_specific_creds:
         USER_ID = user_specific_creds.get('user_id')
         PASSWORD = user_specific_creds.get('password')
         TOTP_SECRET = user_specific_creds.get('totp')
     else:
-        # Fallback for backward compatibility
         USER_ID = config.ZERODHA_USER_ID
         PASSWORD = config.ZERODHA_PASSWORD
         TOTP_SECRET = config.TOTP_SECRET
@@ -44,13 +39,21 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         login_url = kite_instance.login_url()
         logger.info(f"Starting Auto-Login for User: {USER_ID}")
 
-        # --- 2. CONFIGURE CHROME OPTIONS ---
+        # --- 2. CONFIGURE CHROME OPTIONS (ANTI-DETECTION) ---
         chrome_options = Options()
-        chrome_options.add_argument("--headless")  # Run in background
+        # Use 'new' headless mode for better stability
+        chrome_options.add_argument("--headless=new") 
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--window-size=1920,1080")
+        
+        # CRITICAL: Hide Automation Flags to bypass basic bot detection
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option("useAutomationExtension", False)
+        # Mimic a real user agent
+        chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
         
         # --- 3. INITIALIZE DRIVER ---
         driver = webdriver.Chrome(
@@ -60,24 +63,40 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         
         # --- 4. LOGIN FLOW ---
         driver.get(login_url)
-        wait = WebDriverWait(driver, 15)
+        # Increased Timeout to 45s for slow cloud containers
+        wait = WebDriverWait(driver, 45) 
+
+        logger.info("Page loaded. Attempting User ID...")
 
         # Step A: Enter User ID
-        user_id_field = wait.until(EC.presence_of_element_located((By.ID, "userid")))
-        user_id_field.send_keys(USER_ID)
+        try:
+            user_id_field = wait.until(EC.presence_of_element_located((By.ID, "userid")))
+            user_id_field.clear()
+            user_id_field.send_keys(USER_ID)
+            logger.info("User ID entered.")
+        except Exception as e:
+            return None, f"Failed at User ID: {str(e)}"
         
         # Step B: Enter Password
-        password_field = wait.until(EC.presence_of_element_located((By.ID, "password")))
-        password_field.send_keys(PASSWORD)
+        try:
+            password_field = wait.until(EC.presence_of_element_located((By.ID, "password")))
+            password_field.clear()
+            password_field.send_keys(PASSWORD)
+            logger.info("Password entered.")
+        except Exception as e:
+            return None, f"Failed at Password: {str(e)}"
         
         # Step C: Click Login Button
-        login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
-        login_btn.click()
+        try:
+            login_btn = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']")))
+            login_btn.click()
+            logger.info("Login clicked. Waiting for TOTP...")
+        except Exception as e:
+            return None, f"Failed clicking Login: {str(e)}"
         
         # Step D: Handle TOTP (2FA)
         try:
-            # Wait for TOTP field to appear (it might be labeled 'userid' again in DOM or specific class)
-            # Zerodha sometimes reuses IDs. Using input with minlength=6 covers most 2FA inputs.
+            # Wait for TOTP field to appear
             totp_field = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='text'][minlength='6']")))
             
             # Generate TOTP
@@ -85,23 +104,28 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
             token_code = totp.now()
             
             totp_field.send_keys(token_code)
+            logger.info(f"TOTP Entered ({token_code}).")
             
-            # Wait for redirection/submission
-            # Sometimes need to click continue, sometimes auto-submits. Check for button.
+            # Note: Zerodha often auto-submits after TOTP. 
+            # We check for a submit button just in case, but don't fail if it's missing.
             try:
-                # Attempt to click continue if it exists and is clickable
+                time.sleep(1) # Brief pause for UI update
                 continue_btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
                 continue_btn.click()
             except:
-                pass # Auto-submit might have happened
+                pass # Usually auto-submits
                 
         except Exception as e:
-            logger.error(f"TOTP Step Error: {e}")
-            return None, f"TOTP Error: {str(e)}"
+            # Check if we are already redirected (Success) before failing
+            if "request_token" in driver.current_url:
+                logger.info("Redirected before TOTP entry (Session might be active).")
+            else:
+                logger.error(f"TOTP Step Error: {e}")
+                # Debug: Print page title to see where we stuck
+                return None, f"TOTP Error: {str(e)} | Page: {driver.title}"
 
         # --- 5. CAPTURE REQUEST TOKEN ---
-        # Wait for the redirect to our callback URL
-        # We look for 'request_token' in the current URL
+        logger.info("Waiting for Redirect...")
         
         def check_url_for_token(d):
             return "request_token=" in d.current_url
@@ -109,8 +133,8 @@ def perform_auto_login(kite_instance, user_specific_creds=None):
         try:
             wait.until(check_url_for_token)
         except Exception:
-            # If timeout, check if we are on an error page or still on login
-            return None, f"Redirect Timeout. Current URL: {driver.current_url}"
+            # Log the URL we got stuck on for debugging
+            return None, f"Redirect Timeout. Stuck at: {driver.current_url}"
 
         current_url = driver.current_url
         logger.info("Redirect URL Captured.")
