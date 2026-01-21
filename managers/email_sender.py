@@ -1,13 +1,21 @@
 import smtplib
 import json
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from database import db, SystemConfig
 
+# --- IPv4 FORCING PATCH ---
+# This ensures we don't try to connect via IPv6 (which causes Errno 101 in Docker)
+orig_getaddrinfo = socket.getaddrinfo
+
+def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+    # Force AF_INET (IPv4) family
+    return orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
 def get_smtp_config():
     """
     Fetches SMTP settings from the database.
-    Returns a dictionary or None.
     """
     try:
         conf_row = SystemConfig.query.filter_by(key="smtp_config").first()
@@ -20,8 +28,7 @@ def get_smtp_config():
 def send_email(to_email, subject, body_html):
     """
     Sends an email using the SMTP settings stored in DB.
-    Supports both STARTTLS (587) and SSL (465).
-    Includes a 10-second timeout to prevent worker crashes.
+    Forces IPv4 to prevent '[Errno 101] Network is unreachable' in Docker.
     """
     config = get_smtp_config()
     
@@ -42,6 +49,9 @@ def send_email(to_email, subject, body_html):
     if not all([smtp_server, sender_email, sender_password]):
         return {"status": "error", "message": "Incomplete SMTP settings in database."}
 
+    # --- APPLY IPv4 PATCH ---
+    socket.getaddrinfo = getaddrinfo_ipv4
+
     try:
         # Create Message Object
         msg = MIMEMultipart()
@@ -51,14 +61,13 @@ def send_email(to_email, subject, body_html):
         msg.attach(MIMEText(body_html, 'html'))
 
         # Connect to Server with Timeout
+        # (Timeout prevents worker hangs if server is unresponsive)
         if smtp_port == 465:
-            # SSL Connection (Legacy/Specific Providers like Yahoo/older Gmail)
-            # ADDED timeout=10 to prevent hanging
-            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10)
+            # SSL Connection (Legacy/Specific Providers)
+            server = smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=15)
         else:
-            # TLS Connection (Standard for Gmail/Outlook/AWS on 587)
-            # ADDED timeout=10 to prevent hanging
-            server = smtplib.SMTP(smtp_server, smtp_port, timeout=10)
+            # TLS Connection (Standard for Gmail/Outlook 587)
+            server = smtplib.SMTP(smtp_server, smtp_port, timeout=15)
             server.starttls() # Upgrade connection to secure
 
         # Login and Send
@@ -69,10 +78,13 @@ def send_email(to_email, subject, body_html):
         return {"status": "success"}
 
     except smtplib.SMTPAuthenticationError:
-        return {"status": "error", "message": "SMTP Authentication Failed. Check Email/Password."}
-    except smtplib.SMTPConnectError:
-        return {"status": "error", "message": "Could not connect to SMTP Server."}
+        return {"status": "error", "message": "SMTP Authentication Failed. Check Email/App Password."}
     except Exception as e:
         error_msg = str(e)
         print(f"❌ Email Send Error: {error_msg}")
         return {"status": "error", "message": f"Email Failed: {error_msg}"}
+        
+    finally:
+        # --- REMOVE IPv4 PATCH ---
+        # Restore original socket behavior to not affect other parts of the app
+        socket.getaddrinfo = orig_getaddrinfo
