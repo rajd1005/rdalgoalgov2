@@ -10,7 +10,8 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(150), unique=True, nullable=False) # Acts as the primary Login ID (Email)
     email = db.Column(db.String(150), unique=True, nullable=True)     # Explicit Email column for notifications
     password = db.Column(db.String(255), nullable=False) 
-    is_admin = db.Column(db.Boolean, default=False)
+    is_admin = db.Column(db.Boolean, default=False)   # Super Admin (Full Access)
+    is_manager = db.Column(db.Boolean, default=False) # New: Manager (Admin Panel Access Only, No Dashboard)
     
     # Access Control (Revoke Access)
     is_blocked = db.Column(db.Boolean, default=False)
@@ -43,12 +44,13 @@ class User(UserMixin, db.Model):
 
     @property
     def is_active_sub(self):
-        if self.is_admin: return True
+        # Admins and Managers are exempt from subscription checks
+        if self.is_admin or self.is_manager: return True
         return self.subscription_end and self.subscription_end > datetime.now()
 
 class SystemConfig(db.Model):
     """
-    Stores global system configurations like SMTP settings.
+    Stores global system configurations like SMTP settings and Email Templates.
     Key-Value pair storage.
     """
     id = db.Column(db.Integer, primary_key=True)
