@@ -1,7 +1,7 @@
 import time
 import copy
 import smart_trader
-from managers.persistence import TRADE_LOCK, load_trades, save_trades
+from managers.persistence import TRADE_LOCK, load_trades, save_trades, get_user_lock
 from managers.common import get_time_str, log_event
 from managers import broker_ops
 from managers.telegram_manager import bot as telegram_bot
@@ -15,7 +15,8 @@ def create_trade_direct(kite, mode, specific_symbol, quantity, sl_points, custom
     print(f"[DEBUG] Symbol: {specific_symbol}, Qty: {quantity}")
     
     try:
-        with TRADE_LOCK:
+        # [FIX] Use User-Specific Lock to prevent blocking other users
+        with get_user_lock(user_id):
             trades = load_trades(user_id=user_id)
             current_ts = int(time.time())
             
@@ -211,7 +212,8 @@ def update_trade_protection(kite, trade_id, sl, targets, trailing_sl=0, entry_pr
     Updates the protection parameters (SL, Targets, Trailing) for an existing trade.
     Also syncs the changes to the broker if the trade is LIVE.
     """
-    with TRADE_LOCK:
+    # [FIX] Use User-Specific Lock
+    with get_user_lock(user_id):
         trades = load_trades(user_id=user_id)
         updated = False
         
@@ -302,7 +304,8 @@ def manage_trade_position(kite, trade_id, action, lot_size, lots_count, user_id=
     """
     Manages position sizing: Adding lots (Averaging) or Partial Exits.
     """
-    with TRADE_LOCK:
+    # [FIX] Use User-Specific Lock
+    with get_user_lock(user_id):
         trades = load_trades(user_id=user_id)
         updated = False
         
@@ -383,7 +386,8 @@ def promote_to_live(kite, trade_id, user_id=None):
     Promotes a PAPER trade to LIVE execution.
     Places a Market Buy order and a Stop Loss order immediately.
     """
-    with TRADE_LOCK:
+    # [FIX] Use User-Specific Lock
+    with get_user_lock(user_id):
         trades = load_trades(user_id=user_id)
         for t in trades:
             if t['id'] == int(trade_id) and t['mode'] == "PAPER":
@@ -434,7 +438,8 @@ def close_trade_manual(kite, trade_id, user_id=None):
     Manually closes a trade via the UI.
     Squares off position (if Live), cancels SL, and moves to history.
     """
-    with TRADE_LOCK:
+    # [FIX] Use User-Specific Lock
+    with get_user_lock(user_id):
         trades = load_trades(user_id=user_id)
         active_list = []
         found = False
@@ -470,7 +475,7 @@ def close_trade_manual(kite, trade_id, user_id=None):
                             transaction_type=kite.TRANSACTION_TYPE_SELL, 
                             quantity=t['quantity'], 
                             order_type=kite.ORDER_TYPE_MARKET, 
-                            product=kite.PRODUCT_MIS,
+                            product=kite.PRODUCT_MIS, 
                             tag="RD_MANUAL_EXIT"
                         )
                     except: pass
