@@ -301,7 +301,7 @@ class TelegramManager:
                 # Pass User ID to send_message to use correct Token
                 sent_id = self.send_message(msg, reply_to_id=reply_to, override_chat_id=chat_id, user_id=user_id)
                 if sent_id:
-                    self._save_msg_to_db(trade.get('id'), sent_id, chat_id)
+                    self._save_msg_to_db(trade.get('id'), sent_id, chat_id, user_id=user_id)
                     
                     # If NEW_TRADE or First Free Msg, update stored IDs
                     if event_type == "NEW_TRADE" or is_new_thread_start:
@@ -311,13 +311,14 @@ class TelegramManager:
 
         return new_msg_ids
 
-    def _save_msg_to_db(self, trade_id, msg_id, chat_id):
-        """Helper to safely save message ID to database"""
+    def _save_msg_to_db(self, trade_id, msg_id, chat_id, user_id=None):
+        """Helper to safely save message ID to database with User ID Stamp"""
         if not trade_id or not msg_id or not chat_id:
             return
             
         try:
-            rec = TelegramMessage(trade_id=str(trade_id), message_id=msg_id, chat_id=str(chat_id))
+            # Added user_id to the record creation
+            rec = TelegramMessage(trade_id=str(trade_id), message_id=msg_id, chat_id=str(chat_id), user_id=user_id)
             db.session.add(rec)
             db.session.commit()
         except Exception as e:
@@ -325,7 +326,7 @@ class TelegramManager:
             try: db.session.rollback()
             except: pass
 
-    def delete_trade_messages(self, trade_id):
+    def delete_trade_messages(self, trade_id, user_id=None):
         """
         Deletes messages associated with a trade from the database immediately,
         then spawns a background thread to call the Telegram API for cleanup.
@@ -347,9 +348,6 @@ class TelegramManager:
             print(f"🗑️ Deleted {len(messages)} Telegram messages from DB for Trade {trade_id}")
 
             # 4. Background Task Definition
-            # Note: This uses default config (likely admin) for deletion as user_id is hard to trace here.
-            # If User specific deletion is needed, the trade must be fetched to get user_id.
-            # Currently it attempts best-effort cleanup.
             def bg_cleanup(token, items):
                 delete_url = f"{self.base_url}{token}/deleteMessage"
                 for item in items:
@@ -361,7 +359,8 @@ class TelegramManager:
                         print(f"BG Delete Request Error: {req_err}")
 
             # 5. Launch Background Thread
-            conf = self._get_config()
+            # Pass user_id to ensure we load the CORRECT user's token
+            conf = self._get_config(user_id=user_id)
             token = conf.get('bot_token')
             
             if token and msg_data_list:
