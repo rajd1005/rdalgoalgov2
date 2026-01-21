@@ -2,6 +2,7 @@ import requests
 import json
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 import settings
 import smart_trader
 from managers.common import get_time_str
@@ -10,6 +11,9 @@ from database import db, TelegramMessage
 class TelegramManager:
     def __init__(self):
         self.base_url = "https://api.telegram.org/bot"
+        # [OPTIMIZATION] Session for connection reuse and Executor for parallel sending
+        self.session = requests.Session()
+        self.executor = ThreadPoolExecutor(max_workers=10)
 
     def _get_config(self, user_id=None):
         """
@@ -129,7 +133,8 @@ class TelegramManager:
             payload["reply_to_message_id"] = reply_to_id
 
         try:
-            resp = requests.post(url, json=payload, timeout=5)
+            # [OPTIMIZATION] Use persistent session instead of new connection
+            resp = self.session.post(url, json=payload, timeout=5)
             if resp.status_code == 200:
                 return resp.json().get('result', {}).get('message_id')
             else:
@@ -143,29 +148,34 @@ class TelegramManager:
         Sends system status alerts (Online, Offline, Login Success/Fail).
         Uses 'system_channel_id' if set, otherwise uses the default 'channel_id'.
         """
-        conf = self._get_config(user_id=user_id)
-        sys_channel_id = conf.get('system_channel_id')
+        # [OPTIMIZATION] Run in background to avoid blocking startup
+        def _bg_sys_notify():
+            conf = self._get_config(user_id=user_id)
+            sys_channel_id = conf.get('system_channel_id')
 
-        icons = {
-            "STARTUP": "🖥️",
-            "ONLINE": "🟢",
-            "OFFLINE": "🔴",
-            "LOGIN_SUCCESS": "✅",
-            "LOGIN_FAIL": "⚠️",
-            "RESET": "🔄"
-        }
-        icon = icons.get(event_type, "ℹ️")
+            icons = {
+                "STARTUP": "🖥️",
+                "ONLINE": "🟢",
+                "OFFLINE": "🔴",
+                "LOGIN_SUCCESS": "✅",
+                "LOGIN_FAIL": "⚠️",
+                "RESET": "🔄"
+            }
+            icon = icons.get(event_type, "ℹ️")
+            
+            # Format the message
+            text = f"{icon} <b>SYSTEM ALERT: {event_type}</b>\n{message}\nTime: {get_time_str()}"
+            
+            # Send immediately using the system channel (if configured) or default
+            self.send_message(text, override_chat_id=sys_channel_id, user_id=user_id)
         
-        # Format the message
-        text = f"{icon} <b>SYSTEM ALERT: {event_type}</b>\n{message}\nTime: {get_time_str()}"
-        
-        # Send immediately using the system channel (if configured) or default
-        self.send_message(text, override_chat_id=sys_channel_id, user_id=user_id)
+        self.executor.submit(_bg_sys_notify)
 
     def notify_trade_event(self, trade, event_type, extra_data=None):
         """
         Constructs and sends notifications to ALL configured channels based on rules.
         Supports Multi-User by extracting user_id from trade data.
+        [OPTIMIZED] Uses ThreadPool to send messages to all channels in parallel.
         """
         # Extract User ID from trade to load correct settings
         user_id = trade.get('user_id')
@@ -218,7 +228,8 @@ class TelegramManager:
         # User Selection (e.g., ['vip'])
         target_list = trade.get('target_channels') 
 
-        new_msg_ids = {} 
+        new_msg_ids = {}
+        futures_tasks = []
 
         # Loop through channels
         for ch in all_channels:
@@ -296,18 +307,32 @@ class TelegramManager:
                 if header:
                     msg = header + msg
 
-            # --- SEND & SAVE ---
+            # --- SEND (PARALLEL EXECUTION) ---
             if msg:
-                # Pass User ID to send_message to use correct Token
-                sent_id = self.send_message(msg, reply_to_id=reply_to, override_chat_id=chat_id, user_id=user_id)
+                # [OPTIMIZATION] Submit to thread pool instead of blocking
+                future = self.executor.submit(self.send_message, msg, reply_to_id=reply_to, override_chat_id=chat_id, user_id=user_id)
+                futures_tasks.append({
+                    'future': future,
+                    'key': key,
+                    'chat_id': chat_id,
+                    'is_start': (event_type == "NEW_TRADE" or is_new_thread_start)
+                })
+
+        # --- PROCESS RESULTS ---
+        # Wait for all threads to complete and gather results
+        for item in futures_tasks:
+            try:
+                sent_id = item['future'].result() # Blocks until this specific task is done
                 if sent_id:
-                    self._save_msg_to_db(trade.get('id'), sent_id, chat_id, user_id=user_id)
+                    self._save_msg_to_db(trade.get('id'), sent_id, item['chat_id'], user_id=user_id)
                     
                     # If NEW_TRADE or First Free Msg, update stored IDs
-                    if event_type == "NEW_TRADE" or is_new_thread_start:
-                        new_msg_ids[key] = sent_id
+                    if item['is_start']:
+                        new_msg_ids[item['key']] = sent_id
                         # Update trade object for persistence
-                        trade['telegram_msg_ids'][key] = sent_id
+                        trade['telegram_msg_ids'][item['key']] = sent_id
+            except Exception as e:
+                print(f"Telegram Parallel Send Error: {e}")
 
         return new_msg_ids
 
@@ -349,14 +374,16 @@ class TelegramManager:
 
             # 4. Background Task Definition
             def bg_cleanup(token, items):
-                delete_url = f"{self.base_url}{token}/deleteMessage"
-                for item in items:
-                    try:
-                        requests.post(delete_url, json=item, timeout=5)
-                        # Small sleep to prevent rate limiting if many messages
-                        time.sleep(0.1) 
-                    except Exception as req_err:
-                        print(f"BG Delete Request Error: {req_err}")
+                # [OPTIMIZATION] Use a local Session for the background thread
+                with requests.Session() as s:
+                    delete_url = f"{self.base_url}{token}/deleteMessage"
+                    for item in items:
+                        try:
+                            s.post(delete_url, json=item, timeout=5)
+                            # Small sleep to prevent rate limiting if many messages
+                            time.sleep(0.05) 
+                        except Exception as req_err:
+                            print(f"BG Delete Request Error: {req_err}")
 
             # 5. Launch Background Thread
             # Pass user_id to ensure we load the CORRECT user's token
