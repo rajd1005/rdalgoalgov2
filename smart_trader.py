@@ -47,26 +47,30 @@ def fetch_instruments(alice):
     
     # 1. Download Contracts (Try Library First, then Fallback)
     for exch in ["NSE", "NFO", "MCX"]:
+        success = False
         try:
             # Attempt to use the library method
             alice.get_contract_master(exch)
+            success = True
         except Exception as e:
             print(f"⚠️ Library method failed for {exch}: {e}")
+        
+        if not success:
             # Fallback to manual download
             manual_download_contract(exch)
         
     try:
         # 2. Load CSVs into Pandas
-        # pya3 usually saves them as 'NSE.csv', 'NFO.csv', 'MCX.csv' in current dir
         dfs = []
         for exch in ['NSE', 'NFO', 'MCX']:
             fname = f"{exch}.csv"
             if os.path.exists(fname):
-                # AliceBlue CSV headers are typically:
-                # Exchange,Token,LotSize,Symbol,TradingSymbol,ExpiryDate,Instrument,OptionType,StrikePrice
                 try:
+                    # Low_memory=False to prevent mixed type warnings on large files
                     df = pd.read_csv(fname, low_memory=False)
                     df['exchange'] = exch
+                    # Clean Headers (Strip whitespace)
+                    df.columns = df.columns.str.strip()
                     dfs.append(df)
                 except Exception as e:
                     print(f"⚠️ Error reading {fname}: {e}")
@@ -76,49 +80,76 @@ def fetch_instruments(alice):
             return
 
         instrument_dump = pd.concat(dfs, ignore_index=True)
+        # De-fragment frame to improve performance and stop warnings
+        instrument_dump = instrument_dump.copy()
         
-        # 3. Normalize Columns to match existing logic
-        # Map AliceBlue cols to standard cols used in this app
-        # Expected: name, tradingsymbol, expiry_str, strike, instrument_type, lot_size, token
-        
-        # Rename columns if they exist (Header names might vary slightly based on pya3 version, using common keys)
-        col_map = {
-            'Symbol': 'name',
-            'TradingSymbol': 'tradingsymbol', 
-            'Token': 'instrument_token', 
-            'LotSize': 'lot_size',
-            'StrikePrice': 'strike',
-            'ExpiryDate': 'expiry_orig'
+        # 3. Robust Column Renaming
+        # Define possible aliases for standard columns found in AliceBlue CSVs
+        column_aliases = {
+            'name': ['Symbol', 'symbol', 'SYMBOL'],
+            'tradingsymbol': ['TradingSymbol', 'tradingsymbol', 'TrdSym', 'TRDSYM'],
+            'instrument_token': ['Token', 'token', 'TOKEN', 'ScripCode'],
+            'lot_size': ['LotSize', 'lot_size', 'Lot', 'LOT'],
+            'strike': ['StrikePrice', 'strike', 'Strike', 'STRIKE'],
+            'expiry_orig': ['ExpiryDate', 'expiry', 'Expiry'],
+            'inst_type_raw': ['Instrument', 'instrument', 'INST'],
+            'opt_type_raw': ['OptionType', 'option_type', 'OPTTYPE']
         }
-        instrument_dump.rename(columns=col_map, inplace=True)
+
+        # Find and rename matching columns
+        rename_dict = {}
+        for target_col, aliases in column_aliases.items():
+            for alias in aliases:
+                if alias in instrument_dump.columns:
+                    rename_dict[alias] = target_col
+                    break # Use the first match found
         
-        # standardize instrument_type
-        def normalize_inst_type(row):
-            itype = str(row.get('Instrument', '')).upper()
-            otype = str(row.get('OptionType', '')).upper()
-            exch_val = str(row.get('exchange', ''))
+        instrument_dump.rename(columns=rename_dict, inplace=True)
+
+        # Critical Check for Required Columns
+        if 'name' not in instrument_dump.columns:
+            print(f"❌ Error: 'name' column missing. Available columns: {list(instrument_dump.columns)}")
+            # Fallback: create name from tradingsymbol if possible
+            if 'tradingsymbol' in instrument_dump.columns:
+                print("⚠️ Auto-fixing: Using 'tradingsymbol' as 'name'")
+                instrument_dump['name'] = instrument_dump['tradingsymbol']
+            else:
+                return # Cannot proceed
+
+        # 4. Standardize Instrument Type (Optimized)
+        # We calculate this using list comprehension to avoid DataFrame fragmentation
+        
+        # Get columns safely
+        inst_col = instrument_dump['inst_type_raw'].astype(str).str.upper() if 'inst_type_raw' in instrument_dump.columns else pd.Series([""] * len(instrument_dump))
+        opt_col = instrument_dump['opt_type_raw'].astype(str).str.upper() if 'opt_type_raw' in instrument_dump.columns else pd.Series([""] * len(instrument_dump))
+        exch_col = instrument_dump['exchange'].astype(str)
+        
+        types = []
+        # Vectorized logic is hard here due to mixed conditions, using fast loop
+        for i in range(len(instrument_dump)):
+            itype = inst_col.iloc[i]
+            otype = opt_col.iloc[i]
+            exch = exch_col.iloc[i]
             
             if 'OPT' in itype:
-                return otype # CE or PE
-            if 'FUT' in itype:
-                return 'FUT'
-            if 'EQ' in itype or exch_val == 'NSE':
-                return 'EQ'
-            return 'EQ'
-
-        instrument_dump['instrument_type'] = instrument_dump.apply(normalize_inst_type, axis=1)
+                types.append(otype) # CE or PE
+            elif 'FUT' in itype:
+                types.append('FUT')
+            elif 'EQ' in itype or exch == 'NSE':
+                types.append('EQ')
+            else:
+                types.append('EQ') # Default
         
-        # Parse Dates
+        instrument_dump['instrument_type'] = types
+        
+        # 5. Parse Dates (Optimized)
         def parse_expiry(val):
             try:
-                # Try epoch first (if int/float)
                 if is_number(val):
-                    # check if seconds or ms
-                    if val > 10000000000: # likely ms
+                    # Check if milliseconds (13 digits) or seconds (10 digits)
+                    if val > 10000000000: 
                         return datetime.fromtimestamp(val/1000).date()
                     return datetime.fromtimestamp(val).date()
-                
-                # Try string parse
                 return pd.to_datetime(val).date()
             except:
                 return None
@@ -127,35 +158,36 @@ def fetch_instruments(alice):
             instrument_dump['expiry_date'] = instrument_dump['expiry_orig'].apply(parse_expiry)
             instrument_dump['expiry_str'] = instrument_dump['expiry_date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else None)
         
-        # Clean Name (Remove white spaces)
+        # Clean Strings
         instrument_dump['name'] = instrument_dump['name'].astype(str).str.strip().str.upper()
-        instrument_dump['tradingsymbol'] = instrument_dump['tradingsymbol'].astype(str).str.strip().str.upper()
+        if 'tradingsymbol' in instrument_dump.columns:
+            instrument_dump['tradingsymbol'] = instrument_dump['tradingsymbol'].astype(str).str.strip().str.upper()
 
-        # 4. Build Fast Lookup Cache (Symbol -> Instrument Object/Dict)
+        # 6. Build Fast Lookup Cache
         print("⚡ Building Fast Lookup Cache...")
         
-        # Prioritize exchanges: NFO > MCX > NSE
         exchange_priority = {'NFO': 0, 'MCX': 1, 'NSE': 2, 'BSE': 3}
         instrument_dump['priority'] = instrument_dump['exchange'].map(exchange_priority).fillna(99)
         instrument_dump.sort_values('priority', inplace=True)
         
-        # Drop duplicates on tradingsymbol
-        unique_symbols = instrument_dump.drop_duplicates(subset=['tradingsymbol'])
-        
-        # Set index
-        symbol_map = unique_symbols.set_index('tradingsymbol').to_dict('index')
-        
-        print(f"✅ Instruments Indexed. Count: {len(instrument_dump)}")
+        if 'tradingsymbol' in instrument_dump.columns:
+            unique_symbols = instrument_dump.drop_duplicates(subset=['tradingsymbol'])
+            symbol_map = unique_symbols.set_index('tradingsymbol').to_dict('index')
+            print(f"✅ Instruments Indexed. Count: {len(instrument_dump)}")
+        else:
+            print("❌ Error: 'tradingsymbol' column missing, cannot build map.")
+            symbol_map = {}
         
     except Exception as e:
         print(f"❌ Failed to fetch/process instruments: {e}")
+        import traceback
+        traceback.print_exc()
         if instrument_dump is None: instrument_dump = pd.DataFrame()
         symbol_map = {}
 
 def get_alice_instrument(alice, symbol):
     """
     Resolves a string symbol (e.g. 'NFO:NIFTY24JAN...') to an AliceBlue Instrument object.
-    Required for placing orders or fetching specific LTP.
     """
     global symbol_map
     
@@ -170,12 +202,11 @@ def get_alice_instrument(alice, symbol):
     # 2. Try Map Lookup first (Fastest)
     if symbol_map and trd_sym in symbol_map:
         row = symbol_map[trd_sym]
-        # Use AliceBlue SDK method to get instrument by token/symbol
         try:
             return alice.get_instrument_by_symbol(row['exchange'], row['tradingsymbol'])
         except: pass
     
-    # 3. Try Direct SDK Lookup if map fails
+    # 3. Try Direct SDK Lookup
     if exch:
         try:
             return alice.get_instrument_by_symbol(exch, trd_sym)
@@ -184,12 +215,8 @@ def get_alice_instrument(alice, symbol):
     return None
 
 def get_exchange_name(symbol):
-    """
-    Determines the exchange (NSE, NFO, MCX) for a given symbol.
-    """
     global symbol_map
     if ":" in symbol: return symbol.split(":")[0]
-    
     if symbol_map and symbol in symbol_map:
         return symbol_map[symbol]['exchange']
     
@@ -199,14 +226,10 @@ def get_exchange_name(symbol):
     return "NSE"
 
 def get_ltp(alice, symbol):
-    """
-    Fetches the Last Traded Price (LTP).
-    """
     try:
         inst = get_alice_instrument(alice, symbol)
         if not inst: return 0.0
         
-        # Get Live Feed
         quote = alice.get_scrip_info(inst)
         if quote and 'LTP' in quote:
             return float(quote['LTP'])
@@ -216,16 +239,11 @@ def get_ltp(alice, symbol):
         return 0.0
 
 def get_indices_ltp(alice):
-    """
-    Fetches NIFTY 50, BANKNIFTY, SENSEX.
-    AliceBlue index symbols can vary. Assuming standard names or tokens.
-    """
     indices = {"NIFTY": 0, "BANKNIFTY": 0, "SENSEX": 0}
     try:
-        # Define Instruments (You might need to adjust 'Nifty 50' based on exact Alice CSV name)
         nifty = alice.get_instrument_by_symbol("NSE", "Nifty 50")
         bank = alice.get_instrument_by_symbol("NSE", "Nifty Bank")
-        sensex = alice.get_instrument_by_symbol("BSE", "SENSEX") # If enabled
+        sensex = alice.get_instrument_by_symbol("BSE", "SENSEX")
         
         if nifty:
             q = alice.get_scrip_info(nifty)
@@ -243,7 +261,6 @@ def get_indices_ltp(alice):
     return indices
 
 def get_zerodha_symbol(common_name):
-    # Normalized name helper
     if not common_name: return ""
     cleaned = common_name
     if "(" in cleaned: cleaned = cleaned.split("(")[0]
@@ -261,7 +278,6 @@ def get_lot_size(tradingsymbol):
     return 1
 
 def get_display_name(tradingsymbol):
-    # Make symbol readable (e.g., NIFTY 21500 CE)
     global symbol_map
     if not symbol_map: return tradingsymbol
     
@@ -272,7 +288,6 @@ def get_display_name(tradingsymbol):
             inst_type = data['instrument_type']
             expiry_str = data.get('expiry_str', '')
             
-            # Format Expiry date to something short like '24 JAN'
             if expiry_str:
                 try:
                     dt = datetime.strptime(expiry_str, '%Y-%m-%d')
@@ -291,10 +306,6 @@ def get_display_name(tradingsymbol):
         return tradingsymbol
 
 def search_symbols(alice, keyword, allowed_exchanges=None):
-    """
-    Search using local dataframe for speed, or alice search API.
-    Local DF is preferred for consistency with filters.
-    """
     global instrument_dump
     
     if instrument_dump is None or instrument_dump.empty: 
@@ -316,8 +327,6 @@ def search_symbols(alice, keyword, allowed_exchanges=None):
         
         results = []
         for _, row in unique_matches.iterrows():
-            # We don't fetch LTP here to keep search fast, just return name
-            # Format: Name (Exch) : Token
             results.append(f"{row['name']} ({row['exchange']})")
             
         return results
@@ -326,9 +335,6 @@ def search_symbols(alice, keyword, allowed_exchanges=None):
         return []
 
 def get_symbol_details(alice, symbol, preferred_exchange=None):
-    """
-    Get detailed info (LTP, Expiries) for a UI modal.
-    """
     global instrument_dump
     if instrument_dump is None or instrument_dump.empty: fetch_instruments(alice)
     if instrument_dump is None or instrument_dump.empty: return {}
@@ -338,23 +344,17 @@ def get_symbol_details(alice, symbol, preferred_exchange=None):
     clean = get_zerodha_symbol(symbol)
     today = datetime.now(IST).date()
     
-    # Filter DF for this name
     rows = instrument_dump[instrument_dump['name'] == clean]
     if rows.empty: return {}
 
-    # Get LTP for underlying
     ltp = 0
     try:
-        # Try finding the equity or index underlying
-        # Priority: NSE > BSE
         underlying = rows[rows['instrument_type'] == 'EQ']
         if not underlying.empty:
-            # Pick NSE if avail
             u_row = underlying[underlying['exchange']=='NSE'].iloc[0] if not underlying[underlying['exchange']=='NSE'].empty else underlying.iloc[0]
             ltp = get_ltp(alice, f"{u_row['exchange']}:{u_row['tradingsymbol']}")
     except: pass
     
-    # If no equity ltp, try Near Month Future
     if ltp == 0:
         try:
             futs = rows[(rows['instrument_type'] == 'FUT') & (rows['expiry_date'] >= today)].sort_values('expiry_date')
@@ -364,12 +364,10 @@ def get_symbol_details(alice, symbol, preferred_exchange=None):
         except: pass
 
     lot = 1
-    # Get Lot Size from first FNO record
     fno_rows = rows[rows['exchange'].isin(['NFO', 'MCX'])]
     if not fno_rows.empty:
         lot = int(fno_rows.iloc[0]['lot_size'])
 
-    # Get Expiries
     f_exp = []
     o_exp = []
     
@@ -380,16 +378,12 @@ def get_symbol_details(alice, symbol, preferred_exchange=None):
     return {"symbol": clean, "ltp": ltp, "lot_size": lot, "fut_expiries": f_exp, "opt_expiries": o_exp}
 
 def get_chain_data(symbol, expiry_date, option_type, ltp):
-    """
-    Builds option chain data from local dataframe.
-    """
     global instrument_dump
     if instrument_dump is None or instrument_dump.empty: return []
     clean = get_zerodha_symbol(symbol)
     
     if 'expiry_str' not in instrument_dump.columns: return []
     
-    # Filter
     c = instrument_dump[
         (instrument_dump['name'] == clean) & 
         (instrument_dump['expiry_str'] == expiry_date) & 
@@ -400,8 +394,6 @@ def get_chain_data(symbol, expiry_date, option_type, ltp):
     strikes = sorted(c['strike'].unique().tolist())
     if not strikes: return []
     
-    # Label ITM/OTM/ATM
-    # Find ATM
     atm = min(strikes, key=lambda x: abs(x - ltp))
     
     res = []
@@ -414,16 +406,12 @@ def get_chain_data(symbol, expiry_date, option_type, ltp):
     return res
 
 def get_exact_symbol(symbol, expiry, strike, option_type):
-    """
-    Reconstructs the trading symbol for order placement.
-    """
     global instrument_dump
     if instrument_dump is None or instrument_dump.empty: return None
     
     clean = get_zerodha_symbol(symbol)
     
     if option_type == "EQ":
-        # Return first EQ match
         mask = (instrument_dump['name'] == clean) & (instrument_dump['instrument_type'] == 'EQ')
         if mask.any(): return instrument_dump[mask].iloc[0]['tradingsymbol']
         return symbol
@@ -449,30 +437,20 @@ def get_specific_ltp(alice, symbol, expiry, strike, inst_type):
     ts = get_exact_symbol(symbol, expiry, strike, inst_type)
     if not ts: return 0.0
     
-    # Get Exchange
-    exch = "NFO" # default
+    exch = "NFO" 
     if symbol_map and ts in symbol_map:
         exch = symbol_map[ts]['exchange']
         
     return get_ltp(alice, f"{exch}:{ts}")
 
 def get_instrument_token(tradingsymbol, exchange):
-    # Required for Historical Data
     global symbol_map
     if symbol_map and tradingsymbol in symbol_map:
         return symbol_map[tradingsymbol]['instrument_token']
     return None
 
 def fetch_historical_data(alice, token, from_date, to_date, interval='1'):
-    # AliceBlue Historical Data
-    # Note: alice.get_historical needs an instrument object.
-    # token is passed, we need to find the instrument object first.
-    # This is complex without the object. We might need to change architecture to pass symbol.
-    # For now, return empty as historical isn't strictly used in the main logic (only Replay).
     return []
 
 def get_telegram_symbol(tradingsymbol):
-    # Basic formatter for Telegram
-    # Example: NIFTY24JAN21500CE -> NIFTY 21500 CE 24JAN
-    # Alice symbols might be NIFTY24JAN21500CE
     return get_display_name(tradingsymbol)
