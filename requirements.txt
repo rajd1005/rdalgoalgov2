@@ -7,5 +7,5 @@ psycopg2-binary==2.9.11
 pytz==2025.1
 pyotp==2.9.0
 selenium==4.40.0
-webdriver-manager==4.0.3
+webdriver-manager==4.0.2
 requests==2.32.5
