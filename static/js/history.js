@@ -72,6 +72,9 @@ function renderClosedTrades(trades) {
                 if(mh < t.exit_price) mh = t.exit_price; 
                 let pot = (mh - t.entry_price) * t.quantity;
                 
+                // --- NEW: Visual Tag for Tracking Status (Virtual SL) ---
+                let trackTag = t.virtual_sl_hit ? '🔴' : '';
+
                 if(pot > 0) {
                     totalPotential += pot; 
                     if (t.targets && t.targets.length >= 3) {
@@ -82,7 +85,7 @@ function renderClosedTrades(trades) {
                     }
                     potHtml = `
                     <div class="mt-2 p-1 rounded bg-light border border-warning border-opacity-25 d-flex justify-content-between align-items-center" style="font-size:0.75rem;">
-                        <span class="text-muted">High: <b>${mh.toFixed(2)}</b></span>
+                        <span class="text-muted">High: <b>${mh.toFixed(2)} ${trackTag}</b></span>
                         <span class="text-success fw-bold">Max Potential: ₹${pot.toFixed(0)}</span>
                     </div>`;
                 }

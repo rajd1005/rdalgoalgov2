@@ -1,5 +1,5 @@
 from managers.common import log_event, get_time_str
-from managers.persistence import get_user_lock, load_trades, save_trades, save_to_history_db
+from managers.persistence import TRADE_LOCK, load_trades, save_trades, save_to_history_db
 import smart_trader
 
 def place_order(kite, symbol, transaction_type, quantity, order_type="MARKET", product="MIS", price=0, trigger_price=0, exchange=None, tag="RD_ALGO"):
@@ -42,7 +42,7 @@ def modify_order(kite, order_id, quantity=None, price=None, trigger_price=None):
         print(f"❌ Order Modification Failed: {e}")
         raise e
 
-def move_to_history(trade, final_status, exit_price, user_id=None):
+def move_to_history(trade, final_status, exit_price):
     """
     Finalizes a trade, calculates PnL, logs the closure, and moves it to the history database.
     """
@@ -66,9 +66,9 @@ def move_to_history(trade, final_status, exit_price, user_id=None):
     if "Closed:" not in str(trade.get('logs', [])):
          log_event(trade, f"Closed: {final_status} @ {exit_price} | P/L ₹ {real_pnl:.2f}")
     
-    save_to_history_db(trade, user_id=user_id)
+    save_to_history_db(trade)
 
-def manage_broker_sl(kite, trade, qty_to_remove=0, cancel_completely=False, user_id=None):
+def manage_broker_sl(kite, trade, qty_to_remove=0, cancel_completely=False):
     """
     Manages the physical Stop Loss order on the Broker (Zerodha) side.
     Can cancel the SL completely or modify the quantity (for partial exits).
@@ -99,23 +99,25 @@ def manage_broker_sl(kite, trade, qty_to_remove=0, cancel_completely=False, user
     except Exception as e:
         log_event(trade, f"⚠️ Broker SL Update Failed: {e}")
 
-def panic_exit_all(kite, user_id=None):
+def panic_exit_all(kite):
     """
-    Emergency Function: Immediately closes all active positions for the specific user.
+    Emergency Function: Immediately closes all active positions.
+    1. Cancels pending Broker SL orders.
+    2. Places Market Sell orders for all open quantities.
+    3. Moves all trades to history with status 'PANIC_EXIT'.
     """
-    # [FIX] Use granular user lock instead of global TRADE_LOCK
-    with get_user_lock(user_id):
-        trades = load_trades(user_id=user_id)
+    with TRADE_LOCK:
+        trades = load_trades()
         if not trades: 
             return True
             
-        print(f"🚨 PANIC MODE TRIGGERED (User {user_id}): Closing {len(trades)} positions.")
+        print(f"🚨 PANIC MODE TRIGGERED: Closing {len(trades)} positions.")
         
         for t in trades:
             # Handle LIVE trades on the broker side
             if t['mode'] == "LIVE" and t['status'] != 'PENDING':
                 # First, cancel the protection SL to avoid double execution
-                manage_broker_sl(kite, t, cancel_completely=True, user_id=user_id)
+                manage_broker_sl(kite, t, cancel_completely=True)
                 
                 # Then place the exit order
                 try: 
@@ -133,9 +135,10 @@ def panic_exit_all(kite, user_id=None):
                     print(f"Panic Broker Fail {t['symbol']}: {e}")
             
             # Move to internal history
+            # Use current_ltp if available, else fallback to entry (neutral exit logic for panic if data missing)
             exit_p = t.get('current_ltp', t['entry_price'])
-            move_to_history(t, "PANIC_EXIT", exit_p, user_id=user_id)
+            move_to_history(t, "PANIC_EXIT", exit_p)
         
-        # Clear active trades list for this user
-        save_trades([], user_id=user_id)
+        # Clear active trades list
+        save_trades([])
         return True

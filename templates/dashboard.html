@@ -6,7 +6,6 @@
     <title>RD Algo Terminal</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </head>
@@ -30,113 +29,40 @@
     {% if not is_active %}
     <div class="custom-card p-5 text-center mt-5">
         
-        {% if state == "SETUP" %}
-             <div class="text-start" style="max-width: 500px; margin: 0 auto;">
-                 <h2 class="text-center mb-3">⚙️ Zerodha Configuration</h2>
-                 <p class="text-muted text-center mb-4">Please enter your API credentials.</p>
-                 
-                 <div class="alert alert-info py-2" style="font-size: 0.9rem;">
-                    <strong>ℹ️ Zerodha App Config:</strong> Copy this URL to your App's <em>Redirect URL</em> settings.
-                    <div class="input-group mt-1">
-                        <input type="text" class="form-control form-control-sm bg-white" value="{{ url_for('callback', _external=True) }}" readonly onclick="this.select()">
-                        <button class="btn btn-outline-secondary btn-sm" onclick="navigator.clipboard.writeText('{{ url_for('callback', _external=True) }}')"><i class="fas fa-copy"></i></button>
-                    </div>
-                 </div>
-
-                 <form id="credsFormSetup">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold small">User ID</label>
-                        <input type="text" class="form-control" name="user_id" placeholder="Ex: DV4043" value="{{ creds.user_id }}">
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold small">API Key</label>
-                            <input type="text" class="form-control" name="api_key" placeholder="Kite Connect API Key" value="{{ creds.api_key }}">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold small">API Secret</label>
-                            <input type="password" class="form-control" name="api_secret" placeholder="Kite Connect API Secret" value="{{ creds.api_secret }}">
-                        </div>
-                    </div>
-                    
-                    <div class="d-grid mt-4">
-                        <button type="button" class="btn btn-primary btn-lg" onclick="saveCredentials('credsFormSetup')">💾 Save Credentials</button>
-                    </div>
-                 </form>
-             </div>
+        {% if state == "WORKING" %}
+            <div class="py-4">
+                <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <h3 class="mt-3">Connecting to Zerodha...</h3>
+                <p class="text-muted">Bypassing security layers. Please wait.</p>
+            </div>
+            <script>
+                // Refresh every 3 seconds to check progress
+                setTimeout(function(){ location.reload(); }, 3000);
+            </script>
 
         {% else %}
-            <div id="offlineView">
-                
-                <h2>🔌 System Offline</h2>
-                {% if error %}
-                    <div class="alert alert-danger mt-3 text-start d-inline-block" style="max-width: 600px;">
-                        <strong><i class="fas fa-exclamation-circle"></i> Error:</strong><br>
-                        {{ error }}
-                    </div>
-                {% else %}
-                    <p class="text-muted mt-2">Connect to Zerodha to start trading.</p>
-                {% endif %}
+            <h2>🔌 System Offline</h2>
+            
+            {% if error %}
+                <div class="alert alert-danger mt-3 text-start">
+                    <strong><i class="fas fa-exclamation-circle"></i> Login Failed:</strong><br>
+                    {{ error }}
+                </div>
+            {% endif %}
 
-                <div class="mt-4 d-flex gap-3 justify-content-center">
-                    <button class="btn btn-secondary" onclick="$('#offlineView').hide(); $('#editCredsView').show();">
-                        <i class="fas fa-cog"></i> Edit Credentials
-                    </button>
-                    
-                    <a href="{{ login_url }}" class="btn btn-primary btn-lg fw-bold shadow">
-                        <i class="fas fa-sign-in-alt"></i> Login with Zerodha
-                    </a>
+            <div class="mt-4">
+                <div class="alert alert-secondary d-inline-block px-4 py-2">
+                    <i class="fas fa-robot"></i> Background Monitor is active. Retrying...
                 </div>
                 
-                <div class="mt-4 border-top pt-3 d-flex justify-content-center gap-3">
-                    {% if current_user.is_admin %}
-                    <a href="/admin" class="btn btn-sm btn-outline-warning">
-                        <i class="fas fa-shield-alt"></i> Admin Panel
-                    </a>
-                    {% endif %}
-                    
-                    <a href="/logout" class="btn btn-sm btn-outline-danger">
-                        <i class="fas fa-power-off"></i> Total Logout
+                <div class="mt-3">
+                     <p class="text-muted small">If auto-login fails repeatedly, use manual login:</p>
+                     <a href="{{ login_url }}" class="btn btn-primary fw-bold">
+                        <i class="fas fa-key"></i> Manual Login (Web)
                     </a>
                 </div>
-            </div>
-
-            <div id="editCredsView" class="text-start" style="display: none; max-width: 500px; margin: 0 auto;">
-                <div class="d-flex justify-content-between align-items-center mb-3">
-                    <h3 class="m-0">Update Credentials</h3>
-                    <button class="btn btn-sm btn-close" onclick="$('#editCredsView').hide(); $('#offlineView').show();"></button>
-                </div>
-                
-                <div class="alert alert-info py-2" style="font-size: 0.9rem;">
-                    <strong>ℹ️ Redirect URL:</strong>
-                    <div class="input-group mt-1">
-                        <input type="text" class="form-control form-control-sm bg-white" value="{{ url_for('callback', _external=True) }}" readonly onclick="this.select()">
-                        <button class="btn btn-outline-secondary btn-sm" onclick="navigator.clipboard.writeText('{{ url_for('callback', _external=True) }}')"><i class="fas fa-copy"></i></button>
-                    </div>
-                </div>
-
-                <form id="credsFormEdit">
-                    <div class="mb-3">
-                        <label class="form-label fw-bold small">User ID</label>
-                        <input type="text" class="form-control" name="user_id" value="{{ creds.user_id }}">
-                    </div>
-                    
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold small">API Key</label>
-                            <input type="text" class="form-control" name="api_key" value="{{ creds.api_key }}">
-                        </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold small">API Secret</label>
-                            <input type="password" class="form-control" name="api_secret" value="{{ creds.api_secret }}">
-                        </div>
-                    </div>
-                    
-                    <div class="d-grid mt-4">
-                        <button type="button" class="btn btn-success btn-lg" onclick="saveCredentials('credsFormEdit')">💾 Update Credentials</button>
-                    </div>
-                 </form>
             </div>
         {% endif %}
 
@@ -155,20 +81,6 @@
             <span class="ticker-item ms-2">TIME: <span id="live_clock" class="text-light">--:-- --</span></span>
         </div>
         <div class="d-flex align-items-center gap-2">
-            {% if current_user.is_admin %}
-            <a href="/admin" class="btn btn-warning fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; border: 1px solid #ffc107; color: #000;">
-                <i class="fas fa-shield-alt"></i> Admin
-            </a>
-            {% endif %}
-
-            <a href="/reset_connection" class="btn btn-outline-light fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; border-color: rgba(255,255,255,0.3);" title="Disconnect / Pause Bot">
-                <i class="fas fa-pause"></i>
-            </a>
-
-            <a href="/logout" class="btn btn-danger fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px;" title="Total Logout">
-                <i class="fas fa-power-off"></i>
-            </a>
-
             <button class="btn btn-secondary fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px;" data-bs-toggle="modal" data-bs-target="#importModal">📥 Import</button>
             <button class="btn btn-danger fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px; box-shadow: 0 0 5px rgba(220,53,69,0.5);" onclick="panicExit()">⚠️ EXIT ALL</button>
             <button class="btn btn-secondary fw-bold" style="font-size: 0.75rem; padding: 4px 10px; border-radius: 4px;" data-bs-toggle="modal" data-bs-target="#settingsModal">⚙️ Settings</button>
@@ -196,48 +108,6 @@
 <script src="{{ url_for('static', filename='js/positions.js') }}"></script>
 <script src="{{ url_for('static', filename='js/history.js') }}"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
-
-<script>
-    function saveCredentials(formId) {
-        const data = {};
-        $('#' + formId).serializeArray().forEach(item => {
-            data[item.name] = item.value;
-        });
-
-        // VALIDATION: Only check User ID and API Keys (Password/TOTP not needed for manual login)
-        if(!data.user_id || !data.api_key || !data.api_secret) {
-            alert("Please fill in User ID, API Key, and API Secret.");
-            return;
-        }
-
-        const btn = $('#' + formId + ' button');
-        const originalText = btn.html();
-        btn.html('<i class="fas fa-spinner fa-spin"></i> Saving...').prop('disabled', true);
-
-        fetch('/api/save_credentials', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(data)
-        })
-        .then(r => r.json())
-        .then(d => {
-            if(d.status === 'success') {
-                location.reload(); 
-            } else {
-                alert('Error saving: ' + d.message);
-                btn.html(originalText).prop('disabled', false);
-            }
-        })
-        .catch(e => {
-            alert('Network Error: ' + e);
-            btn.html(originalText).prop('disabled', false);
-        });
-    }
-
-    function resumeLogin() {
-        location.reload();
-    }
-</script>
 
 </body>
 </html>
