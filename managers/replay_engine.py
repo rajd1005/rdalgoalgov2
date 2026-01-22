@@ -190,33 +190,40 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
                          final_exit_price = ltp
                          break 
             
-            # Post-Exit Scan Logic
+            # Post-Exit Scan Logic (UPDATED)
             if current_qty == 0:
                 skip_scan = (final_status == "SL_HIT" and len(targets_hit_indices) > 0)
                 if not skip_scan:
                     remaining_candles = hist_data[idx+1:]
-                    if remaining_candles:
-                        try:
-                            # Calculate high
-                            max_rest = -1.0
-                            max_time = ""
-                            for c in remaining_candles:
-                                if float(c['high']) > max_rest:
-                                    max_rest = float(c['high'])
-                                    max_time = c['date'] # Capture exact time of high
+                    virtual_sl_price = float(sl_price)
+                    
+                    for c in remaining_candles:
+                        c_h = float(c['high'])
+                        c_l = float(c['low'])
+                        c_time = c['date']
+                        
+                        # 1. CHECK VIRTUAL SL (Stop Tracking if hit)
+                        is_dead = False
+                        if entry_price > virtual_sl_price: # BUY Trade Logic
+                            if c_l <= virtual_sl_price: is_dead = True
+                        else: # SELL Trade Logic
+                            if c_h >= virtual_sl_price: is_dead = True
+                        
+                        if is_dead:
+                            logs.append(f"[{c_time}] 🔴 Virtual SL Hit during scan. Tracking Stopped.")
+                            break # STOP SCANNING
 
-                            if max_rest > highest_ltp:
-                                highest_ltp = max_rest
-                                logs.append(f"[{max_time}] ℹ️ Post-Exit High Detected: {highest_ltp}")
-                                
-                                # ADD NOTIFICATION IF T3 WAS HIT
-                                if 2 in targets_hit_indices:
-                                    notification_queue.append({
-                                        'event': 'HIGH_MADE', 
-                                        'data': {'price': highest_ltp, 'time': max_time}
-                                    })
-                        except Exception as e: 
-                            print(f"Scan Error: {e}")
+                        # 2. CHECK HIGH MADE
+                        if c_h > highest_ltp:
+                            highest_ltp = c_h
+                            logs.append(f"[{c_time}] ℹ️ Post-Exit High Detected: {highest_ltp}")
+                            
+                            # Only Notify if T3 was previously hit (Moon Move Rule)
+                            if 2 in targets_hit_indices:
+                                notification_queue.append({
+                                    'event': 'HIGH_MADE', 
+                                    'data': {'price': highest_ltp, 'time': c_time}
+                                })
                 break 
 
         # 4. Finalize & Save
