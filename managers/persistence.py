@@ -48,21 +48,38 @@ def load_trades():
 
 def save_trades(trades):
     """
-    Overwrites the ActiveTrade table with the provided list of trades.
+    OPTIMIZED: Smart Upsert (Update/Insert) instead of Delete-All.
+    Reduces DB locking and overhead.
     """
     try:
-        # [DEBUG LOG] - Optional: You can comment this out too if needed
-        # ids = [t.get('id') for t in trades]
-        # modes = [t.get('mode') for t in trades]
-        # print(f"[DEBUG] DB SAVE: Saving {len(trades)} trades. IDs: {ids} | Modes: {modes}")
+        # 1. Get IDs of all current DB records
+        existing_records = ActiveTrade.query.all()
+        existing_map = {r.id: r for r in existing_records}
+        
+        # 2. Track IDs present in the new list
+        new_ids = set()
 
-        db.session.query(ActiveTrade).delete()
-        for t in trades: 
-            db.session.add(ActiveTrade(data=json.dumps(t)))
+        for t in trades:
+            t_id = int(t['id'])
+            new_ids.add(t_id)
+            json_data = json.dumps(t)
+            
+            if t_id in existing_map:
+                # Update existing record
+                existing_map[t_id].data = json_data
+            else:
+                # Insert new record
+                new_record = ActiveTrade(id=t_id, data=json_data)
+                db.session.add(new_record)
+        
+        # 3. Delete records that are NOT in the new list (trades that were closed/removed)
+        for old_id, record in existing_map.items():
+            if old_id not in new_ids:
+                db.session.delete(record)
+        
         db.session.commit()
-        # print(f"[DEBUG] DB SAVE: Commit Successful.")
     except Exception as e:
-        print(f"[DEBUG] Save Trades Error: {e}")
+        print(f"Save Trades Error: {e}")
         db.session.rollback()
 
 # --- Trade History Persistence ---
