@@ -24,9 +24,10 @@ def fetch_instruments(alice):
     print("📥 Downloading AliceBlue Master Contracts...")
     try:
         # 1. Download Contracts (Saves to local CSVs automatically by pya3)
-        alice.get_master_contract("NSE")
-        alice.get_master_contract("NFO")
-        alice.get_master_contract("MCX")
+        # FIX: Correct method name is get_contract_master
+        alice.get_contract_master("NSE")
+        alice.get_contract_master("NFO")
+        alice.get_contract_master("MCX")
         
         # 2. Load CSVs into Pandas
         # pya3 usually saves them as 'NSE.csv', 'NFO.csv', 'MCX.csv' in current dir
@@ -36,9 +37,12 @@ def fetch_instruments(alice):
             if os.path.exists(fname):
                 # AliceBlue CSV headers are typically:
                 # Exchange,Token,LotSize,Symbol,TradingSymbol,ExpiryDate,Instrument,OptionType,StrikePrice
-                df = pd.read_csv(fname)
-                df['exchange'] = exch
-                dfs.append(df)
+                try:
+                    df = pd.read_csv(fname)
+                    df['exchange'] = exch
+                    dfs.append(df)
+                except Exception as e:
+                    print(f"⚠️ Error reading {fname}: {e}")
         
         if not dfs:
             print("⚠️ Warning: No contract files found (NSE.csv, etc).")
@@ -70,12 +74,14 @@ def fetch_instruments(alice):
         def normalize_inst_type(row):
             itype = str(row.get('Instrument', '')).upper()
             otype = str(row.get('OptionType', '')).upper()
+            # FIX: Use the row's exchange, not the loop variable
+            exch_val = str(row.get('exchange', ''))
             
             if 'OPT' in itype:
                 return otype # CE or PE
             if 'FUT' in itype:
                 return 'FUT'
-            if 'EQ' in itype or exch == 'NSE':
+            if 'EQ' in itype or exch_val == 'NSE':
                 return 'EQ'
             return 'EQ'
 
