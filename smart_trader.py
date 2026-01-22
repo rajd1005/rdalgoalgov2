@@ -4,8 +4,13 @@ import pytz
 import re
 import os
 import requests
-from pandas.api.types import is_number
+import zipfile
 import io
+from pandas.api.types import is_number
+import urllib3
+
+# Suppress SSL warnings for manual fallback
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Global IST Timezone
 IST = pytz.timezone('Asia/Kolkata')
@@ -15,48 +20,74 @@ symbol_map = {} # FAST LOOKUP CACHE
 
 def manual_download_contract(exchange):
     """
-    Fallback method to download contract master if the library fails.
-    Implements multiple mirrors and content validation.
+    Robust fallback to download contract master.
+    Tries CSV, ZIP, Uppercase, Lowercase, and various mirrors.
     """
-    # List of possible URLs for Master Contracts
-    urls = [
-        f"https://v2api.aliceblueonline.com/restmodelapi/scm/{exchange}.csv",
-        f"https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api/ScripMaster/getScripMasterCsv/{exchange}",
-        f"https://files.aliceblueonline.com/global/content/scm/{exchange}.csv"
+    # 1. Define URL Templates
+    base_urls = [
+        "https://v2api.aliceblueonline.com/restmodelapi/scm",
+        "https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api/ScripMaster/getScripMasterCsv",
+        "https://aliceblueonline.com/api/scm",
+        "https://v2api.aliceblueonline.com/restmodelapi/scm" # Duplicate for retry
     ]
     
+    # 2. Define File Variations (Name, IsZip)
+    variations = [
+        (f"{exchange}.csv", False),
+        (f"{exchange}.zip", True),
+        (f"{exchange.lower()}.csv", False),
+        (f"{exchange.lower()}.zip", True)
+    ]
+
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        "Accept": "text/csv,application/csv,text/plain",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
         "Referer": "https://ant.aliceblueonline.com/"
     }
 
-    for url in urls:
-        try:
-            print(f"🔄 Attempting manual download for {exchange} from {url}...")
-            response = requests.get(url, headers=headers, timeout=30)
-            
-            if response.status_code == 200:
-                content = response.content
-                # VALIDATION: Check if content is HTML (Error Page)
-                if content.strip().startswith(b"<!DOCTYPE") or content.strip().startswith(b"<html"):
-                    print(f"⚠️ Invalid content (HTML) received from {url}")
-                    continue
-                
-                # VALIDATION: Check if content looks like CSV (has commas)
-                if b"," not in content[:100]:
-                    print(f"⚠️ Invalid content (Not CSV) received from {url}")
-                    continue
+    for base in base_urls:
+        for fname, is_zip in variations:
+            url = f"{base}/{fname}"
+            # Special case for ANT API which might not have extension in URL
+            if "getScripMasterCsv" in base and not is_zip:
+                url = f"{base}/{exchange}"
 
-                with open(f"{exchange}.csv", "wb") as f:
-                    f.write(content)
-                print(f"✅ Manually downloaded {exchange}.csv")
-                return True
-            else:
-                print(f"❌ HTTP {response.status_code} from {url}")
-        except Exception as e:
-            print(f"❌ Download error for {url}: {e}")
-            
+            try:
+                print(f"🔄 Trying: {url} ...")
+                # SSL Verify=False to bypass potential cert issues on some networks
+                response = requests.get(url, headers=headers, timeout=15, verify=False)
+                
+                if response.status_code == 200:
+                    content = response.content
+                    
+                    # VALIDATION 1: Check if HTML (Error Page)
+                    if content.strip().startswith(b"<!DOCTYPE") or content.strip().startswith(b"<html"):
+                        continue # Skip HTML error pages
+                    
+                    # VALIDATION 2: ZIP Processing
+                    if is_zip:
+                        try:
+                            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                                # Assume first file in zip is the CSV
+                                csv_name = z.namelist()[0]
+                                with open(f"{exchange}.csv", "wb") as f:
+                                    f.write(z.read(csv_name))
+                            print(f"✅ Downloaded & Extracted ZIP: {fname}")
+                            return True
+                        except Exception as z_err:
+                            print(f"⚠️ ZIP extraction failed: {z_err}")
+                            continue
+
+                    # VALIDATION 3: CSV Check
+                    # Check for at least one comma in the first 100 bytes
+                    if b"," in content[:100]:
+                        with open(f"{exchange}.csv", "wb") as f:
+                            f.write(content)
+                        print(f"✅ Downloaded CSV: {fname}")
+                        return True
+            except Exception as e:
+                pass # Silent fail for retry loop
+                
     print(f"🚫 All download attempts failed for {exchange}")
     return False
 
@@ -75,16 +106,20 @@ def fetch_instruments(alice):
     # 1. Download Contracts
     for exch in ["NSE", "NFO", "MCX"]:
         success = False
-        # Try Library First (if it works)
+        # A. Try Library Method (if valid)
         try:
             if hasattr(alice, 'get_contract_master'):
                 alice.get_contract_master(exch)
-                # Verify file exists and is not empty
+                # Verify file validity
                 if os.path.exists(f"{exch}.csv") and os.path.getsize(f"{exch}.csv") > 1024:
-                    success = True
+                    # Check for HTML content
+                    with open(f"{exch}.csv", 'rb') as f:
+                        head = f.read(50)
+                        if not (head.strip().startswith(b"<html") or head.strip().startswith(b"<!DOCTYPE")):
+                            success = True
         except: pass
         
-        # Fallback to Manual
+        # B. Fallback to Manual Brute Force
         if not success:
             manual_download_contract(exch)
         
@@ -95,13 +130,14 @@ def fetch_instruments(alice):
             fname = f"{exch}.csv"
             if os.path.exists(fname) and os.path.getsize(fname) > 0:
                 try:
-                    # Read only first few lines to check validity before full load
+                    # Read header to ensure not HTML
                     with open(fname, 'r', encoding='utf-8', errors='ignore') as f:
                         first_line = f.readline()
-                        if "DOCTYPE" in first_line or "<html" in first_line:
-                            print(f"⚠️ Skipping invalid/HTML file: {fname}")
+                        if "<html" in first_line or "DOCTYPE" in first_line:
+                            print(f"⚠️ Skipping invalid file {fname} (HTML detected)")
                             continue
 
+                    # Load Data
                     df = pd.read_csv(fname, low_memory=False, encoding='utf-8', on_bad_lines='skip')
                     df['exchange'] = exch
                     df.columns = df.columns.str.strip()
@@ -137,7 +173,7 @@ def fetch_instruments(alice):
         
         instrument_dump.rename(columns=rename_dict, inplace=True)
 
-        # 4. Critical Column Checks & Fallbacks
+        # 4. Critical Checks & Defaults
         if 'name' not in instrument_dump.columns:
             if 'tradingsymbol' in instrument_dump.columns:
                 print("⚠️ 'name' column missing. Using 'tradingsymbol'.")
@@ -146,40 +182,30 @@ def fetch_instruments(alice):
                 print(f"❌ CRITICAL: Missing 'name' and 'tradingsymbol'. Columns: {list(instrument_dump.columns)}")
                 return
 
-        # Ensure other required cols exist to avoid KeyErrors later
-        required_defaults = {
-            'inst_type_raw': 'EQ',
-            'opt_type_raw': 'XX',
-            'expiry_orig': None,
-            'strike': 0,
-            'lot_size': 1,
-            'instrument_token': 0
-        }
-        for col, default in required_defaults.items():
-            if col not in instrument_dump.columns:
-                instrument_dump[col] = default
+        # Ensure defaults for missing optional cols
+        defaults = {'inst_type_raw': 'EQ', 'opt_type_raw': 'XX', 'expiry_orig': None, 'strike': 0, 'lot_size': 1, 'instrument_token': 0}
+        for col, val in defaults.items():
+            if col not in instrument_dump.columns: instrument_dump[col] = val
 
         # 5. Standardize Instrument Type
+        # Vectorized approach for speed
         inst_col = instrument_dump['inst_type_raw'].astype(str).str.upper()
         opt_col = instrument_dump['opt_type_raw'].astype(str).str.upper()
         exch_col = instrument_dump['exchange'].astype(str)
         
-        types = []
-        for i in range(len(instrument_dump)):
-            itype = inst_col.iloc[i]
-            otype = opt_col.iloc[i]
-            exch = exch_col.iloc[i]
-            
-            if 'OPT' in itype:
-                types.append(otype) # CE or PE
-            elif 'FUT' in itype:
-                types.append('FUT')
-            elif 'EQ' in itype or exch == 'NSE':
-                types.append('EQ')
-            else:
-                types.append('EQ')
+        # Determine type: OPT (CE/PE), FUT, EQ
+        # Logic: If 'OPT' in instrument name -> use OptionType. If 'FUT' -> FUT. Else EQ.
         
-        instrument_dump['instrument_type'] = types
+        # Default to EQ
+        instrument_dump['instrument_type'] = 'EQ'
+        
+        # Identify Options
+        mask_opt = inst_col.str.contains('OPT')
+        instrument_dump.loc[mask_opt, 'instrument_type'] = opt_col.loc[mask_opt]
+        
+        # Identify Futures
+        mask_fut = inst_col.str.contains('FUT')
+        instrument_dump.loc[mask_fut, 'instrument_type'] = 'FUT'
         
         # 6. Parse Dates
         def parse_expiry(val):
@@ -187,11 +213,10 @@ def fetch_instruments(alice):
                 if pd.isna(val) or val == '': return None
                 if is_number(val):
                     v = float(val)
-                    if v > 10000000000: return datetime.fromtimestamp(v/1000).date()
-                    return datetime.fromtimestamp(v).date()
+                    if v > 10000000000: return datetime.fromtimestamp(v/1000).date() # MS
+                    return datetime.fromtimestamp(v).date() # Sec
                 return pd.to_datetime(val).date()
-            except:
-                return None
+            except: return None
 
         instrument_dump['expiry_date'] = instrument_dump['expiry_orig'].apply(parse_expiry)
         instrument_dump['expiry_str'] = instrument_dump['expiry_date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else None)
@@ -217,8 +242,6 @@ def fetch_instruments(alice):
         
     except Exception as e:
         print(f"❌ Failed to process instruments: {e}")
-        import traceback
-        traceback.print_exc()
         if instrument_dump is None: instrument_dump = pd.DataFrame()
         symbol_map = {}
 
