@@ -1,147 +1,237 @@
-from managers.common import log_event, get_time_str
-from managers.persistence import TRADE_LOCK, load_trades, save_trades, save_to_history_db
+from managers.common import log_event
 import smart_trader
 import time
 
-def place_order(kite, symbol, transaction_type, quantity, order_type="MARKET", product="MIS", price=0, trigger_price=0, exchange=None, tag="RD_ALGO"):
+def place_order(alice, symbol, transaction_type, quantity, order_type="MARKET", product="MIS", price=0.0, trigger_price=0.0, exchange=None, tag="RD_ALGO"):
     """
-    Wrapper for placing orders with automatic exchange detection if missing.
+    Places an order using AliceBlue SDK.
+    Requires fetching the specific Instrument object first.
     """
     try:
-        # Determine exchange if not provided
-        if not exchange:
-            exchange = smart_trader.get_exchange_name(symbol)
-            
-        order_id = kite.place_order(
-            variety=kite.VARIETY_REGULAR,
-            exchange=exchange,
-            tradingsymbol=symbol,
-            transaction_type=transaction_type,
-            quantity=quantity,
-            product=product,
-            order_type=order_type,
-            price=price,
-            trigger_price=trigger_price,
-            tag=tag
+        # 1. Fetch Instrument Object (Required for AliceBlue)
+        inst = smart_trader.get_alice_instrument(alice, symbol)
+        if not inst:
+            raise Exception(f"Instrument not found for symbol: {symbol}")
+
+        # 2. Map Parameters to AliceBlue Enums
+        # Transaction Type
+        t_type = alice.TransactionType.Buy if transaction_type == "BUY" else alice.TransactionType.Sell
+        
+        # Product Type
+        p_type = alice.ProductType.Intraday # Default MIS
+        if product in ["NRML", "CNC"]:
+            p_type = alice.ProductType.Delivery
+        
+        # Order Type
+        o_type = alice.OrderType.Market
+        if order_type == "LIMIT": 
+            o_type = alice.OrderType.Limit
+        elif order_type == "SL": 
+            o_type = alice.OrderType.StopLossLimit
+        elif order_type == "SL-M": 
+            o_type = alice.OrderType.StopLossMarket
+
+        # 3. Place Order
+        # Note: Prices must be floats. Quantity must be int.
+        res = alice.place_order(
+            transaction_type=t_type,
+            instrument=inst,
+            quantity=int(quantity),
+            order_type=o_type,
+            product_type=p_type,
+            price=float(price),
+            trigger_price=float(trigger_price),
+            stop_loss=None,
+            square_off=None,
+            trailing_sl=None,
+            is_amo=False,
+            order_tag=tag
         )
-        return order_id
+
+        # 4. Handle Response
+        # Success response example: {'stat': 'Ok', 'NessjID': '123456'}
+        if res and isinstance(res, dict) and res.get('stat') == 'Ok':
+            return res.get('NessjID')
+        else:
+            err_msg = res.get('emsg', 'Unknown Error') if res else "No Response"
+            raise Exception(f"Broker Error: {err_msg}")
+
     except Exception as e:
         print(f"❌ Order Placement Failed: {e}")
         raise e
 
-def modify_order(kite, order_id, quantity=None, price=None, trigger_price=None):
+def modify_order(alice, order_id, quantity=None, price=0.0, trigger_price=0.0, order_type="SL-M"):
+    """
+    Modifies an order. 
+    AliceBlue requires Instrument, TransactionType, and ProductType to modify.
+    We must fetch these from the order history if we only have the order_id.
+    """
     try:
-        kite.modify_order(
-            variety=kite.VARIETY_REGULAR,
-            order_id=order_id,
-            quantity=quantity,
-            price=price,
-            trigger_price=trigger_price
+        if not order_id: return False
+
+        # 1. Fetch Order Context (History)
+        # We need to know what we are modifying (Buy/Sell? Instrument?)
+        history = alice.get_order_history(order_id)
+        if not history:
+            raise Exception("Order History not found, cannot modify.")
+        
+        # Get the latest state (usually the last item or the first depending on API, assuming standard list)
+        # Inspecting typical structure: List of dicts. We take the one that defines the order.
+        curr_order = history[0] if isinstance(history, list) and len(history) > 0 else history
+        
+        # Extract Context
+        exch = curr_order.get('Exchange')
+        tr_sym = curr_order.get('Trsym')
+        tr_type_str = curr_order.get('Trantype') # 'B' or 'S'
+        prod_str = curr_order.get('PrdType') # 'I' or 'D' (Intraday/Delivery)
+        
+        # Reconstruct Objects
+        inst = alice.get_instrument_by_symbol(exch, tr_sym)
+        if not inst: raise Exception(f"Instrument reconstruction failed for {tr_sym}")
+        
+        # Map Strings back to Enums
+        t_type = alice.TransactionType.Buy if tr_type_str in ['B', 'BUY'] else alice.TransactionType.Sell
+        
+        p_type = alice.ProductType.Intraday
+        if prod_str in ['D', 'CNC', 'NRML', 'DELIVERY']:
+            p_type = alice.ProductType.Delivery
+
+        # Determine Order Type
+        # If trigger price is > 0 and price > 0 -> SL Limit
+        # If trigger price > 0 and price = 0 -> SL Market (Market doesn't take price)
+        o_type = alice.OrderType.StopLossMarket
+        if order_type == "LIMIT": o_type = alice.OrderType.Limit
+        elif order_type == "SL": o_type = alice.OrderType.StopLossLimit
+        
+        # Use existing quantity if not provided
+        qty_to_use = int(quantity) if quantity else int(curr_order.get('Qty', 0))
+
+        # 2. Call Modify
+        res = alice.modify_order(
+            transaction_type=t_type,
+            instrument=inst,
+            product_type=p_type,
+            order_id=str(order_id),
+            order_type=o_type,
+            quantity=qty_to_use,
+            price=float(price),
+            trigger_price=float(trigger_price)
         )
-        return True
+        
+        if res and isinstance(res, dict) and res.get('stat') == 'Ok':
+            return True
+        else:
+            print(f"Modify Error Response: {res}")
+            return False
+
     except Exception as e:
-        print(f"❌ Order Modification Failed: {e}")
+        print(f"❌ Order Mod Failed: {e}")
         raise e
 
-def move_to_history(trade, final_status, exit_price):
+def cancel_order(alice, order_id):
     """
-    Finalizes a trade, calculates PnL, logs the closure, and moves it to the history database.
+    Cancels an order using AliceBlue SDK.
     """
-    real_pnl = 0
-    was_active = trade['status'] != 'PENDING'
-    
-    # Respect Pre-Calculated P/L (for Replay/Partial Exits)
-    if 'pnl' in trade and trade['pnl'] is not None:
-         real_pnl = trade['pnl']
-    elif was_active:
-        # Standard calculation (Exit - Entry) * Qty
-        real_pnl = round((exit_price - trade['entry_price']) * trade['quantity'], 2)
-        
-    trade['pnl'] = real_pnl if was_active else 0
-    trade['status'] = final_status
-    trade['exit_price'] = exit_price
-    trade['exit_time'] = get_time_str()
-    trade['exit_type'] = final_status
-    
-    # Avoid duplicate logging if called multiple times (sanity check)
-    if "Closed:" not in str(trade.get('logs', [])):
-         log_event(trade, f"Closed: {final_status} @ {exit_price} | P/L ₹ {real_pnl:.2f}")
-    
-    save_to_history_db(trade)
+    try:
+        if not order_id: return
+        alice.cancel_order(order_id)
+        return True
+    except Exception as e:
+        print(f"❌ Cancel Failed: {e}")
+        return False
 
-def manage_broker_sl(kite, trade, qty_to_remove=0, cancel_completely=False):
+def manage_broker_sl(alice, trade, qty_to_remove=0, cancel_completely=False):
     """
-    Manages the physical Stop Loss order on the Broker (Zerodha) side.
-    Can cancel the SL completely or modify the quantity (for partial exits).
+    Adjusts or Cancels the Broker-side Stop Loss order.
     """
     sl_id = trade.get('sl_order_id')
-    # Only proceed if there is an SL Order ID and the mode is LIVE
-    if not sl_id or trade['mode'] != 'LIVE': 
+    if not sl_id or trade.get('mode') != 'LIVE': 
         return
 
     try:
-        # Scenario 1: Cancel SL completely (Full Exit or Panic)
-        if cancel_completely or qty_to_remove >= trade['quantity']:
-            kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=sl_id)
-            log_event(trade, f"Broker SL Cancelled (ID: {sl_id})")
-            trade['sl_order_id'] = None 
-            
-        # Scenario 2: Reduce SL Quantity (Partial Exit)
+        if cancel_completely or (qty_to_remove >= trade['quantity']):
+            # Cancel the SL Order
+            if cancel_order(alice, sl_id):
+                log_event(trade, f"Broker SL Cancelled ({sl_id})")
+                trade['sl_order_id'] = None 
+        
         elif qty_to_remove > 0:
-            new_qty = trade['quantity'] - qty_to_remove
+            # Modify the SL Order Quantity
+            current_qty = int(trade['quantity'])
+            new_qty = current_qty - int(qty_to_remove)
+            
             if new_qty > 0:
-                kite.modify_order(
-                    variety=kite.VARIETY_REGULAR,
-                    order_id=sl_id,
-                    quantity=new_qty
-                )
-                log_event(trade, f"Broker SL Qty Modified to {new_qty}")
+                # We assume SL-M for modifications usually, but preserving price 0.0 implies Market
+                # If the original was SL-Limit, we might lose that info here unless we store it.
+                # Defaulting to SL-M for safety in reducing positions.
+                if modify_order(alice, sl_id, quantity=new_qty, price=0.0, trigger_price=float(trade['sl']), order_type="SL-M"):
+                    log_event(trade, f"Broker SL Modified to Qty: {new_qty}")
+                else:
+                    log_event(trade, "Failed to Modify Broker SL")
+            else:
+                cancel_order(alice, sl_id)
+                trade['sl_order_id'] = None
                 
     except Exception as e:
-        log_event(trade, f"⚠️ Broker SL Update Failed: {e}")
+        log_event(trade, f"Broker SL Error: {e}")
 
-def panic_exit_all(kite):
+def panic_exit_all(alice):
     """
-    Emergency Function: Immediately closes all active positions.
-    1. Cancels pending Broker SL orders.
-    2. Places Market Sell orders for all open quantities.
-    3. Moves all trades to history with status 'PANIC_EXIT'.
+    Critical function to:
+    1. Cancel all Pending Orders
+    2. Square off all Open Positions (Netwise)
     """
-    with TRADE_LOCK:
-        trades = load_trades()
-        if not trades: 
-            return True
-            
-        print(f"🚨 PANIC MODE TRIGGERED: Closing {len(trades)} positions.")
+    try:
+        print("🚨 INITIATING PANIC EXIT (AliceBlue)...")
         
-        for t in trades:
-            # Handle LIVE trades on the broker side
-            if t['mode'] == "LIVE" and t['status'] != 'PENDING':
-                # First, cancel the protection SL to avoid double execution
-                manage_broker_sl(kite, t, cancel_completely=True)
+        # 1. Cancel All Open Orders
+        orders = alice.get_order_book()
+        if orders and isinstance(orders, list):
+            for o in orders:
+                if o.get('Status') in ['OPEN', 'TRIGGER PENDING', 'modify pending']:
+                    oid = o.get('NessjID')
+                    if oid:
+                        print(f"🚫 Panic: Cancelling Order {oid}")
+                        alice.cancel_order(oid)
+        
+        # 2. Square Off Positions
+        # We fetch Daywise/Netwise positions
+        positions = alice.get_daywise_positions()
+        
+        if positions and isinstance(positions, list):
+            for p in positions:
+                # Calculate Net Quantity
+                # AliceBlue keys: 'Bqty', 'Sqty', or 'Netqty' directly
+                net_qty = int(p.get('Netqty', 0))
                 
-                # Then place the exit order
-                try: 
-                    place_order(
-                        kite,
-                        symbol=t['symbol'], 
-                        exchange=t['exchange'], 
-                        transaction_type=kite.TRANSACTION_TYPE_SELL, 
-                        quantity=t['quantity'], 
-                        order_type=kite.ORDER_TYPE_MARKET, 
-                        product=kite.PRODUCT_MIS,
-                        tag="PANIC_EXIT"
-                    )
-                    # [UPDATED] Sleep 0.2s to prevent 'Rate Limit Exceeded' during mass exit
-                    time.sleep(0.2)
-                except Exception as e: 
-                    print(f"Panic Broker Fail {t['symbol']}: {e}")
-            
-            # Move to internal history
-            # Use current_ltp if available, else fallback to entry (neutral exit logic for panic if data missing)
-            exit_p = t.get('current_ltp', t['entry_price'])
-            move_to_history(t, "PANIC_EXIT", exit_p)
-        
-        # Clear active trades list
-        save_trades([])
+                if net_qty != 0:
+                    symbol = p.get('Trsym')
+                    exch = p.get('Exchange')
+                    token = p.get('Token')
+                    
+                    # Determine Exit Transaction Type
+                    trans_type = "SELL" if net_qty > 0 else "BUY"
+                    exit_qty = abs(net_qty)
+                    
+                    print(f"🏃 Panic: Squaring off {symbol} ({net_qty}) via {trans_type}")
+                    
+                    try:
+                        # Reconstruct Instrument for placement
+                        inst = alice.get_instrument_by_symbol(exch, symbol)
+                        if inst:
+                             place_order(
+                                alice, 
+                                symbol=f"{exch}:{symbol}", # Format expected by our wrapper
+                                transaction_type=trans_type,
+                                quantity=exit_qty,
+                                order_type="MARKET",
+                                product="MIS", # Assuming Intraday for panic
+                                tag="PANIC_EXIT"
+                            )
+                    except Exception as e:
+                        print(f"❌ Panic Error for {symbol}: {e}")
+                        
         return True
+    except Exception as e:
+        print(f"❌ Panic Execution Failed: {e}")
+        return False
