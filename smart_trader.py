@@ -3,12 +3,34 @@ from datetime import datetime, timedelta
 import pytz
 import re
 import os
+import requests
+from pandas.api.types import is_number
 
 # Global IST Timezone
 IST = pytz.timezone('Asia/Kolkata')
 
 instrument_dump = None 
 symbol_map = {} # FAST LOOKUP CACHE
+
+def manual_download_contract(exchange):
+    """
+    Fallback method to download contract master if the library fails.
+    """
+    try:
+        url = f"https://v2api.aliceblueonline.com/restmodelapi/scm/{exchange}.csv"
+        print(f"🔄 Attempting manual download for {exchange} from {url}...")
+        response = requests.get(url, timeout=30)
+        if response.status_code == 200:
+            with open(f"{exchange}.csv", "wb") as f:
+                f.write(response.content)
+            print(f"✅ Manually downloaded {exchange}.csv")
+            return True
+        else:
+            print(f"❌ Manual download failed for {exchange}: HTTP {response.status_code}")
+            return False
+    except Exception as e:
+        print(f"❌ Manual download error for {exchange}: {e}")
+        return False
 
 def fetch_instruments(alice):
     """
@@ -22,13 +44,18 @@ def fetch_instruments(alice):
         return
 
     print("📥 Downloading AliceBlue Master Contracts...")
-    try:
-        # 1. Download Contracts (Saves to local CSVs automatically by pya3)
-        # FIX: Correct method name is get_contract_master
-        alice.get_contract_master("NSE")
-        alice.get_contract_master("NFO")
-        alice.get_contract_master("MCX")
+    
+    # 1. Download Contracts (Try Library First, then Fallback)
+    for exch in ["NSE", "NFO", "MCX"]:
+        try:
+            # Attempt to use the library method
+            alice.get_contract_master(exch)
+        except Exception as e:
+            print(f"⚠️ Library method failed for {exch}: {e}")
+            # Fallback to manual download
+            manual_download_contract(exch)
         
+    try:
         # 2. Load CSVs into Pandas
         # pya3 usually saves them as 'NSE.csv', 'NFO.csv', 'MCX.csv' in current dir
         dfs = []
@@ -38,7 +65,7 @@ def fetch_instruments(alice):
                 # AliceBlue CSV headers are typically:
                 # Exchange,Token,LotSize,Symbol,TradingSymbol,ExpiryDate,Instrument,OptionType,StrikePrice
                 try:
-                    df = pd.read_csv(fname)
+                    df = pd.read_csv(fname, low_memory=False)
                     df['exchange'] = exch
                     dfs.append(df)
                 except Exception as e:
@@ -55,8 +82,6 @@ def fetch_instruments(alice):
         # Expected: name, tradingsymbol, expiry_str, strike, instrument_type, lot_size, token
         
         # Rename columns if they exist (Header names might vary slightly based on pya3 version, using common keys)
-        # Common keys: 'Symbol'->name, 'TradingSymbol'->tradingsymbol, 'Token'->instrument_token
-        
         col_map = {
             'Symbol': 'name',
             'TradingSymbol': 'tradingsymbol', 
@@ -68,13 +93,9 @@ def fetch_instruments(alice):
         instrument_dump.rename(columns=col_map, inplace=True)
         
         # standardize instrument_type
-        # Alice 'OptionType' usually has 'CE', 'PE', 'XX' (for Fut/Eq)
-        # Alice 'Instrument' usually has 'OPTIDX', 'FUTIDX', 'EQUITY'
-        
         def normalize_inst_type(row):
             itype = str(row.get('Instrument', '')).upper()
             otype = str(row.get('OptionType', '')).upper()
-            # FIX: Use the row's exchange, not the loop variable
             exch_val = str(row.get('exchange', ''))
             
             if 'OPT' in itype:
@@ -88,14 +109,10 @@ def fetch_instruments(alice):
         instrument_dump['instrument_type'] = instrument_dump.apply(normalize_inst_type, axis=1)
         
         # Parse Dates
-        # Alice Date format is often timestamp or milliseconds. 
-        # But pya3 CSV often writes human readable or epoch.
-        # We will attempt generic parsing.
-        
         def parse_expiry(val):
             try:
                 # Try epoch first (if int/float)
-                if pd.api.types.is_number(val):
+                if is_number(val):
                     # check if seconds or ms
                     if val > 10000000000: # likely ms
                         return datetime.fromtimestamp(val/1000).date()
@@ -131,7 +148,7 @@ def fetch_instruments(alice):
         print(f"✅ Instruments Indexed. Count: {len(instrument_dump)}")
         
     except Exception as e:
-        print(f"❌ Failed to fetch instruments: {e}")
+        print(f"❌ Failed to fetch/process instruments: {e}")
         if instrument_dump is None: instrument_dump = pd.DataFrame()
         symbol_map = {}
 
@@ -154,7 +171,6 @@ def get_alice_instrument(alice, symbol):
     if symbol_map and trd_sym in symbol_map:
         row = symbol_map[trd_sym]
         # Use AliceBlue SDK method to get instrument by token/symbol
-        # alice.get_instrument_by_symbol(exchange, symbol)
         try:
             return alice.get_instrument_by_symbol(row['exchange'], row['tradingsymbol'])
         except: pass
@@ -191,7 +207,6 @@ def get_ltp(alice, symbol):
         if not inst: return 0.0
         
         # Get Live Feed
-        # alice.get_scrip_info(instrument) returns dict
         quote = alice.get_scrip_info(inst)
         if quote and 'LTP' in quote:
             return float(quote['LTP'])
