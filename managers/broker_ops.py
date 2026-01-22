@@ -1,4 +1,5 @@
-from managers.common import log_event
+from managers.common import log_event, get_time_str
+from managers.persistence import save_to_history_db
 import smart_trader
 import time
 
@@ -235,3 +236,29 @@ def panic_exit_all(alice):
     except Exception as e:
         print(f"❌ Panic Execution Failed: {e}")
         return False
+
+def move_to_history(trade, final_status, exit_price):
+    """
+    Moves a trade to history by updating its status/PnL and saving to DB.
+    """
+    real_pnl = 0
+    was_active = trade['status'] != 'PENDING'
+    
+    # Calculate PnL
+    if was_active:
+        real_pnl = round((exit_price - trade['entry_price']) * trade['quantity'], 2)
+    
+    trade['pnl'] = real_pnl if was_active else 0
+    trade['status'] = final_status
+    trade['exit_price'] = exit_price
+    trade['exit_time'] = get_time_str()
+    trade['exit_type'] = final_status
+    
+    # Log if not already logged
+    # Check if the last log is a Close log to avoid duplicates
+    logs_str = str(trade.get('logs', []))
+    if "Closed:" not in logs_str:
+         log_event(trade, f"Closed: {final_status} @ {exit_price} | P/L ₹ {real_pnl:.2f}")
+    
+    # Save to History DB via Persistence layer
+    save_to_history_db(trade)
