@@ -888,23 +888,34 @@ def chart_page():
 @app.route('/api/history_data')
 def api_history_data():
     symbol = request.args.get('symbol', 'NSE:NIFTY 50')
-    interval = request.args.get('interval', 'minute') # Default to 1 minute
+    interval = request.args.get('interval', 'minute')
     
-    # Calculate Date Range (Last 5 Days)
+    # 1. Ensure Instruments are Loaded (Fix for "Token not found" on startup)
+    if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
+        print("🔄 Instruments cache empty. Fetching now...")
+        smart_trader.fetch_instruments(kite)
+
+    # Calculate Date Range
     to_date = datetime.now(common.IST)
     from_date = to_date - timedelta(days=5)
     
-    # 1. Get Instrument Token
+    # 2. Robust Token Lookup
     exchange = smart_trader.get_exchange_name(symbol)
+    
+    # Try 1: Cleaned Symbol (e.g. "NIFTY" for "NIFTY 50")
     clean_symbol = smart_trader.get_zerodha_symbol(symbol)
     token = smart_trader.get_instrument_token(clean_symbol, exchange)
     
+    # Try 2: Raw Symbol (e.g. "NIFTY 50") - Fix for Indices
     if not token:
-        return jsonify({"status": "error", "message": "Symbol Token not found"})
+        raw_sym = symbol.split(':')[-1]
+        token = smart_trader.get_instrument_token(raw_sym, exchange)
 
-    # 2. Fetch Data using existing smart_trader logic
+    if not token:
+        return jsonify({"status": "error", "message": f"Symbol Token not found for {symbol}. Try checking the symbol name."})
+
+    # 3. Fetch Data
     try:
-        # Re-using your existing fetch_historical_data function
         candles = smart_trader.fetch_historical_data(kite, token, from_date, to_date, interval)
         return jsonify({"status": "success", "candles": candles})
     except Exception as e:
