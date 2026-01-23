@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 import smart_trader
 import settings
@@ -6,12 +6,14 @@ from managers.common import IST, get_exchange, log_event, get_time_str
 from managers.persistence import TRADE_LOCK, load_trades, save_trades, load_history
 from managers.broker_ops import move_to_history
 
-def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls, target_channels=['main']):
+def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, targets, trailing_sl, sl_to_entry, exit_multiplier, target_controls, target_channels=['main']):
     """
-    Simulates a trade based on historical data using AliceBlue API.
+    Simulates a trade based on historical data.
+    Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
     """
     try:
-        # 1. Parse Input
+        # 1. Parse Input & Initialize Data
+        # HTML datetime-local input is naive (no timezone). We treat it as IST.
         try:
             entry_time = datetime.strptime(entry_dt_str, "%Y-%m-%dT%H:%M") 
             entry_time = IST.localize(entry_time)
@@ -25,43 +27,22 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
         except: exit_H, exit_M = 15, 25
 
         now = datetime.now(IST)
-        exchange = smart_trader.get_exchange_name(symbol)
+        exchange = get_exchange(symbol)
         
-        # 2. Fetch Instrument & Historical Data
-        instrument = smart_trader.get_alice_instrument(alice, symbol)
-        if not instrument: 
-             return {"status": "error", "message": "AliceBlue Instrument not found"}
+        token = smart_trader.get_instrument_token(symbol, exchange)
+        if not token: 
+            return {"status": "error", "message": "Symbol Token not found"}
         
-        # AliceBlue Historical Data Fetch
-        # V2 API uses: get_historical(instrument, from, to, interval)
-        # Note: 'now' might be slightly in future for the API if time sync is off, allow it.
-        raw_hist = alice.get_historical(instrument, entry_time, now, "1", indices=False)
+        # Fetch Data
+        hist_data = smart_trader.fetch_historical_data(kite, token, entry_time, now, "minute")
+        if not hist_data: 
+            return {"status": "error", "message": "No historical data found"}
         
-        if not raw_hist or isinstance(raw_hist, dict) and raw_hist.get('stat') == 'Not_Ok':
-             return {"status": "error", "message": f"Historical Data Missing: {raw_hist}"}
-
-        # Normalize Data (AliceBlue list of dicts -> Our format)
-        # Alice Keys usually: 'datetime', 'open', 'high', 'low', 'close'
-        hist_data = []
-        for h in raw_hist:
-            # Map keys if necessary, or use as is if keys match expectations
-            # Alice returns 'datetime' string usually in 'YYYY-MM-DD HH:MM:SS'
-            hist_data.append({
-                'date': h.get('datetime'),
-                'open': float(h.get('open')),
-                'high': float(h.get('high')),
-                'low': float(h.get('low')),
-                'close': float(h.get('close'))
-            })
-
-        if not hist_data:
-             return {"status": "error", "message": "No data points parsed"}
-
         first_open = hist_data[0]['open']
         trigger_dir = "ABOVE" if first_open < entry_price else "BELOW"
 
         status = "PENDING"
-        final_status = "PENDING" 
+        final_status = "PENDING" # Default for DB
         current_sl = float(sl_price)
         current_qty = int(qty)
         highest_ltp = float(entry_price)
@@ -69,20 +50,22 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
         t_list = [float(x) for x in targets]
         realized_pnl = 0.0 
         
-        logs = [f"[{entry_time.strftime('%Y-%m-%d %H:%M:%S')}] 📋 Replay Import Started (AliceBlue). Entry: {entry_price}."]
+        logs = [f"[{entry_time.strftime('%Y-%m-%d %H:%M:%S')}] 📋 Replay Import Started. Entry: {entry_price}. Trigger: {trigger_dir}"]
         
+        # --- Notification Queue ---
         notification_queue = []
+        # Create a base object for the initial notification
         initial_trade_data = {
             "symbol": symbol, "mode": "PAPER", "order_type": "MARKET",
             "quantity": qty, "entry_price": entry_price, "sl": sl_price, "targets": t_list,
-            "target_channels": target_channels
+            "target_channels": target_channels # Store selected channels
         }
         notification_queue.append({'event': 'NEW_TRADE', 'data': initial_trade_data})
 
         exit_reason = ""
         final_exit_price = 0.0
         
-        # 3. Simulation Loop
+        # 3. Candle-by-Candle Simulation
         for idx, candle in enumerate(hist_data):
             c_date_str = candle['date']
             
@@ -105,6 +88,7 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                         logs.append(f"[{c_date_str}] ⏰ Universal Time Exit (Order Not Triggered)")
                         current_qty = 0
                         break
+
             except: pass
 
             O, H, L, C = candle['open'], candle['high'], candle['low'], candle['close']
@@ -117,9 +101,11 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                     if trigger_dir == "ABOVE" and ltp >= entry_price: activated = True
                     elif trigger_dir == "BELOW" and ltp <= entry_price: activated = True
                     if activated:
+                        # [FIX] Sync final_status immediately so DB knows it's OPEN
                         status = "OPEN"; final_status = "OPEN"; 
                         fill_price = entry_price; highest_ltp = max(fill_price, ltp)
                         logs.append(f"[{c_date_str}] 🚀 Order ACTIVATED @ {fill_price}")
+                        # Notify Activation
                         notification_queue.append({'event': 'ACTIVE', 'data': {'price': fill_price, 'time': c_date_str}})
                         continue 
 
@@ -127,6 +113,8 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                 if status == "OPEN":
                     if ltp > highest_ltp:
                         highest_ltp = ltp
+                        
+                        # Check for High Made (Only if T3 is hit)
                         if 2 in targets_hit_indices: 
                              notification_queue.append({
                                 'event': 'HIGH_MADE', 
@@ -158,9 +146,11 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                         realized_pnl += pnl_here
                         logs.append(f"[{c_date_str}] 🛑 SL Hit @ {current_sl}. Exited {current_qty} Qty.")
                         
+                        # Notify SL
                         sl_snap = initial_trade_data.copy()
                         sl_snap['exit_price'] = current_sl
                         notification_queue.append({'event': 'SL_HIT', 'data': {'pnl': pnl_here, 'time': c_date_str}, 'trade': sl_snap})
+                        
                         current_qty = 0
                         break
 
@@ -169,6 +159,7 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                         if i in targets_hit_indices: continue 
                         if ltp >= tgt:
                             targets_hit_indices.append(i)
+                            # Notify Target
                             notification_queue.append({'event': 'TARGET_HIT', 'data': {'t_num': i+1, 'price': tgt, 'time': c_date_str}})
                             
                             conf = target_controls[i]
@@ -193,21 +184,57 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                                     logs.append(f"[{c_date_str}] 🎯 Target {i+1} Hit ({tgt}). Partial Exit {exit_qty} Qty. Rem: {current_qty}")
                     
                     if current_qty == 0:
+                         # [FIX] Force update Status if loop ends
                          final_status = "TARGET_HIT"
                          if not exit_reason: exit_reason = "TARGET_HIT"
                          final_exit_price = ltp
                          break 
             
+            # Post-Exit Scan Logic (UPDATED)
             if current_qty == 0:
+                skip_scan = (final_status == "SL_HIT" and len(targets_hit_indices) > 0)
+                if not skip_scan:
+                    remaining_candles = hist_data[idx+1:]
+                    virtual_sl_price = float(sl_price)
+                    
+                    for c in remaining_candles:
+                        c_h = float(c['high'])
+                        c_l = float(c['low'])
+                        c_time = c['date']
+                        
+                        # 1. CHECK VIRTUAL SL (Stop Tracking if hit)
+                        is_dead = False
+                        if entry_price > virtual_sl_price: # BUY Trade Logic
+                            if c_l <= virtual_sl_price: is_dead = True
+                        else: # SELL Trade Logic
+                            if c_h >= virtual_sl_price: is_dead = True
+                        
+                        if is_dead:
+                            logs.append(f"[{c_time}] 🔴 Virtual SL Hit during scan. Tracking Stopped.")
+                            break # STOP SCANNING
+
+                        # 2. CHECK HIGH MADE
+                        if c_h > highest_ltp:
+                            highest_ltp = c_h
+                            logs.append(f"[{c_time}] ℹ️ Post-Exit High Detected: {highest_ltp}")
+                            
+                            # Only Notify if T3 was previously hit (Moon Move Rule)
+                            if 2 in targets_hit_indices:
+                                notification_queue.append({
+                                    'event': 'HIGH_MADE', 
+                                    'data': {'price': highest_ltp, 'time': c_time}
+                                })
                 break 
 
         # 4. Finalize & Save
         with TRADE_LOCK:
             current_ltp = entry_price
+            
+            # [FIX] Use final_status here instead of relying on loop logic
             if final_status in ["OPEN", "PENDING"]:
-                # Fetch fresh LTP if still open
                 try: 
-                    current_ltp = smart_trader.get_ltp(alice, symbol)
+                    q = kite.quote(f"{exchange}:{symbol}")
+                    current_ltp = q[f"{exchange}:{symbol}"]['last_price']
                 except: 
                     if hist_data: current_ltp = hist_data[-1]['close']
                 
@@ -226,7 +253,7 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                     "highest_ltp": highest_ltp, "made_high": highest_ltp, 
                     "current_ltp": current_ltp, "trigger_dir": trigger_dir, "logs": logs,
                     "is_replay": True, "last_update_time": hist_data[-1]['date'] if hist_data else get_time_str(),
-                    "target_channels": target_channels
+                    "target_channels": target_channels # Store channels in DB for future reference
                 }
                 trades = load_trades(); trades.append(record); save_trades(trades)
                 
@@ -238,6 +265,10 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
                 }
                 
             else:
+                last_time = logs[-1].split(']')[0].replace('[', '')
+                if "Closed:" not in logs[-1]:
+                    logs.append(f"[{last_time}] Closed: {final_status} @ {final_exit_price} | P/L ₹ {realized_pnl:.2f}")
+
                 record = {
                     "id": int(time.time()), 
                     "entry_time": entry_time.strftime("%Y-%m-%d %H:%M:%S"), 
@@ -266,10 +297,10 @@ def import_past_trade(alice, symbol, entry_dt_str, qty, entry_price, sl_price, t
     except Exception as e: 
         return {"status": "error", "message": str(e)}
 
-def simulate_trade_scenario(alice, trade_id, scenario_config):
+def simulate_trade_scenario(kite, trade_id, scenario_config):
     """
-    Runs hypothetical simulation (Scenario Mode).
-    Uses AliceBlue historical data.
+    Runs a hypothetical simulation on a past trade with modified settings.
+    Does NOT affect the database or send notifications.
     """
     try:
         trades = load_history()
@@ -327,24 +358,11 @@ def simulate_trade_scenario(alice, trade_id, scenario_config):
         except: pass
         
         now = datetime.now(IST)
-        
-        # Fetch Instrument & History
-        instrument = smart_trader.get_alice_instrument(alice, symbol)
-        if not instrument: return {"status": "error", "message": "AliceBlue Instrument not found"}
-        
-        raw_hist = alice.get_historical(instrument, entry_dt, now, "1", indices=False)
-        if not raw_hist or (isinstance(raw_hist, dict) and raw_hist.get('stat') == 'Not_Ok'):
-             return {"status": "error", "message": "No Data"}
+        token = smart_trader.get_instrument_token(symbol, exchange)
+        if not token: return {"status": "error", "message": "Token not found"}
 
-        hist_data = []
-        for h in raw_hist:
-            hist_data.append({
-                'date': h.get('datetime'),
-                'open': float(h.get('open')),
-                'high': float(h.get('high')),
-                'low': float(h.get('low')),
-                'close': float(h.get('close'))
-            })
+        hist_data = smart_trader.fetch_historical_data(kite, token, entry_dt, now, "minute")
+        if not hist_data: return {"status": "error", "message": "No Data"}
 
         current_qty = qty
         current_sl = sl_price

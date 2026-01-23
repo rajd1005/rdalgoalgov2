@@ -2,9 +2,14 @@ import os
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
-# AliceBlue Credentials
-ALICE_USER_ID = os.getenv("ALICE_USER_ID")
-ALICE_API_KEY = os.getenv("ALICE_API_KEY")
+# Zerodha Credentials
+API_KEY = os.getenv("API_KEY")
+API_SECRET = os.getenv("API_SECRET")
+
+# Auto Login Credentials
+TOTP_SECRET = os.getenv("TOTP_SECRET")
+ZERODHA_USER_ID = os.getenv("ZERODHA_USER_ID")
+ZERODHA_PASSWORD = os.getenv("ZERODHA_PASSWORD")
 
 # Secure Admin Page Password
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD")

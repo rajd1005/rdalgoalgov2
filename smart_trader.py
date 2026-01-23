@@ -2,17 +2,6 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 import re
-import os
-import requests
-import zipfile
-import io
-import urllib.request
-import urllib.error
-from pandas.api.types import is_number
-import urllib3
-
-# Suppress SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Global IST Timezone
 IST = pytz.timezone('Asia/Kolkata')
@@ -20,394 +9,278 @@ IST = pytz.timezone('Asia/Kolkata')
 instrument_dump = None 
 symbol_map = {} # FAST LOOKUP CACHE
 
-def create_emergency_instruments():
+def fetch_instruments(kite):
     """
-    Creates a ROBUST set of instruments to allow the system to trade major symbols
-    even if Master Contract download fails completely (Offline Mode).
+    Downloads the master instrument list, optimizes dates, and builds a fast lookup map.
+    Prioritizes specific exchanges (NFO > MCX > NSE) to handle duplicate symbols.
     """
-    print("⚠️ NETWORK FAILURE DETECTED: Generating Emergency Instrument Database...")
-    
-    # HARDCODED MAJOR SYMBOLS (Add more if needed)
-    data = [
-        # --- INDICES ---
-        {"name": "NIFTY", "tradingsymbol": "Nifty 50", "instrument_token": "26000", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "BANKNIFTY", "tradingsymbol": "Nifty Bank", "instrument_token": "26009", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "FINNIFTY", "tradingsymbol": "Nifty Fin Service", "instrument_token": "26037", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "INDIA VIX", "tradingsymbol": "INDIA VIX", "instrument_token": "26017", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "SENSEX", "tradingsymbol": "SENSEX", "instrument_token": "1", "lot_size": 1, "exchange": "BSE", "instrument_type": "EQ"},
-        
-        # --- MCX COMMODITIES ---
-        {"name": "CRUDEOIL", "tradingsymbol": "CRUDEOIL", "instrument_token": "443312", "lot_size": 100, "exchange": "MCX", "instrument_type": "FUT"},
-        {"name": "GOLD", "tradingsymbol": "GOLD", "instrument_token": "443313", "lot_size": 1, "exchange": "MCX", "instrument_type": "FUT"},
-        {"name": "SILVER", "tradingsymbol": "SILVER", "instrument_token": "443314", "lot_size": 30, "exchange": "MCX", "instrument_type": "FUT"},
-        {"name": "NATURALGAS", "tradingsymbol": "NATURALGAS", "instrument_token": "443315", "lot_size": 1250, "exchange": "MCX", "instrument_type": "FUT"},
-
-        # --- TOP NSE STOCKS ---
-        {"name": "RELIANCE", "tradingsymbol": "RELIANCE", "instrument_token": "2885", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "HDFCBANK", "tradingsymbol": "HDFCBANK", "instrument_token": "1333", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "ICICIBANK", "tradingsymbol": "ICICIBANK", "instrument_token": "4963", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "INFY", "tradingsymbol": "INFY", "instrument_token": "1594", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "TCS", "tradingsymbol": "TCS", "instrument_token": "11536", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "SBIN", "tradingsymbol": "SBIN", "instrument_token": "3045", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "AXISBANK", "tradingsymbol": "AXISBANK", "instrument_token": "5900", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "KOTAKBANK", "tradingsymbol": "KOTAKBANK", "instrument_token": "1922", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "LT", "tradingsymbol": "LT", "instrument_token": "11483", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "ITC", "tradingsymbol": "ITC", "instrument_token": "1660", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "BAJFINANCE", "tradingsymbol": "BAJFINANCE", "instrument_token": "317", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "MARUTI", "tradingsymbol": "MARUTI", "instrument_token": "10999", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-        {"name": "TATAMOTORS", "tradingsymbol": "TATAMOTORS", "instrument_token": "3456", "lot_size": 1, "exchange": "NSE", "instrument_type": "EQ"},
-    ]
-    
-    df = pd.DataFrame(data)
-    # Add missing columns with defaults to prevent KeyErrors
-    defaults = {
-        'expiry_date': None, 'expiry_str': None, 'strike': 0, 
-        'inst_type_raw': 'EQ', 'opt_type_raw': 'XX', 'expiry_orig': None
-    }
-    for col, val in defaults.items():
-        if col not in df.columns:
-            df[col] = val
-            
-    print(f"✅ EMERGENCY MODE ACTIVE: Loaded {len(df)} core instruments.")
-    return df
-
-def manual_download_contract(exchange):
-    """
-    Robust fallback to download contract master.
-    Uses Requests AND Urllib. Silences individual errors to reduce log noise.
-    """
-    urls = [
-        f"https://v2api.aliceblueonline.com/restmodelapi/scm/{exchange}.csv",
-        f"https://ant.aliceblueonline.com/rest/AliceBlueAPIService/api/ScripMaster/getScripMasterCsv/{exchange}",
-        f"https://files.aliceblueonline.com/global/content/scm/{exchange}.csv",
-        f"https://aliceblueonline.com/api/scm/{exchange}.csv"
-    ]
-    
-    # Variations: Upper, Lower, ZIP
-    variations = []
-    for u in urls: variations.append((u, False))
-    for u in urls: variations.append((u.replace(".csv", ".zip"), True))
-    for u in urls: variations.append((u.replace(exchange, exchange.lower()), False))
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "*/*",
-        "Connection": "keep-alive"
-    }
-
-    # Only print start to avoid log spam
-    print(f"🔄 Downloading {exchange} contracts (Starting mirror search)...")
-
-    for url, is_zip in variations:
-        # METHOD 1: REQUESTS
-        try:
-            response = requests.get(url, headers=headers, timeout=5, verify=False)
-            if response.status_code == 200:
-                if validate_and_save(response.content, exchange, is_zip): 
-                    print(f"   ✅ Success: {url}")
-                    return True
-        except: pass
-
-        # METHOD 2: URLLIB (Backup)
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as r:
-                if validate_and_save(r.read(), exchange, is_zip): 
-                    print(f"   ✅ Success (Urllib): {url}")
-                    return True
-        except: pass
-            
-    print(f"   ❌ Failed to download {exchange} contracts.")
-    return False
-
-def validate_and_save(content, exchange, is_zip):
-    if not content: return False
-    
-    # HTML Check
-    if content.strip().startswith(b"<!DOCTYPE") or content.strip().startswith(b"<html"):
-        return False
-        
-    if is_zip:
-        try:
-            with zipfile.ZipFile(io.BytesIO(content)) as z:
-                csv_name = z.namelist()[0]
-                with open(f"{exchange}.csv", "wb") as f:
-                    f.write(z.read(csv_name))
-            return True
-        except: return False
-    else:
-        # CSV Check (Looking for commas)
-        if b"," in content[:200]:
-            with open(f"{exchange}.csv", "wb") as f:
-                f.write(content)
-            return True
-    return False
-
-def fetch_instruments(alice):
     global instrument_dump, symbol_map
     
+    # If already loaded and map exists, skip to save bandwidth
     if instrument_dump is not None and not instrument_dump.empty and symbol_map: 
         return
 
-    print("📥 Initializing Instrument Database...")
-    
-    # 1. Attempt Download
-    for exch in ["NSE", "NFO", "MCX"]:
-        success = False
-        # Library Method
-        try:
-            if hasattr(alice, 'get_contract_master'):
-                alice.get_contract_master(exch)
-                if os.path.exists(f"{exch}.csv") and os.path.getsize(f"{exch}.csv") > 1024:
-                    success = True
-        except: pass
-        
-        # Manual Fallback
-        if not success:
-            manual_download_contract(exch)
-        
-    # 2. Load into Pandas
-    dfs = []
+    print("📥 Downloading Instrument List...")
     try:
-        for exch in ['NSE', 'NFO', 'MCX']:
-            fname = f"{exch}.csv"
-            if os.path.exists(fname) and os.path.getsize(fname) > 0:
-                try:
-                    # Quick Validity Check
-                    with open(fname, 'r', encoding='utf-8', errors='ignore') as f:
-                        if "<html" in f.readline(): continue
-                        
-                    df = pd.read_csv(fname, low_memory=False, encoding='utf-8', on_bad_lines='skip')
-                    df['exchange'] = exch
-                    df.columns = df.columns.str.strip()
-                    dfs.append(df)
-                except Exception as e:
-                    print(f"⚠️ Error reading {fname}: {e}")
-    except: pass
-    
-    # 3. Process Data
-    if not dfs:
-        # CRITICAL: SWITCH TO OFFLINE MODE
-        instrument_dump = create_emergency_instruments()
-    else:
-        instrument_dump = pd.concat(dfs, ignore_index=True)
+        instruments = kite.instruments()
+        if not instruments:
+            print("⚠️ Warning: Kite returned empty instrument list.")
+            return
+
+        instrument_dump = pd.DataFrame(instruments)
         
-    instrument_dump = instrument_dump.copy()
-    
-    # 4. Column Normalization
-    column_aliases = {
-        'name': ['Symbol', 'symbol', 'SYMBOL', 'Symbol Name'],
-        'tradingsymbol': ['TradingSymbol', 'tradingsymbol', 'TrdSym', 'TRDSYM'],
-        'instrument_token': ['Token', 'token', 'TOKEN', 'ScripCode'],
-        'lot_size': ['LotSize', 'lot_size', 'Lot', 'LOT'],
-        'strike': ['StrikePrice', 'strike', 'Strike', 'STRIKE'],
-        'expiry_orig': ['ExpiryDate', 'expiry', 'Expiry'],
-        'inst_type_raw': ['Instrument', 'instrument', 'INST'],
-        'opt_type_raw': ['OptionType', 'option_type', 'OPTTYPE']
-    }
-
-    rename_dict = {}
-    for target_col, aliases in column_aliases.items():
-        for alias in aliases:
-            if alias in instrument_dump.columns:
-                rename_dict[alias] = target_col
-                break
-    
-    instrument_dump.rename(columns=rename_dict, inplace=True)
-
-    # 5. Defaults & Calculations
-    if 'name' not in instrument_dump.columns and 'tradingsymbol' in instrument_dump.columns:
-         instrument_dump['name'] = instrument_dump['tradingsymbol']
-
-    defaults = {'inst_type_raw': 'EQ', 'opt_type_raw': 'XX', 'expiry_orig': None, 'strike': 0, 'lot_size': 1, 'instrument_token': 0}
-    for col, val in defaults.items():
-        if col not in instrument_dump.columns: instrument_dump[col] = val
-
-    # Type Logic
-    inst_col = instrument_dump['inst_type_raw'].astype(str).str.upper()
-    opt_col = instrument_dump['opt_type_raw'].astype(str).str.upper()
-    
-    instrument_dump['instrument_type'] = 'EQ'
-    # Use loc to avoid SettingWithCopyWarning
-    mask_opt = inst_col.str.contains('OPT')
-    if mask_opt.any():
-        instrument_dump.loc[mask_opt, 'instrument_type'] = opt_col.loc[mask_opt]
-    
-    mask_fut = inst_col.str.contains('FUT')
-    if mask_fut.any():
-        instrument_dump.loc[mask_fut, 'instrument_type'] = 'FUT'
-    
-    # Expiry Parsing
-    def parse_expiry(val):
-        try:
-            if pd.isna(val) or val == '': return None
-            if is_number(val):
-                v = float(val)
-                if v > 10000000000: return datetime.fromtimestamp(v/1000).date()
-                return datetime.fromtimestamp(v).date()
-            return pd.to_datetime(val).date()
-        except: return None
-
-    instrument_dump['expiry_date'] = instrument_dump['expiry_orig'].apply(parse_expiry)
-    instrument_dump['expiry_str'] = instrument_dump['expiry_date'].apply(lambda x: x.strftime('%Y-%m-%d') if pd.notnull(x) else None)
-    
-    # String Cleaning
-    for col in ['name', 'tradingsymbol']:
-        if col in instrument_dump.columns:
-            instrument_dump[col] = instrument_dump[col].astype(str).str.strip().str.upper()
-
-    # 6. Build Cache
-    print("⚡ Building Fast Lookup Cache...")
-    exchange_priority = {'NFO': 0, 'MCX': 1, 'NSE': 2, 'BSE': 3}
-    instrument_dump['priority'] = instrument_dump['exchange'].map(exchange_priority).fillna(99)
-    instrument_dump.sort_values('priority', inplace=True)
-    
-    if 'tradingsymbol' in instrument_dump.columns:
-        unique_symbols = instrument_dump.drop_duplicates(subset=['tradingsymbol'])
+        # Optimize Dates
+        if 'expiry' in instrument_dump.columns:
+            instrument_dump['expiry_str'] = pd.to_datetime(instrument_dump['expiry'], errors='coerce').dt.strftime('%Y-%m-%d')
+            instrument_dump['expiry_date'] = pd.to_datetime(instrument_dump['expiry'], errors='coerce').dt.date
+        
+        # --- CRITICAL FIX: Handle Duplicates for Hash Map ---
+        print("⚡ Building Fast Lookup Cache...")
+        
+        # Create a copy to sort and deduplicate without affecting the main search dump
+        temp_df = instrument_dump.copy()
+        
+        # Prioritize exchanges: NFO > MCX > CDS > NSE > BSE
+        # This ensures 'RELIANCE' maps to NSE, not BSE
+        exchange_priority = {'NFO': 0, 'MCX': 1, 'CDS': 2, 'NSE': 3, 'BSE': 4, 'BFO': 5}
+        temp_df['priority'] = temp_df['exchange'].map(exchange_priority).fillna(99)
+        
+        # Sort by priority so the "best" exchange comes first
+        temp_df.sort_values('priority', inplace=True)
+        
+        # Drop duplicates on tradingsymbol, keeping the first (highest priority)
+        unique_symbols = temp_df.drop_duplicates(subset=['tradingsymbol'])
+        
+        # NOW it is safe to set index
         symbol_map = unique_symbols.set_index('tradingsymbol').to_dict('index')
-        print(f"✅ Instruments Indexed. Count: {len(instrument_dump)}")
-    else:
-        print("❌ Error: 'tradingsymbol' missing in Data.")
+        
+        print(f"✅ Instruments Downloaded & Indexed. Count: {len(instrument_dump)}")
+        
+    except Exception as e:
+        print(f"❌ Failed to fetch instruments: {e}")
+        # Do not reset to None here if partial data exists
+        if instrument_dump is None:
+             instrument_dump = pd.DataFrame()
         symbol_map = {}
 
-def get_alice_instrument(alice, symbol):
-    global symbol_map
-    exch = None
-    trd_sym = symbol
-    if ":" in symbol:
-        parts = symbol.split(":")
-        exch = parts[0]
-        trd_sym = parts[1]
-    
-    if symbol_map and trd_sym in symbol_map:
-        row = symbol_map[trd_sym]
-        try: return alice.get_instrument_by_symbol(row['exchange'], row['tradingsymbol'])
-        except: pass
-    
-    if exch:
-        try: return alice.get_instrument_by_symbol(exch, trd_sym)
-        except: pass
-    return None
-
 def get_exchange_name(symbol):
-    global symbol_map
-    if ":" in symbol: return symbol.split(":")[0]
-    if symbol_map and symbol in symbol_map: return symbol_map[symbol]['exchange']
+    """
+    Determines the exchange (NSE, NFO, MCX) for a given symbol.
+    """
+    global symbol_map, instrument_dump
+    
+    # 1. Check if symbol already has exchange prefix (e.g. "NSE:RELIANCE")
+    if ":" in symbol:
+        return symbol.split(":")[0]
+
+    # 2. Fast Lookup via Map
+    if symbol_map and symbol in symbol_map:
+        return symbol_map[symbol]['exchange']
+        
+    # 3. Fallback Heuristics (if map not ready)
     if "NIFTY" in symbol or "BANKNIFTY" in symbol:
-        if any(x in symbol for x in ["FUT", "CE", "PE"]): return "NFO"
+        if any(x in symbol for x in ["FUT", "CE", "PE"]): 
+            return "NFO"
+            
+    # Default to NSE if unable to determine
     return "NSE"
 
-def get_ltp(alice, symbol):
+def get_ltp(kite, symbol):
+    """
+    Fetches the Last Traded Price (LTP) with automatic exchange detection.
+    """
     try:
-        inst = get_alice_instrument(alice, symbol)
-        if not inst: return 0.0
-        quote = alice.get_scrip_info(inst)
-        if quote and 'LTP' in quote: return float(quote['LTP'])
-        return 0.0
-    except: return 0.0
+        # 1. If symbol already has exchange (e.g., NSE:RELIANCE), try directly
+        if ":" in symbol:
+            quote = kite.quote(symbol)
+            if quote and symbol in quote:
+                return quote[symbol]['last_price']
 
-def get_indices_ltp(alice):
-    indices = {"NIFTY": 0, "BANKNIFTY": 0, "SENSEX": 0}
+        # 2. Determine Exchange
+        exch = get_exchange_name(symbol)
+        
+        # 3. Fetch Quote with constructed format
+        full_sym = f"{exch}:{symbol}"
+        quote = kite.quote(full_sym)
+        
+        if quote and full_sym in quote:
+            return quote[full_sym]['last_price']
+            
+        return 0
+    except Exception as e:
+        print(f"⚠️ Error fetching LTP for {symbol}: {e}")
+        return 0
+
+def get_indices_ltp(kite):
     try:
-        nifty = alice.get_instrument_by_symbol("NSE", "Nifty 50")
-        bank = alice.get_instrument_by_symbol("NSE", "Nifty Bank")
-        sensex = alice.get_instrument_by_symbol("BSE", "SENSEX")
-        if nifty:
-            q = alice.get_scrip_info(nifty)
-            if q: indices["NIFTY"] = float(q.get('LTP', 0))
-        if bank:
-            q = alice.get_scrip_info(bank)
-            if q: indices["BANKNIFTY"] = float(q.get('LTP', 0))
-        if sensex:
-             q = alice.get_scrip_info(sensex)
-             if q: indices["SENSEX"] = float(q.get('LTP', 0))
-    except: pass
-    return indices
+        q = kite.quote(["NSE:NIFTY 50", "NSE:NIFTY BANK", "BSE:SENSEX"])
+        return {
+            "NIFTY": q.get("NSE:NIFTY 50", {}).get('last_price', 0),
+            "BANKNIFTY": q.get("NSE:NIFTY BANK", {}).get('last_price', 0),
+            "SENSEX": q.get("BSE:SENSEX", {}).get('last_price', 0)
+        }
+    except:
+        return {"NIFTY":0, "BANKNIFTY":0, "SENSEX":0}
 
 def get_zerodha_symbol(common_name):
     if not common_name: return ""
-    cleaned = common_name.split("(")[0].upper().strip()
-    if cleaned in ["BANKNIFTY", "NIFTY BANK", "BANK NIFTY"]: return "BANKNIFTY"
-    if cleaned in ["NIFTY", "NIFTY 50", "NIFTY50"]: return "NIFTY"
-    return cleaned
+    cleaned = common_name
+    if "(" in cleaned: cleaned = cleaned.split("(")[0]
+    u = cleaned.upper().strip()
+    if u in ["BANKNIFTY", "NIFTY BANK", "BANK NIFTY"]: return "BANKNIFTY"
+    if u in ["NIFTY", "NIFTY 50", "NIFTY50"]: return "NIFTY"
+    if u == "SENSEX": return "SENSEX"
+    if u == "FINNIFTY": return "FINNIFTY"
+    return u
 
 def get_lot_size(tradingsymbol):
     global symbol_map
-    if symbol_map and tradingsymbol in symbol_map:
-        return int(symbol_map[tradingsymbol].get('lot_size', 1))
+    if not symbol_map: return 1
+    
+    # Fast Lookup
+    data = symbol_map.get(tradingsymbol)
+    if data:
+        return int(data.get('lot_size', 1))
     return 1
 
 def get_display_name(tradingsymbol):
     global symbol_map
-    if not symbol_map: return tradingsymbol
+    # Attempt to load if missing
+    if not symbol_map:
+        return tradingsymbol
+        
     try:
+        # Fast Lookup
         data = symbol_map.get(tradingsymbol)
         if data:
             name = data['name']
             inst_type = data['instrument_type']
-            expiry_str = data.get('expiry_str', '')
-            if expiry_str:
-                try: expiry_str = datetime.strptime(expiry_str, '%Y-%m-%d').strftime('%d %b').upper()
-                except: pass
+            
+            # Handle expiry safely
+            expiry_str = ""
+            if 'expiry_date' in data:
+                ed = data['expiry_date']
+                if pd.notnull(ed):
+                    if hasattr(ed, 'strftime'): expiry_str = ed.strftime('%d %b').upper()
+                    else: expiry_str = str(ed)
+
             if inst_type in ["CE", "PE"]:
-                return f"{name} {int(data['strike'])} {inst_type} {expiry_str}"
+                strike = int(data['strike'])
+                return f"{name} {strike} {inst_type} {expiry_str}"
             elif inst_type == "FUT":
                  return f"{name} FUT {expiry_str}"
             else:
                  return f"{name} {inst_type}"
         return tradingsymbol
-    except: return tradingsymbol
+    except:
+        return tradingsymbol
 
-def search_symbols(alice, keyword, allowed_exchanges=None):
+def search_symbols(kite, keyword, allowed_exchanges=None):
     global instrument_dump
+    
     if instrument_dump is None or instrument_dump.empty: 
-        fetch_instruments(alice)
+        fetch_instruments(kite)
         if instrument_dump is None or instrument_dump.empty: return []
 
     k = keyword.upper()
-    if not allowed_exchanges: allowed_exchanges = ['NSE', 'NFO', 'MCX']
+    if not allowed_exchanges: 
+        allowed_exchanges = ['NSE', 'NFO', 'MCX', 'CDS', 'BSE', 'BFO']
     
     try:
+        # Filter Logic
         mask = (instrument_dump['exchange'].isin(allowed_exchanges)) & (instrument_dump['name'].str.startswith(k, na=False))
         matches = instrument_dump[mask]
+        
         if matches.empty: return []
-        unique = matches.drop_duplicates(subset=['name', 'exchange']).head(10)
-        return [f"{row['name']} ({row['exchange']})" for _, row in unique.iterrows()]
-    except: return []
+            
+        unique_matches = matches.drop_duplicates(subset=['name', 'exchange']).head(10)
+        items_to_quote = [f"{row['exchange']}:{row['tradingsymbol']}" for _, row in unique_matches.iterrows()]
+        
+        quotes = {}
+        try:
+            if items_to_quote: quotes = kite.quote(items_to_quote)
+        except: pass
+        
+        results = []
+        for _, row in unique_matches.iterrows():
+            key = f"{row['exchange']}:{row['tradingsymbol']}"
+            ltp = quotes.get(key, {}).get('last_price', 0)
+            results.append(f"{row['name']} ({row['exchange']}) : {ltp}")
+            
+        return results
+    except Exception as e:
+        print(f"Search Logic Error: {e}")
+        return []
 
-def get_symbol_details(alice, symbol, preferred_exchange=None):
+def adjust_cds_lot_size(symbol, lot_size):
+    s = symbol.upper()
+    if lot_size == 1:
+        if "JPYINR" in s: return 100000
+        if any(x in s for x in ["USDINR", "EURINR", "GBPINR", "USDJPY", "EURUSD", "GBPUSD"]): return 1000
+    return lot_size
+
+def get_symbol_details(kite, symbol, preferred_exchange=None):
     global instrument_dump
-    if instrument_dump is None or instrument_dump.empty: fetch_instruments(alice)
+    if instrument_dump is None or instrument_dump.empty: fetch_instruments(kite)
     if instrument_dump is None or instrument_dump.empty: return {}
     
+    if "(" in symbol and ")" in symbol:
+        try:
+            parts = symbol.split('(')
+            if len(parts) > 1: preferred_exchange = parts[1].split(')')[0].strip()
+        except: pass
+
     clean = get_zerodha_symbol(symbol)
     today = datetime.now(IST).date()
+    
     rows = instrument_dump[instrument_dump['name'] == clean]
     if rows.empty: return {}
 
+    exchanges = rows['exchange'].unique().tolist()
+    exchange_to_use = "NSE"
+    
+    if preferred_exchange and preferred_exchange in exchanges:
+        exchange_to_use = preferred_exchange
+    else:
+        for p in ['MCX', 'CDS', 'BSE', 'NSE']:
+             if p in exchanges: 
+                 exchange_to_use = p
+                 break
+    
+    quote_sym = f"{exchange_to_use}:{clean}"
+    if clean == "NIFTY": quote_sym = "NSE:NIFTY 50"
+    if clean == "BANKNIFTY": quote_sym = "NSE:NIFTY BANK"
+    if clean == "SENSEX": quote_sym = "BSE:SENSEX"
+    
     ltp = 0
     try:
-        underlying = rows[rows['instrument_type'] == 'EQ']
-        if not underlying.empty:
-            u_row = underlying[underlying['exchange']=='NSE'].iloc[0] if not underlying[underlying['exchange']=='NSE'].empty else underlying.iloc[0]
-            ltp = get_ltp(alice, f"{u_row['exchange']}:{u_row['tradingsymbol']}")
+        q = kite.quote(quote_sym)
+        if quote_sym in q: ltp = q[quote_sym]['last_price']
     except: pass
-    
+        
     if ltp == 0:
         try:
-            futs = rows[(rows['instrument_type'] == 'FUT') & (rows['expiry_date'] >= today)].sort_values('expiry_date')
-            if not futs.empty:
-                 f_row = futs.iloc[0]
-                 ltp = get_ltp(alice, f"{f_row['exchange']}:{f_row['tradingsymbol']}")
+            fut_exch = 'NFO' if exchange_to_use == 'NSE' else ('BFO' if exchange_to_use == 'BSE' else exchange_to_use)
+            if 'expiry_date' in rows.columns:
+                futs_all = rows[(rows['instrument_type'] == 'FUT') & (rows['expiry_date'] >= today) & (rows['exchange'] == fut_exch)]
+                if not futs_all.empty:
+                    near_fut = futs_all.sort_values('expiry_date').iloc[0]
+                    fut_sym = f"{near_fut['exchange']}:{near_fut['tradingsymbol']}"
+                    ltp = kite.quote(fut_sym)[fut_sym]['last_price']
         except: pass
 
     lot = 1
-    fno_rows = rows[rows['exchange'].isin(['NFO', 'MCX'])]
-    if not fno_rows.empty: lot = int(fno_rows.iloc[0]['lot_size'])
-
+    for ex in ['MCX', 'CDS', 'BFO', 'NFO']:
+        futs = rows[(rows['exchange'] == ex) & (rows['instrument_type'] == 'FUT')]
+        if not futs.empty:
+            lot = int(futs.iloc[0]['lot_size'])
+            if ex == 'CDS': lot = adjust_cds_lot_size(clean, lot)
+            break
+            
     f_exp = []
     o_exp = []
-    if 'expiry_str' in rows.columns:
+    
+    if 'expiry_str' in rows.columns and 'expiry_date' in rows.columns:
         f_exp = sorted(rows[(rows['instrument_type'] == 'FUT') & (rows['expiry_date'] >= today)]['expiry_str'].unique().tolist())
         o_exp = sorted(rows[(rows['instrument_type'].isin(['CE', 'PE'])) & (rows['expiry_date'] >= today)]['expiry_str'].unique().tolist())
     
@@ -417,13 +290,10 @@ def get_chain_data(symbol, expiry_date, option_type, ltp):
     global instrument_dump
     if instrument_dump is None or instrument_dump.empty: return []
     clean = get_zerodha_symbol(symbol)
+    
     if 'expiry_str' not in instrument_dump.columns: return []
     
-    c = instrument_dump[
-        (instrument_dump['name'] == clean) & 
-        (instrument_dump['expiry_str'] == expiry_date) & 
-        (instrument_dump['instrument_type'] == option_type)
-    ]
+    c = instrument_dump[(instrument_dump['name'] == clean) & (instrument_dump['expiry_str'] == expiry_date) & (instrument_dump['instrument_type'] == option_type)]
     if c.empty: return []
     
     strikes = sorted(c['strike'].unique().tolist())
@@ -432,20 +302,19 @@ def get_chain_data(symbol, expiry_date, option_type, ltp):
     
     res = []
     for s in strikes:
-        lbl = "ATM" if s == atm else ("ITM" if (option_type == "CE" and ltp > s) or (option_type == "PE" and ltp < s) else "OTM")
+        lbl = "OTM"
+        if s == atm: lbl = "ATM"
+        elif option_type == "CE": lbl = "ITM" if ltp > s else "OTM"
+        elif option_type == "PE": lbl = "ITM" if ltp < s else "OTM"
         res.append({"strike": s, "label": lbl})
     return res
 
 def get_exact_symbol(symbol, expiry, strike, option_type):
     global instrument_dump
     if instrument_dump is None or instrument_dump.empty: return None
+    if option_type == "EQ": return symbol
     clean = get_zerodha_symbol(symbol)
     
-    if option_type == "EQ":
-        mask = (instrument_dump['name'] == clean) & (instrument_dump['instrument_type'] == 'EQ')
-        if mask.any(): return instrument_dump[mask].iloc[0]['tradingsymbol']
-        return symbol
-
     if 'expiry_str' not in instrument_dump.columns: return None
 
     if option_type == "FUT":
@@ -458,20 +327,89 @@ def get_exact_symbol(symbol, expiry, strike, option_type):
     if not mask.any(): return None
     return instrument_dump[mask].iloc[0]['tradingsymbol']
 
-def get_specific_ltp(alice, symbol, expiry, strike, inst_type):
+def get_specific_ltp(kite, symbol, expiry, strike, inst_type):
     ts = get_exact_symbol(symbol, expiry, strike, inst_type)
-    if not ts: return 0.0
-    exch = "NFO"
-    if symbol_map and ts in symbol_map: exch = symbol_map[ts]['exchange']
-    return get_ltp(alice, f"{exch}:{ts}")
+    if not ts: return 0
+    try:
+        global instrument_dump, symbol_map
+        exch = "NFO"
+        
+        # Optimized lookup using map first
+        if symbol_map and ts in symbol_map:
+            exch = symbol_map[ts]['exchange']
+        elif instrument_dump is not None and not instrument_dump.empty:
+             row = instrument_dump[instrument_dump['tradingsymbol'] == ts]
+             if not row.empty: exch = row.iloc[0]['exchange']
+             
+        return kite.quote(f"{exch}:{ts}")[f"{exch}:{ts}"]['last_price']
+    except: return 0
 
+# --- NEW FUNCTIONS FOR IMPORT/BACKTEST ---
 def get_instrument_token(tradingsymbol, exchange):
-    global symbol_map
-    if symbol_map and tradingsymbol in symbol_map: return symbol_map[tradingsymbol]['instrument_token']
+    global instrument_dump
+    if instrument_dump is None or instrument_dump.empty: return None
+    try:
+        row = instrument_dump[(instrument_dump['tradingsymbol'] == tradingsymbol) & (instrument_dump['exchange'] == exchange)]
+        if not row.empty:
+            return int(row.iloc[0]['instrument_token'])
+    except: pass
     return None
 
-def fetch_historical_data(alice, token, from_date, to_date, interval='1'):
-    return []
+def fetch_historical_data(kite, token, from_date, to_date, interval='minute'):
+    try:
+        data = kite.historical_data(token, from_date, to_date, interval)
+        clean_data = []
+        for candle in data:
+            c = candle.copy()
+            if 'date' in c and hasattr(c['date'], 'strftime'):
+                c['date'] = c['date'].strftime('%Y-%m-%d %H:%M:%S')
+            clean_data.append(c)
+        return clean_data
+    except Exception as e:
+        print(f"History Fetch Error: {e}")
+        return []
 
 def get_telegram_symbol(tradingsymbol):
-    return get_display_name(tradingsymbol)
+    """
+    Converts raw Zerodha symbol to readable Telegram format.
+    Input:  NIFTY2412025900PE  -> Output: NIFTY 25900 PE 20JAN
+    Input:  NIFTY24JAN25900PE  -> Output: NIFTY 25900 PE JAN (Monthly)
+    Input:  RELIANCE           -> Output: RELIANCE
+    """
+    try:
+        # Regex for Weekly Options: NIFTY 24 1 20 25900 PE
+        # Groups: 1=Name, 2=YY, 3=M(1-9,O,N,D), 4=DD, 5=Strike, 6=Type
+        weekly_pattern = r"^([A-Z]+)(\d{2})([1-9OND])(\d{2})(\d+)(CE|PE)$"
+        w_match = re.match(weekly_pattern, tradingsymbol)
+        
+        if w_match:
+            name, yy, m_char, dd, strike, opt_type = w_match.groups()
+            
+            # Map Month Char to Name
+            m_map = {'1':'JAN', '2':'FEB', '3':'MAR', '4':'APR', '5':'MAY', '6':'JUN', 
+                     '7':'JUL', '8':'AUG', '9':'SEP', 'O':'OCT', 'N':'NOV', 'D':'DEC'}
+            month_str = m_map.get(m_char, '???')
+            
+            return f"{name} {strike} {opt_type} {dd}{month_str}"
+
+        # Regex for Monthly Options: NIFTY 24 JAN 25900 PE
+        monthly_pattern = r"^([A-Z]+)(\d{2})([A-Z]{3})(\d+)(CE|PE)$"
+        m_match = re.match(monthly_pattern, tradingsymbol)
+        
+        if m_match:
+            name, yy, mon, strike, opt_type = m_match.groups()
+            return f"{name} {strike} {opt_type} {mon}"
+            
+        # Regex for Futures: NIFTY 24 JAN FUT
+        fut_pattern = r"^([A-Z]+)(\d{2})([A-Z]{3})FUT$"
+        f_match = re.match(fut_pattern, tradingsymbol)
+        if f_match:
+             name, yy, mon = f_match.groups()
+             return f"{name} FUT {mon}"
+
+        # Default: Return original if no match (e.g., Equity)
+        return tradingsymbol
+
+    except Exception as e:
+        print(f"Symbol Parse Error: {e}")
+        return tradingsymbol

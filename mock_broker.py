@@ -21,19 +21,27 @@ SIM_CONFIG = {
     "trend": "SIDEWAYS"
 }
 
+# --- UPDATED: EXPIRY LOGIC (0DTE Daily) ---
 def get_mock_expiry():
+    """
+    Returns TODAY's date as the expiry. 
+    This allows testing Expiry logic (0DTE) every single day.
+    """
     return datetime.date.today().strftime("%Y-%m-%d")
 
 CURRENT_EXPIRY = get_mock_expiry()
 
 # --- OPTION PRICING ENGINE ---
 def calculate_option_price(spot_price, strike_price, option_type):
+    """Calculates a realistic Option Price"""
     intrinsic = 0.0
     if option_type == "CE": intrinsic = max(0.0, spot_price - strike_price)
     else: intrinsic = max(0.0, strike_price - spot_price)
+    
     distance = abs(spot_price - strike_price)
     time_value = 150 * (0.995 ** distance) 
     noise = random.uniform(-2, 2)
+    
     return round(max(0.05, intrinsic + time_value + noise), 2)
 
 # --- Background Market Simulator ---
@@ -57,20 +65,26 @@ def _market_heartbeat():
             # 2. Update FUTURES & OPTIONS
             keys = list(MOCK_MARKET_DATA.keys())
             for sym in keys:
+                # Futures Logic
                 if "FUT" in sym:
                     idx_key = "NSE:NIFTY 50"
                     if "BANK" in sym: idx_key = "NSE:NIFTY BANK"
                     if idx_key in MOCK_MARKET_DATA:
                         MOCK_MARKET_DATA[sym] = round(MOCK_MARKET_DATA[idx_key] + 10, 2)
 
+                # Options Logic
                 if ("NIFTY" in sym or "BANKNIFTY" in sym) and ("CE" in sym or "PE" in sym):
                     try:
                         match = re.search(r'(CE|PE)(\d+(\.\d+)?)', sym)
                         if match:
                             type_ = match.group(1)
                             strike = float(match.group(2))
-                            spot = MOCK_MARKET_DATA["NSE:NIFTY 50"]
-                            if "BANKNIFTY" in sym: spot = MOCK_MARKET_DATA["NSE:NIFTY BANK"]
+                            
+                            # Determine Spot Price based on Symbol Name
+                            spot = MOCK_MARKET_DATA["NSE:NIFTY 50"] # Default
+                            if "BANKNIFTY" in sym:
+                                spot = MOCK_MARKET_DATA["NSE:NIFTY BANK"]
+                                
                             MOCK_MARKET_DATA[sym] = calculate_option_price(spot, strike, type_)
                     except: pass
         time.sleep(SIM_CONFIG["speed"])
@@ -78,78 +92,52 @@ def _market_heartbeat():
 t = threading.Thread(target=_market_heartbeat, daemon=True)
 t.start()
 
-# --- MOCK ALICEBLUE CLASS ---
-class MockAliceBlue:
-    def __init__(self, user_id=None, api_key=None, **kwargs):
-        print(f"⚠️ [MOCK ALICEBLUE] Initialized. Expiry Set To: {CURRENT_EXPIRY}", flush=True)
+# --- Mock Kite Class ---
+class MockKiteConnect:
+    def __init__(self, api_key=None, **kwargs):
+        print(f"⚠️ [MOCK BROKER] Initialized. Expiry Set To: {CURRENT_EXPIRY}", flush=True)
         self.mock_instruments = self._generate_instruments()
-        # Enums for compatibility
-        self.TransactionType = type('Enum', (), {'Buy': 'BUY', 'Sell': 'SELL'})
-        self.OrderType = type('Enum', (), {'Market': 'MARKET', 'Limit': 'LIMIT', 'StopLossLimit': 'SL', 'StopLossMarket': 'SL-M'})
-        self.ProductType = type('Enum', (), {'Intraday': 'MIS', 'Delivery': 'CNC'})
-
-    def get_session_id(self):
-        return {"stat": "Ok", "sessionID": "mock_session_123"}
-
-    def get_master_contract(self, exchange):
-        # In real pya3, this downloads a file. Here we do nothing, assumes smart_trader loads simulated data or skips.
-        print(f"[Mock] Downloaded Master Contract for {exchange}")
-        return True
-
-    def get_instrument_by_symbol(self, exchange, symbol):
-        # Find in mock list
-        for i in self.mock_instruments:
-            if i['exchange'] == exchange and i['tradingsymbol'] == symbol:
-                return i
-        # If not found, create a dummy one on the fly for simulation flexibility
-        return {"exchange": exchange, "tradingsymbol": symbol, "token": random.randint(10000, 99999), "symbol": symbol}
-
-    def get_scrip_info(self, instrument):
-        # Return Quote in AliceBlue Format
-        sym_key = f"{instrument['exchange']}:{instrument['tradingsymbol']}"
-        
-        # Determine fallback if key missing
-        if sym_key not in MOCK_MARKET_DATA:
-            MOCK_MARKET_DATA[sym_key] = 100.0
-            
-        ltp = MOCK_MARKET_DATA[sym_key]
-        return {'stat': 'Ok', 'LTP': ltp, 'TSym': instrument['tradingsymbol']}
-
-    def place_order(self, **kwargs):
-        # AliceBlue place_order returns dict with NessjID on success
-        print(f"✅ [MOCK ALICE] Order: {kwargs.get('transaction_type')} {kwargs.get('quantity')} {kwargs.get('instrument', {}).get('tradingsymbol')}", flush=True)
-        return {'stat': 'Ok', 'NessjID': f"ORD_{random.randint(10000,99999)}"}
-
-    def modify_order(self, **kwargs):
-        print(f"✏️ [MOCK ALICE] Modify Order {kwargs.get('order_id')}", flush=True)
-        return {'stat': 'Ok'}
-
-    def cancel_order(self, order_id):
-        print(f"❌ [MOCK ALICE] Cancel Order {order_id}", flush=True)
-        return {'stat': 'Ok'}
-
-    def get_daywise_positions(self):
-        # Return empty list or mock positions
-        return []
-
-    def get_order_book(self):
-        return []
-
-    def get_order_history(self, order_id):
-        # Required for modification logic in broker_ops
-        return [{'Exchange':'NFO', 'Trsym':'MOCK', 'Trantype':'B', 'PrdType':'I', 'Qty':50}]
-
-    def search_instruments(self, exchange, keyword):
-        # Simple search in mock instruments
-        return [i for i in self.mock_instruments if keyword.upper() in i['tradingsymbol']]
 
     def _generate_instruments(self):
-        # Same generator as before but adapted keys if needed
         inst_list = []
-        inst_list.append({"token": "256265", "tradingsymbol": "NIFTY 50", "symbol": "NIFTY 50", "exchange": "NSE", "lot_size": 1})
-        inst_list.append({"token": "260105", "tradingsymbol": "NIFTY BANK", "symbol": "NIFTY BANK", "exchange": "NSE", "lot_size": 1})
-        
-        # ... (Include futures/options generation similar to previous, simplified here)
+        # 1. Indices
+        inst_list.append({"instrument_token": 256265, "tradingsymbol": "NIFTY 50", "name": "NIFTY", "exchange": "NSE", "last_price": 0, "instrument_type": "EQ", "lot_size": 1, "expiry": None})
+        inst_list.append({"instrument_token": 260105, "tradingsymbol": "NIFTY BANK", "name": "BANKNIFTY", "exchange": "NSE", "last_price": 0, "instrument_type": "EQ", "lot_size": 1, "expiry": None})
+        inst_list.append({"instrument_token": 738561, "tradingsymbol": "RELIANCE", "name": "RELIANCE", "exchange": "NSE", "last_price": 0, "instrument_type": "EQ", "lot_size": 1, "expiry": None})
+
+        # 2. Futures (NIFTY 65, BANKNIFTY 15)
+        inst_list.append({"instrument_token": 888888, "tradingsymbol": f"NIFTY{CURRENT_EXPIRY.replace('-','')}FUT", "name": "NIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "FUT", "lot_size": 65, "expiry": CURRENT_EXPIRY, "strike": 0})
+        MOCK_MARKET_DATA[f"NFO:NIFTY{CURRENT_EXPIRY.replace('-','')}FUT"] = 22010.0
+
+        inst_list.append({"instrument_token": 999999, "tradingsymbol": f"BANKNIFTY{CURRENT_EXPIRY.replace('-','')}FUT", "name": "BANKNIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "FUT", "lot_size": 15, "expiry": CURRENT_EXPIRY, "strike": 0})
+        MOCK_MARKET_DATA[f"NFO:BANKNIFTY{CURRENT_EXPIRY.replace('-','')}FUT"] = 48010.0
+
+        # 3. NIFTY Options (Base 22000)
+        base = 22000
+        for strike in range(base - 1000, base + 1000, 50):
+            ce_sym = f"NIFTY{CURRENT_EXPIRY.replace('-','')}CE{strike}"
+            inst_list.append({"instrument_token": strike, "tradingsymbol": ce_sym, "name": "NIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "CE", "lot_size": 65, "expiry": CURRENT_EXPIRY, "strike": float(strike)})
+            
+            pe_sym = f"NIFTY{CURRENT_EXPIRY.replace('-','')}PE{strike}"
+            inst_list.append({"instrument_token": strike+10000, "tradingsymbol": pe_sym, "name": "NIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "PE", "lot_size": 65, "expiry": CURRENT_EXPIRY, "strike": float(strike)})
+
+            spot = MOCK_MARKET_DATA["NSE:NIFTY 50"]
+            if f"NFO:{ce_sym}" not in MOCK_MARKET_DATA: MOCK_MARKET_DATA[f"NFO:{ce_sym}"] = calculate_option_price(spot, strike, "CE")
+            if f"NFO:{pe_sym}" not in MOCK_MARKET_DATA: MOCK_MARKET_DATA[f"NFO:{pe_sym}"] = calculate_option_price(spot, strike, "PE")
+
+        # 4. BANKNIFTY Options (Base 48000) - ADDED PER BEST PRACTICE
+        bn_base = 48000
+        for strike in range(bn_base - 1000, bn_base + 1000, 100):
+            ce_sym = f"BANKNIFTY{CURRENT_EXPIRY.replace('-','')}CE{strike}"
+            inst_list.append({"instrument_token": strike+50000, "tradingsymbol": ce_sym, "name": "BANKNIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "CE", "lot_size": 15, "expiry": CURRENT_EXPIRY, "strike": float(strike)})
+            
+            pe_sym = f"BANKNIFTY{CURRENT_EXPIRY.replace('-','')}PE{strike}"
+            inst_list.append({"instrument_token": strike+60000, "tradingsymbol": pe_sym, "name": "BANKNIFTY", "exchange": "NFO", "last_price": 0, "instrument_type": "PE", "lot_size": 15, "expiry": CURRENT_EXPIRY, "strike": float(strike)})
+
+            spot = MOCK_MARKET_DATA["NSE:NIFTY BANK"]
+            if f"NFO:{ce_sym}" not in MOCK_MARKET_DATA: MOCK_MARKET_DATA[f"NFO:{ce_sym}"] = calculate_option_price(spot, strike, "CE")
+            if f"NFO:{pe_sym}" not in MOCK_MARKET_DATA: MOCK_MARKET_DATA[f"NFO:{pe_sym}"] = calculate_option_price(spot, strike, "PE")
+
         return inst_list
 
     # Mock Methods

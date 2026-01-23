@@ -1,81 +1,89 @@
 import pytz
-import logging
-from datetime import datetime, time
+from datetime import datetime
+import settings
+from managers.persistence import load_history, load_trades
 
-# Define Timezone (Critical for Algo)
+# Global Timezone
 IST = pytz.timezone('Asia/Kolkata')
 
 def get_time_str():
-    """Returns current IST time as string"""
+    """
+    Returns the current time in IST as a formatted string.
+    Format: YYYY-MM-DD HH:MM:SS
+    """
     return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
-
-def get_today_date_str():
-    return datetime.now(IST).strftime("%Y-%m-%d")
 
 def log_event(trade, message):
     """
-    Appends a log message to the trade's log list.
+    Appends a timestamped message to the trade's log list.
     """
-    timestamp = get_time_str()
-    log_entry = f"[{timestamp}] {message}"
-    
     if 'logs' not in trade:
         trade['logs'] = []
-    
-    # Insert at top (newest first)
-    trade['logs'].insert(0, log_entry)
-    print(f"📝 {trade.get('symbol', 'TRADE')}: {message}")
+    trade['logs'].append(f"[{get_time_str()}] {message}")
 
 def get_exchange(symbol):
     """
-    Helper to guess exchange from symbol string if not provided.
-    AliceBlue symbols often look like 'NSE:RELIANCE' or just 'RELIANCE'
+    Determines the exchange (NSE, NFO, MCX, CDS, BSE) based on the symbol name.
     """
-    if ":" in symbol:
-        return symbol.split(":")[0]
-    
-    # Heuristic for AliceBlue/General Indian Markets
     s = symbol.upper()
-    if "NIFTY" in s or "BANKNIFTY" in s or "FINNIFTY" in s or "SENSEX" in s:
-        if "FUT" in s or "CE" in s or "PE" in s:
-            if "SENSEX" in s: return "BFO" # BSE F&O
-            return "NFO" # NSE F&O
+    if any(x in s for x in ['CRUDEOIL', 'GOLD', 'SILVER', 'COPPER', 'NATURALGAS']):
+        return "MCX"
+    if any(x in s for x in ['USDINR', 'EURINR', 'GBPINR', 'JPYINR']):
+        return "CDS"
+    if "SENSEX" in s or "BANKEX" in s:
+        # Check if it has digits (Futures/Options usually have dates/strikes) to distinguish BFO
+        return "BFO" if any(char.isdigit() for char in s) else "BSE"
+    if symbol.endswith("CE") or symbol.endswith("PE") or "FUT" in symbol:
+        return "NFO"
+    return "NSE"
+
+def get_day_pnl(mode):
+    """
+    Calculates the Total Daily P&L for a specific mode (LIVE/PAPER).
+    Includes:
+    1. Realized P&L from closed trades today.
+    2. Unrealized P&L from currently active trades.
+    """
+    today_str = datetime.now(IST).strftime("%Y-%m-%d")
+    total = 0.0
     
-    if s.endswith(".BO"): return "BSE"
-    if s.endswith("-BL"): return "BSE" # Sometimes used
-    
-    return "NSE" # Default to NSE Equity
+    # 1. Sum Realized P&L from History
+    history = load_history()
+    for t in history:
+        # Check if exit_time exists and matches today
+        if t.get('exit_time') and t['exit_time'].startswith(today_str) and t['mode'] == mode:
+            total += t.get('pnl', 0)
+            
+    # 2. Sum Unrealized P&L from Active Trades
+    active = load_trades()
+    for t in active:
+        if t['mode'] == mode and t['status'] != 'PENDING':
+            # Use current_ltp if available, else fallback to entry_price (0 PnL)
+            current_price = t.get('current_ltp', t['entry_price'])
+            unrealized = (current_price - t['entry_price']) * t['quantity']
+            total += unrealized
+            
+    return total
 
 def can_place_order(mode):
     """
-    Global Safety Check.
-    Returns: (Boolean, Reason)
+    Checks if a new order is allowed based on Global Risk Settings (Max Daily Loss).
+    Returns: (Boolean allowed, String reason)
     """
-    # 1. Check Mode
-    if mode not in ["LIVE", "PAPER"]:
-        return False, f"Invalid Mode: {mode}"
+    current_settings = settings.load_settings()
     
-    # 2. Check Time (Optional Safety - Block trades after 3:30 PM)
-    now = datetime.now(IST).time()
-    market_open = time(9, 15)
-    market_close = time(15, 30)
-    
-    # Uncomment to enforce market hours strictness
-    # if mode == "LIVE" and (now < market_open or now > market_close):
-    #     return False, "Market Closed"
-
-    return True, "OK"
-
-def parse_broker_error(e):
-    """
-    AliceBlue specific error parsing.
-    """
-    err_str = str(e)
-    # AliceBlue often returns errors in 'emsg' key if it's a dict
-    if "emsg" in err_str:
-        return err_str # It's already descriptive
-    
-    if "NetworkException" in err_str:
-        return "Network Error - Check Internet"
+    if mode not in current_settings['modes']:
+        return True, "OK"
         
-    return err_str
+    mode_conf = current_settings['modes'][mode]
+    max_loss_limit = float(mode_conf.get('max_loss', 0))
+    
+    # If Max Loss is set (greater than 0)
+    if max_loss_limit > 0:
+        limit = -abs(max_loss_limit) # Ensure it's treated as a negative number
+        current_pnl = get_day_pnl(mode)
+        
+        if current_pnl <= limit:
+            return False, f"Max Daily Loss Reached ({current_pnl:.2f} <= {limit})"
+            
+    return True, "OK"
