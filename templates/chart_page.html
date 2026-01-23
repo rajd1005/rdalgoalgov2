@@ -18,7 +18,15 @@
 <div class="chart-controls border-bottom border-secondary">
     <a href="/" class="btn btn-outline-light btn-sm fw-bold">⬅️ Back to Dashboard</a>
     <span class="fw-bold ms-3">SYMBOL:</span>
-    <input type="text" id="chart_symbol" class="form-control form-control-sm bg-dark text-white border-secondary" style="width: 150px;" value="NSE:NIFTY 50" placeholder="e.g. NSE:RELIANCE">
+    
+    <div style="position: relative; display: inline-block; width: 200px;">
+        <input type="text" id="chart_symbol" class="form-control form-control-sm bg-dark text-white border-secondary" 
+               value="NSE:NIFTY 50" placeholder="Search (e.g. RELIANCE)" autocomplete="off">
+        <div id="symbol-suggestions" class="list-group position-absolute w-100" 
+             style="z-index: 1000; max-height: 300px; overflow-y: auto; display: none;">
+        </div>
+    </div>
+
     <button class="btn btn-primary btn-sm" onclick="loadChartData()">Load Chart</button>
 </div>
 
