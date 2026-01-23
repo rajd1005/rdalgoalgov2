@@ -12,6 +12,10 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
     Collects notification events (NEW_TRADE, ACTIVE, TARGET_HIT, SL_HIT) into a queue for sequential sending.
     """
     try:
+        # 0. Ensure Instruments are Loaded (Fix for Token Error)
+        if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
+            smart_trader.fetch_instruments(kite)
+
         # 1. Parse Input & Initialize Data
         # HTML datetime-local input is naive (no timezone). We treat it as IST.
         try:
@@ -29,9 +33,30 @@ def import_past_trade(kite, symbol, entry_dt_str, qty, entry_price, sl_price, ta
         now = datetime.now(IST)
         exchange = get_exchange(symbol)
         
+        # Robust Token Lookup
         token = smart_trader.get_instrument_token(symbol, exchange)
+        
+        # Fallback 1: Try stripping exchange prefix (e.g. NSE:NIFTY -> NIFTY)
+        if not token and ":" in symbol:
+             raw_sym = symbol.split(":")[-1]
+             token = smart_trader.get_instrument_token(raw_sym, exchange)
+
+        # Fallback 2: Handle Common Index Name Mismatches
+        if not token:
+             if "NIFTY" == symbol or "NSE:NIFTY" == symbol:
+                  token = smart_trader.get_instrument_token("NIFTY 50", exchange)
+             elif "BANKNIFTY" == symbol or "NSE:BANKNIFTY" == symbol:
+                  token = smart_trader.get_instrument_token("NIFTY BANK", exchange)
+
+        # Fallback 3: Try smart_trader helper if available
+        if not token and hasattr(smart_trader, 'get_zerodha_symbol'):
+             try:
+                 clean = smart_trader.get_zerodha_symbol(symbol)
+                 token = smart_trader.get_instrument_token(clean, exchange)
+             except: pass
+
         if not token: 
-            return {"status": "error", "message": "Symbol Token not found"}
+            return {"status": "error", "message": f"Symbol Token not found for {symbol}"}
         
         # Fetch Data
         hist_data = smart_trader.fetch_historical_data(kite, token, entry_time, now, "minute")
