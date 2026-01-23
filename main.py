@@ -7,6 +7,8 @@ import requests
 from flask import Flask, render_template, request, redirect, flash, jsonify, url_for
 from kiteconnect import KiteConnect
 import config
+from datetime import datetime, timedelta
+import pytz
 
 # --- REFACTORED IMPORTS ---
 from managers import persistence, trade_manager, risk_engine, replay_engine, common, broker_ops
@@ -877,5 +879,36 @@ if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     t = threading.Thread(target=background_monitor, daemon=True)
     t.start()
 
+# --- NEW CHARTING ROUTES ---
+
+@app.route('/chart')
+def chart_page():
+    return render_template('chart_page.html')
+
+@app.route('/api/history_data')
+def api_history_data():
+    symbol = request.args.get('symbol', 'NSE:NIFTY 50')
+    interval = request.args.get('interval', 'minute') # Default to 1 minute
+    
+    # Calculate Date Range (Last 5 Days)
+    to_date = datetime.now(common.IST)
+    from_date = to_date - timedelta(days=5)
+    
+    # 1. Get Instrument Token
+    exchange = smart_trader.get_exchange_name(symbol)
+    clean_symbol = smart_trader.get_zerodha_symbol(symbol)
+    token = smart_trader.get_instrument_token(clean_symbol, exchange)
+    
+    if not token:
+        return jsonify({"status": "error", "message": "Symbol Token not found"})
+
+    # 2. Fetch Data using existing smart_trader logic
+    try:
+        # Re-using your existing fetch_historical_data function
+        candles = smart_trader.fetch_historical_data(kite, token, from_date, to_date, interval)
+        return jsonify({"status": "success", "candles": candles})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
+        
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=config.PORT, threaded=True)
