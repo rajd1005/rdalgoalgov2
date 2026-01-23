@@ -9,6 +9,16 @@ IST = pytz.timezone('Asia/Kolkata')
 instrument_dump = None 
 symbol_map = {} # FAST LOOKUP CACHE
 
+# Alias Mapping for Common Indices (New Feature)
+SYMBOL_ALIASES = {
+    "NIFTY": "NIFTY 50",
+    "BANKNIFTY": "NIFTY BANK",
+    "FINNIFTY": "NIFTY FIN SERVICE",
+    "MIDCPNIFTY": "NIFTY MID SELECT",
+    "SENSEX": "SENSEX",
+    "BANKEX": "BANKEX"
+}
+
 def fetch_instruments(kite):
     """
     Downloads the master instrument list, optimizes dates, and builds a fast lookup map.
@@ -175,6 +185,109 @@ def get_display_name(tradingsymbol):
     except:
         return tradingsymbol
 
+# --- UPDATED: New Robust Token Lookup (Fixes "Token not found" for Indices) ---
+def get_smart_token(symbol_input, exchange=None):
+    """
+    Robust token lookup. Handles:
+    1. Aliases (NIFTY -> NIFTY 50)
+    2. Case insensitivity (nifty -> NIFTY 50)
+    3. Missing Exchange (Defaults to NSE/NFO)
+    """
+    global instrument_dump
+    if instrument_dump is None or instrument_dump.empty:
+        return None
+
+    # 1. Normalize Input
+    clean_input = symbol_input.upper().strip()
+    
+    # 2. Handle Exchange Separation (e.g., "NSE:RELIANCE")
+    if ":" in clean_input:
+        parts = clean_input.split(':')
+        req_exchange = parts[0]
+        req_symbol = parts[1]
+    else:
+        req_exchange = exchange
+        req_symbol = clean_input
+
+    # 3. Apply Alias Mapping (e.g., "NIFTY" -> "NIFTY 50")
+    if req_symbol in SYMBOL_ALIASES:
+        req_symbol = SYMBOL_ALIASES[req_symbol]
+        # Indices are usually on NSE (or BSE for Sensex)
+        if not req_exchange:
+            req_exchange = "BSE" if "SENSEX" in req_symbol or "BANKEX" in req_symbol else "NSE"
+
+    # 4. Filter DataFrame
+    try:
+        # Step A: Exact Match with Exchange
+        if req_exchange:
+            mask = (instrument_dump['tradingsymbol'] == req_symbol) & \
+                   (instrument_dump['exchange'] == req_exchange)
+            res = instrument_dump[mask]
+            if not res.empty:
+                return int(res.iloc[0]['instrument_token'])
+
+        # Step B: Exact Match without Exchange (Prioritize NSE > NFO > BSE)
+        mask = (instrument_dump['tradingsymbol'] == req_symbol)
+        res = instrument_dump[mask]
+        
+        if not res.empty:
+            # Sort preference
+            ex_order = {'NSE': 1, 'BSE': 2, 'NFO': 3, 'MCX': 4, 'CDS': 5}
+            res['rank'] = res['exchange'].map(ex_order).fillna(99)
+            res = res.sort_values('rank')
+            return int(res.iloc[0]['instrument_token'])
+            
+    except Exception as e:
+        print(f"Token Lookup Error: {e}")
+        
+    return None
+
+# --- UPDATED: TradingView-Style Fuzzy Search ---
+def search_instruments_fuzzy(query):
+    """
+    TradingView-style search.
+    Returns: [{'symbol': 'RELIANCE', 'desc': 'Reliance Industries', 'exchange': 'NSE', 'type': 'EQ'}]
+    """
+    global instrument_dump
+    if instrument_dump is None or instrument_dump.empty or not query:
+        return []
+
+    q = query.upper()
+    results = []
+    
+    try:
+        # Prioritize: Starts With > Contains
+        valid_exchanges = ['NSE', 'BSE', 'NFO', 'MCX']
+        
+        # Filter 1: Tradingsymbol starts with Query
+        mask_start = (instrument_dump['tradingsymbol'].str.startswith(q)) & \
+                     (instrument_dump['exchange'].isin(valid_exchanges))
+        
+        # Filter 2: Name contains Query (for "Reliance Industries" search)
+        mask_name = (instrument_dump['name'].str.contains(q, na=False, case=False)) & \
+                    (instrument_dump['exchange'].isin(valid_exchanges))
+                    
+        # Combine (Priority to StartsWith)
+        df_start = instrument_dump[mask_start].head(10)
+        df_name = instrument_dump[mask_name].head(10)
+        
+        combined = pd.concat([df_start, df_name]).drop_duplicates(subset=['instrument_token']).head(20)
+        
+        for _, row in combined.iterrows():
+            results.append({
+                "symbol": row['tradingsymbol'],
+                "exchange": row['exchange'],
+                "desc": row['name'] if pd.notna(row['name']) else row['tradingsymbol'],
+                "type": row['instrument_type'],
+                "value": f"{row['exchange']}:{row['tradingsymbol']}"
+            })
+            
+    except Exception as e:
+        print(f"Search Error: {e}")
+        
+    return results
+
+# Legacy Search (Preserved for compatibility if needed)
 def search_symbols(kite, keyword, allowed_exchanges=None):
     global instrument_dump
     
@@ -344,15 +457,16 @@ def get_specific_ltp(kite, symbol, expiry, strike, inst_type):
         return kite.quote(f"{exch}:{ts}")[f"{exch}:{ts}"]['last_price']
     except: return 0
 
-# --- NEW FUNCTIONS FOR IMPORT/BACKTEST ---
+# --- UPDATED: Integrated Smart Token Logic ---
 def get_instrument_token(tradingsymbol, exchange):
-    global instrument_dump
-    if instrument_dump is None or instrument_dump.empty: return None
-    try:
-        row = instrument_dump[(instrument_dump['tradingsymbol'] == tradingsymbol) & (instrument_dump['exchange'] == exchange)]
-        if not row.empty:
-            return int(row.iloc[0]['instrument_token'])
-    except: pass
+    # Route to new robust function automatically
+    if ":" in tradingsymbol:
+        return get_smart_token(tradingsymbol)
+    
+    # Try smart token first (handles Aliases + Exchange)
+    token = get_smart_token(tradingsymbol, exchange)
+    if token: return token
+    
     return None
 
 def fetch_historical_data(kite, token, from_date, to_date, interval='minute'):
