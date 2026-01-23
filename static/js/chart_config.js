@@ -11,10 +11,9 @@ const chartOptions = {
         background: { type: 'solid', color: '#1a1a1a' } 
     },
     grid: { 
-        vertLines: { color: '#404040' }, 
-        horzLines: { color: '#404040' } 
+        vertLines: { color: '#2b2b2b' }, // Darker grid lines
+        horzLines: { color: '#2b2b2b' } 
     },
-    // Set initial size based on container
     width: chartContainer.clientWidth,
     height: chartContainer.clientHeight,
     timeScale: { 
@@ -30,13 +29,13 @@ const chartOptions = {
 // Create the chart instance
 const chart = LightweightCharts.createChart(chartContainer, chartOptions);
 
-// Add Candlestick Series
+// Add Candlestick Series (TradingView Colors)
 const candlestickSeries = chart.addCandlestickSeries({
-    upColor: '#26a69a', 
-    downColor: '#ef5350', 
+    upColor: '#089981',      // TV Green
+    downColor: '#f23645',    // TV Red
     borderVisible: false, 
-    wickUpColor: '#26a69a', 
-    wickDownColor: '#ef5350'
+    wickUpColor: '#089981', 
+    wickDownColor: '#f23645'
 });
 
 // ---------------------------------------------------------------------------
@@ -52,8 +51,6 @@ async function loadChartData() {
     }
 
     try {
-        console.log(`Fetching data for: ${symbol}`);
-        
         // Fetch historical data from backend API
         const response = await fetch(`/api/history_data?symbol=${encodeURIComponent(symbol)}`);
         const data = await response.json();
@@ -85,22 +82,25 @@ async function loadChartData() {
         
     } catch (error) {
         console.error("Chart Load Error:", error);
-        alert("Failed to load chart data. Check console for details.");
     }
 }
 
 // ---------------------------------------------------------------------------
-// 3. RESPONSIVE RESIZE HANDLING
+// 3. RESPONSIVE RESIZE HANDLING (Using ResizeObserver)
 // ---------------------------------------------------------------------------
-window.addEventListener('resize', () => {
-    chart.applyOptions({ 
-        width: chartContainer.clientWidth,
-        height: chartContainer.clientHeight 
-    });
+const resizeObserver = new ResizeObserver(entries => {
+    for (let entry of entries) {
+        chart.applyOptions({ 
+            width: entry.contentRect.width, 
+            height: entry.contentRect.height 
+        });
+    }
 });
 
+resizeObserver.observe(chartContainer);
+
 // ---------------------------------------------------------------------------
-// 4. SYMBOL SEARCH AUTO-COMPLETE LOGIC
+// 4. SYMBOL SEARCH AUTO-COMPLETE LOGIC (TradingView Style)
 // ---------------------------------------------------------------------------
 const symbolInput = document.getElementById('chart_symbol');
 const suggestionBox = document.getElementById('symbol-suggestions');
@@ -109,45 +109,50 @@ let debounceTimer;
 symbolInput.addEventListener('input', function() {
     const query = this.value;
     
-    // Clear any pending search to avoid flooding the server
     clearTimeout(debounceTimer);
     
-    // Hide dropdown if query is too short
     if (query.length < 2) {
         suggestionBox.style.display = 'none';
         return;
     }
 
-    // Debounce: Wait 300ms after user stops typing before searching
     debounceTimer = setTimeout(async () => {
         try {
             const res = await fetch(`/api/search_symbols?q=${encodeURIComponent(query)}`);
             const results = await res.json();
             
-            // Clear previous results
             suggestionBox.innerHTML = '';
             
             if (results.length > 0) {
                 suggestionBox.style.display = 'block';
                 
                 results.forEach(item => {
-                    // Create suggestion item
-                    const div = document.createElement('button');
-                    div.className = 'list-group-item list-group-item-action list-group-item-dark p-2 text-start';
-                    div.style.fontSize = '0.85rem';
-                    div.style.cursor = 'pointer';
-                    
-                    // Format Label: "SYMBOL (EXCHANGE)"
-                    div.innerHTML = `<strong>${item.label.split(' ')[0]}</strong> <small class="text-muted">${item.label.split(' ')[1] || ''}</small>`;
+                    const btn = document.createElement('button');
+                    btn.className = 'list-group-item list-group-item-action list-group-item-dark p-2';
+                    btn.style.borderLeft = 'none';
+                    btn.style.borderRight = 'none';
+                    btn.style.cursor = 'pointer';
+
+                    // TRADINGVIEW STYLE LAYOUT: Symbol (Left) | Description (Right) | Exchange (Badge)
+                    // The backend now returns: {symbol, desc, exchange, value}
+                    btn.innerHTML = `
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <span class="fw-bold text-white">${item.symbol}</span>
+                                <small class="text-muted ms-2">${item.desc}</small>
+                            </div>
+                            <span class="badge bg-secondary" style="font-size: 0.7em;">${item.exchange}</span>
+                        </div>
+                    `;
                     
                     // Handle Click Selection
-                    div.onclick = () => {
-                        symbolInput.value = item.value; // Set input to "EXCHANGE:SYMBOL"
-                        suggestionBox.style.display = 'none'; // Hide dropdown
-                        loadChartData(); // Immediately load chart
+                    btn.onclick = () => {
+                        symbolInput.value = item.value; // e.g. "NSE:RELIANCE"
+                        suggestionBox.style.display = 'none';
+                        loadChartData();
                     };
                     
-                    suggestionBox.appendChild(div);
+                    suggestionBox.appendChild(btn);
                 });
             } else {
                 suggestionBox.style.display = 'none';
@@ -158,7 +163,7 @@ symbolInput.addEventListener('input', function() {
     }, 300);
 });
 
-// Close dropdown when clicking outside the input or dropdown
+// Close dropdown when clicking outside
 document.addEventListener('click', function(e) {
     if (e.target !== symbolInput && e.target !== suggestionBox) {
         suggestionBox.style.display = 'none';
@@ -168,5 +173,4 @@ document.addEventListener('click', function(e) {
 // ---------------------------------------------------------------------------
 // 5. INITIAL LOAD
 // ---------------------------------------------------------------------------
-// Load the default symbol (NIFTY 50) when page opens
 window.onload = loadChartData;
