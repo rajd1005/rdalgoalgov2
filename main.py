@@ -422,25 +422,9 @@ def api_import_trade():
         if not final_sym: return jsonify({"status": "error", "message": "Invalid Symbol/Strike"})
         
         # --- NEW: Extract Channel Selection from Request ---
-        # Default to 'main' if missing. Logic handles single selection.
         selected_channel = data.get('target_channel', 'main')
         
-        # Construct target_channels list. 
-        # 'main' is always primary for internal logic, but we want to broadcast to the selected one.
-        # If user selected VIP, Free, or Z2H, we pass that along with 'main' logic (or replace it depending on telegram manager logic).
-        # Typically, telegram_manager broadcasts to 'main' AND any others in the list.
-        # If the requirement is "only one telegram channel", we pass that specific one.
-        
-        # However, to maintain system compatibility (where 'main' might be used for logging), 
-        # we usually pass ['main', 'vip'] etc. 
-        # BUT, if the user explicitly wants ONLY one channel (e.g. Free), we can pass just that if the backend supports it.
-        # Assuming standard logic: Main is always required for system logs? 
-        # Let's stick to the requested behavior: "only one telegram channel can be selected".
-        
         target_channels = [selected_channel] 
-        # Note: If 'main' was not selected, we might miss system logs if the bot logic relies on 'main' key.
-        # To be safe, usually we send ['main', selected_channel] if selected != main. 
-        # But if the user strictly wants ONE channel, we pass that list.
         
         # Call Replay Engine with channels
         result = replay_engine.import_past_trade(
@@ -920,6 +904,41 @@ def api_history_data():
         return jsonify({"status": "success", "candles": candles})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
+
+# --- NEW: SYMBOL SEARCH API (For Auto-Complete) ---
+@app.route('/api/search_symbols')
+def search_symbols():
+    query = request.args.get('q', '').upper()
+    if not query or len(query) < 2:
+        return jsonify([])
+    
+    # 1. Ensure instruments are loaded
+    if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
+        smart_trader.fetch_instruments(kite)
         
+    df = smart_trader.instrument_dump
+    if df is None or df.empty:
+        return jsonify([])
+
+    try:
+        # 2. Filter: Search for Symbol starting with Query (NSE/NFO/BSE/MCX)
+        mask = (df['tradingsymbol'].str.startswith(query)) & \
+               (df['exchange'].isin(['NSE', 'NFO', 'BSE', 'MCX']))
+        
+        # Get top 15 results
+        results = df[mask].head(15)
+        
+        suggestions = []
+        for _, row in results.iterrows():
+            suggestions.append({
+                "value": f"{row['exchange']}:{row['tradingsymbol']}",
+                "label": f"{row['tradingsymbol']} ({row['exchange']})"
+            })
+            
+        return jsonify(suggestions)
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return jsonify([])
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=config.PORT, threaded=True)
