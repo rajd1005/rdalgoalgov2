@@ -863,82 +863,62 @@ if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     t = threading.Thread(target=background_monitor, daemon=True)
     t.start()
 
-# --- NEW CHARTING ROUTES ---
+# --- NEW CHARTING ROUTES & UPDATED API ---
 
 @app.route('/chart')
 def chart_page():
     return render_template('chart_page.html')
 
+@app.route('/api/search_symbols')
+def search_symbols():
+    """
+    Provides fuzzy search results for the TradingView-style dropdown.
+    """
+    query = request.args.get('q', '').strip()
+    if not query or len(query) < 2:
+        return jsonify([])
+    
+    # Ensure instruments are loaded
+    if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
+        smart_trader.fetch_instruments(kite)
+        
+    # Use the new fuzzy search from smart_trader
+    results = smart_trader.search_instruments_fuzzy(query)
+    return jsonify(results)
+
 @app.route('/api/history_data')
 def api_history_data():
+    """
+    Fetches historical candle data.
+    Uses 'get_smart_token' to solve the "Nifty" token not found error.
+    """
     symbol = request.args.get('symbol', 'NSE:NIFTY 50')
     interval = request.args.get('interval', 'minute')
     
-    # 1. Ensure Instruments are Loaded (Fix for "Token not found" on startup)
+    # 1. Ensure Instruments are Loaded
     if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
         print("🔄 Instruments cache empty. Fetching now...")
         smart_trader.fetch_instruments(kite)
 
-    # Calculate Date Range
+    # 2. Robust Token Lookup (Fixes "Token not found" for Indices/Aliases)
+    token = smart_trader.get_smart_token(symbol)
+
+    if not token:
+        return jsonify({
+            "status": "error", 
+            "message": f"Symbol Token not found for '{symbol}'. Try 'NSE:NIFTY 50' or 'RELIANCE'."
+        })
+
+    # 3. Calculate Date Range (Last 5 Days)
     to_date = datetime.now(common.IST)
     from_date = to_date - timedelta(days=5)
     
-    # 2. Robust Token Lookup
-    exchange = smart_trader.get_exchange_name(symbol)
-    
-    # Try 1: Cleaned Symbol (e.g. "NIFTY" for "NIFTY 50")
-    clean_symbol = smart_trader.get_zerodha_symbol(symbol)
-    token = smart_trader.get_instrument_token(clean_symbol, exchange)
-    
-    # Try 2: Raw Symbol (e.g. "NIFTY 50") - Fix for Indices
-    if not token:
-        raw_sym = symbol.split(':')[-1]
-        token = smart_trader.get_instrument_token(raw_sym, exchange)
-
-    if not token:
-        return jsonify({"status": "error", "message": f"Symbol Token not found for {symbol}. Try checking the symbol name."})
-
-    # 3. Fetch Data
+    # 4. Fetch Data
     try:
         candles = smart_trader.fetch_historical_data(kite, token, from_date, to_date, interval)
         return jsonify({"status": "success", "candles": candles})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
-
-# --- NEW: SYMBOL SEARCH API (For Auto-Complete) ---
-@app.route('/api/search_symbols')
-def search_symbols():
-    query = request.args.get('q', '').upper()
-    if not query or len(query) < 2:
-        return jsonify([])
-    
-    # 1. Ensure instruments are loaded
-    if smart_trader.instrument_dump is None or smart_trader.instrument_dump.empty:
-        smart_trader.fetch_instruments(kite)
-        
-    df = smart_trader.instrument_dump
-    if df is None or df.empty:
-        return jsonify([])
-
-    try:
-        # 2. Filter: Search for Symbol starting with Query (NSE/NFO/BSE/MCX)
-        mask = (df['tradingsymbol'].str.startswith(query)) & \
-               (df['exchange'].isin(['NSE', 'NFO', 'BSE', 'MCX']))
-        
-        # Get top 15 results
-        results = df[mask].head(15)
-        
-        suggestions = []
-        for _, row in results.iterrows():
-            suggestions.append({
-                "value": f"{row['exchange']}:{row['tradingsymbol']}",
-                "label": f"{row['tradingsymbol']} ({row['exchange']})"
-            })
-            
-        return jsonify(suggestions)
-    except Exception as e:
-        print(f"Search Error: {e}")
-        return jsonify([])
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=config.PORT, threaded=True)
